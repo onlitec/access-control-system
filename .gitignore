@@ -1,0 +1,7 @@
+node_modules/
+backups/
+letsencrypt/
+certbot/
+certs/
+auth/
+.env

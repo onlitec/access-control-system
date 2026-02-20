@@ -1,0 +1,101 @@
+# Task: Build Condominium Access Control Management System
+
+## Plan
+- [x] Step 1: Design and implement color system and base configuration
+- [x] Step 2: Initialize Supabase and create database schema
+  - [x] Create database tables (residents, visitors, service_providers, visit_logs, hikcentral_config, access_logs)
+  - [x] Set up authentication and user roles
+  - [x] Create storage bucket for images
+  - [x] Set up RLS policies
+- [x] Step 3: Create type definitions and API layer
+- [x] Step 4: Implement authentication system
+  - [x] Update AuthContext
+  - [x] Update RouteGuard
+  - [x] Create Login page
+- [x] Step 5: Create layout components
+  - [x] AppLayout with sidebar navigation
+  - [x] Header with user menu
+- [x] Step 6: Implement Dashboard page
+- [x] Step 7: Implement Residents Management
+  - [x] Residents list page with table
+  - [x] Add/Edit resident dialog with image upload
+- [x] Step 8: Implement Visitors Management
+  - [x] Visitors list page
+  - [x] Register visitor dialog
+  - [x] Visit history view
+- [x] Step 9: Implement Service Providers Management
+  - [x] Service providers list page
+  - [x] Add/Edit provider dialog (fixed/temporary)
+- [x] Step 10: Implement Hikcentral Configuration page
+- [x] Step 11: Implement Access Logs page
+- [x] Step 12: Implement Admin panel for user management
+- [x] Step 13: Update routes and App.tsx
+- [x] Step 14: Implement Hikcentral camera integration
+  - [x] Remove manual camera configuration
+  - [x] Create Edge Function to list cameras automatically from Hikcentral API
+  - [x] Update CameraCapture component to load cameras dynamically
+  - [x] Add camera capture buttons to all registration forms
+- [x] Step 15: Add tower field to all registration forms
+  - [x] Add tower column to database tables
+  - [x] Update TypeScript types
+  - [x] Add tower field to Residents form
+  - [x] Add tower field to Visitors form
+  - [x] Add tower field to Service Providers form
+  - [x] Display tower column in Residents table
+  - [x] Display tower column in Visitors table
+  - [x] Display tower column in Service Providers table
+- [x] Step 16: Add resident selection field to Visitors and Service Providers
+  - [x] Create getAllResidentsForSelect API function
+  - [x] Insert fictional residents for testing
+  - [x] Add visiting_resident column to database tables
+  - [x] Update TypeScript types with visiting_resident field
+  - [x] Add resident selection dropdown to Visitors form
+  - [x] Add resident selection dropdown to Service Providers form
+  - [x] Load residents on form open
+- [x] Step 17: Implement searchable resident selection
+  - [x] Create ResidentCombobox component with search functionality
+  - [x] Replace Select with ResidentCombobox in Visitors form
+  - [x] Replace Select with ResidentCombobox in Service Providers form
+  - [x] Enable search by name, surname, or initials
+- [x] Step 18: Increase form width for better UX
+  - [x] Update ResidentsPage DialogContent to max-w-4xl
+  - [x] Update VisitorsPage DialogContent to max-w-4xl
+  - [x] Update ServiceProvidersPage DialogContent to max-w-4xl
+- [x] Step 19: Implement tower management system
+  - [x] Create towers table with RLS policies
+  - [x] Add Tower type to TypeScript types
+  - [x] Create API functions for tower management (CRUD)
+  - [x] Insert default towers (Torre A, B, C, Bloco 1, 2)
+  - [x] Replace tower Input with Select in ResidentsPage
+  - [x] Replace tower Input with Select in VisitorsPage
+  - [x] Replace tower Input with Select in ServiceProvidersPage
+  - [x] Load active towers in all registration forms
+- [x] Step 21: Implement HikCentral Professional OpenAPI Integration
+  - [x] Implement AK/SK authentication with HMAC-SHA256
+  - [x] Refactor configuration to use app_key and app_secret
+  - [x] Update Resident synchronization (addPerson)
+  - [x] Update Visitor/Provider synchronization (createAppointment)
+  - [x] Implement Resident Self-Service Portal (/setup/:id)
+  - [x] Add synchronization status feedback in UI tables
+  - [x] Update Dashboard with integration status
+
+## Notes
+- Using Portuguese for all UI text
+- Login required with admin role for configuration
+- Image upload needed for residents/visitors photos
+- First registered user becomes admin automatically
+- Hikcentral integration: cameras are loaded automatically via OpenAPI
+- No manual camera configuration needed - system discovers cameras from Hikcentral
+- Tower field changed from free text input to dropdown selection
+- Towers are pre-registered in the database (Torre A, B, C, Bloco 1, 2)
+- Only admins can manage towers (create, update, delete)
+- All users can view active towers in registration forms
+- Resident selection field added to visitor and service provider forms
+- Searchable combobox allows filtering residents by typing name or surname
+- Registration forms width increased from max-w-2xl to max-w-4xl for better usability
+- 8 fictional residents inserted for testing purposes
+- HikCentral Professional 3.2+ integration implemented with HMAC authentication
+- Resident Self-Service Portal available for visitor pre-registration
+- All tasks completed successfully
+- Lint passed with no errors
+

@@ -1,0 +1,13 @@
+
+> backend-api@1.0.0 prune:refresh-sessions
+> tsx src/scripts/prune-refresh-sessions.ts
+
+{
+  "action": "prune_refresh_sessions",
+  "retentionDays": 30,
+  "expiredDeleted": 0,
+  "revokedDeleted": 0,
+  "remaining": 105,
+  "timestamp": "2026-02-20T03:30:03.720Z"
+}
+[audit] refresh_sessions_prune ok

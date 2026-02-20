@@ -1,0 +1,26 @@
+# Dependencies and build artifacts
+node_modules
+dist
+
+# Local env and logs
+.env
+.env.*
+*.log
+
+# VCS/editor
+.git
+.gitignore
+.DS_Store
+.vscode
+.idea
+
+# Development/docs files not needed for container build
+docs
+documentation
+TODO.md
+README.md
+MIGRATION_PLAN.md
+query-hik.js
+vite.config.dev.ts
+pnpm-lock.yaml
+pnpm-workspace.yaml

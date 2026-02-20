@@ -1,0 +1,19 @@
+# Dependencies and build artifacts
+node_modules
+dist
+
+# Local env and logs
+.env
+.env.*
+*.log
+
+# VCS/editor
+.git
+.gitignore
+.DS_Store
+.vscode
+.idea
+
+# Docs not needed for image build
+README.md
+*.md

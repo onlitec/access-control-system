@@ -1,0 +1,26 @@
+{
+  "timestamp_utc": "2026-02-20T21:15:03Z",
+  "host": "CALABASAS",
+  "overall_status": "ok",
+  "last_monitor_check": {
+    "timestamp_utc": "2026-02-20T21:15:01Z",
+    "result": "ok"
+  },
+  "api_health": {
+    "http_code": 200,
+    "latency_seconds": 0.007164
+  },
+  "backup": {
+    "latest_file": "calabasas_db_20260220_150007.dump",
+    "size_bytes": 192820,
+    "age_hours": 3
+  },
+  "security_metrics": {
+    "latest_snapshot_at": "2026-02-20T21:08:08Z",
+    "age_minutes": 6,
+    "login_attempts": 5966,
+    "login_failed_attempts": 5849,
+    "login_failure_rate": 98.04
+  },
+  "services": [ {"name":"calabasas-proxy","state":"running","health":"healthy"} , {"name":"calabasas-api","state":"running","health":"healthy"} , {"name":"calabasas-db","state":"running","health":"healthy"} , {"name":"calabasas-painel","state":"running","health":"healthy"} , {"name":"calabasas-login","state":"running","health":"healthy"} , {"name":"calabasas-admin","state":"running","health":"healthy"} ]
+}

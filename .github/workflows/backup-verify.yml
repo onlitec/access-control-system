@@ -1,0 +1,99 @@
+name: Backup Verify
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '43 4 * * *'
+
+concurrency:
+  group: backup-verify-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backup-verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Prepare CI env file
+        run: |
+          cat > .env <<'EOF'
+          DB_USER=postgres
+          DB_PASSWORD=postgres
+          DB_NAME=calabasas_db
+          JWT_SECRET=ci-secret-change-me
+          JWT_EXPIRES_IN=12h
+          REFRESH_TOKEN_EXPIRES_IN=7d
+          MAX_ACTIVE_REFRESH_SESSIONS=5
+          REFRESH_REVOKED_RETENTION_DAYS=30
+          SESSION_AUDIT_EXPORT_MAX_LIMIT=20000
+          SESSION_AUDIT_RETENTION_DAYS=90
+          SESSION_AUDIT_PRUNE_INTERVAL_MINUTES=60
+          SECURITY_METRICS_WINDOW_HOURS=24
+          SECURITY_METRICS_TOP_N=10
+          SECURITY_METRICS_SNAPSHOT_INTERVAL_MINUTES=15
+          SECURITY_METRICS_SNAPSHOT_RETENTION_DAYS=30
+          SECURITY_METRICS_HISTORY_DEFAULT_POINTS=96
+          CORS_ORIGIN=*
+          EOF
+
+      - name: Build and start core services
+        run: docker compose up -d --build postgres backend-api
+
+      - name: Wait for DB health
+        run: |
+          timeout 180 bash -c 'until [ "$(docker inspect -f "{{.State.Health.Status}}" calabasas-db 2>/dev/null)" = "healthy" ]; do sleep 3; done'
+          docker compose ps
+
+      - name: Verify backup and restore
+        run: ./scripts/ops.sh backup-verify
+
+      - name: Collect backup metadata
+        if: always()
+        run: |
+          mkdir -p artifacts
+          ls -lah backups > artifacts/backups-list.txt || true
+          (sha256sum backups/*.dump > artifacts/backups-sha256.txt) || true
+          ./scripts/ops.sh backup-status 24 > artifacts/backup-status.txt || true
+
+      - name: Collect compose logs on failure
+        if: failure()
+        run: |
+          mkdir -p artifacts
+          docker compose logs --no-color --tail=400 > artifacts/compose-logs.txt
+
+      - name: Notify webhook on failure
+        if: failure()
+        env:
+          ALERT_WEBHOOK_URL: ${{ secrets.ALERT_WEBHOOK_URL }}
+          ALERT_CHANNEL: ${{ secrets.ALERT_CHANNEL }}
+        run: |
+          ./scripts/ci-webhook-alert.sh "[CI][backup-verify][FAIL] repo=${{ github.repository }} ref=${{ github.ref_name }} run=https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+
+      - name: Upload backup artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backup-verify-artifacts
+          path: |
+            artifacts/backups-list.txt
+            artifacts/backups-sha256.txt
+            artifacts/backup-status.txt
+            artifacts/compose-logs.txt
+          if-no-files-found: ignore
+
+      - name: Teardown
+        if: always()
+        run: docker compose down -v
