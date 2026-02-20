@@ -1,0 +1,13 @@
+const Artemis = require('artemis-http-client');
+const client = new Artemis.Client('26269542', 'wVkq6TjwrEP3BTL5iPi1');
+const method = 'POST';
+const path = 'https://100.77.145.39/artemis/api/resource/v1/acsDevice/acsDeviceList';
+const opts = { headers: { 'content-type': 'application/json;charset=UTF-8', 'accept': '*/*' }, data: JSON.stringify({ pageNo: 1, pageSize: 1 }) };
+const signHeaders = opts.signHeaders || [];
+const headers = client.buildHeaders(opts.headers, signHeaders);
+const signHeaderKeys = client.getSignHeaderKeys(headers, signHeaders);
+headers['x-ca-signature-headers'] = signHeaderKeys.join(',');
+const signedHeadersStr = client.getSignedHeadersString(signHeaderKeys, headers);
+const parsedUrl = require('url').parse(path, true);
+const stringToSign = client.buildStringToSign(method, headers, signedHeadersStr, parsedUrl, opts.data);
+console.log('STRING TO SIGN:\n' + stringToSign.replace(/\n/g, '\\n'));

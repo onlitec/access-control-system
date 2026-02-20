@@ -1,0 +1,39 @@
+{
+    "name": "backend-api",
+    "version": "1.0.0",
+    "main": "dist/index.js",
+    "scripts": {
+        "dev": "tsx watch src/index.ts",
+        "build": "tsc",
+        "start": "node dist/index.js",
+        "bootstrap:admin": "tsx src/scripts/bootstrap-admin.ts",
+        "prune:refresh-sessions": "tsx src/scripts/prune-refresh-sessions.ts",
+        "prune:session-audit-events": "tsx src/scripts/prune-session-audit-events.ts",
+        "collect:security-metrics-snapshot": "tsx src/scripts/collect-security-metrics-snapshot.ts",
+        "prune:security-metrics-snapshots": "tsx src/scripts/prune-security-metrics-snapshots.ts",
+        "prisma:generate": "prisma generate",
+        "prisma:migrate": "prisma migrate dev"
+    },
+    "dependencies": {
+        "@prisma/client": "^5.10.2",
+        "artemis-http-client": "^1.0.3",
+        "bcryptjs": "^3.0.3",
+        "cors": "^2.8.5",
+        "crypto-js": "^4.2.0",
+        "dotenv": "^16.4.5",
+        "express": "^4.18.3",
+        "helmet": "^8.1.0",
+        "jsonwebtoken": "^9.0.2",
+        "node-fetch": "^2.7.0"
+    },
+    "devDependencies": {
+        "@types/cors": "^2.8.17",
+        "@types/express": "^4.17.21",
+        "@types/jsonwebtoken": "^9.0.6",
+        "@types/node": "^20.11.24",
+        "@types/node-fetch": "^2.6.11",
+        "prisma": "^5.10.2",
+        "tsx": "^4.7.1",
+        "typescript": "^5.3.3"
+    }
+}

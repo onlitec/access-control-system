@@ -1,0 +1,171 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model HikcentralConfig {
+  id          Int      @id @default(autoincrement())
+  apiUrl      String   @map("api_url")
+  appKey      String   @map("app_key")
+  appSecret   String   @map("app_secret")
+  syncEnabled Boolean  @default(true) @map("sync_enabled")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  @@map("hikcentral_configs")
+}
+
+model Person {
+  id           String   @id @default(uuid())
+  firstName    String   @map("first_name")
+  lastName     String   @map("last_name")
+  phone        String?
+  email        String?
+  orgIndexCode String   @map("org_index_code")
+  hikPersonId  String?  @unique @map("hik_person_id")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  @@map("persons")
+}
+
+model Visitor {
+  id              String   @id @default(uuid())
+  name            String
+  certificateType String?  @map("certificate_type")
+  certificateNo   String?  @map("certificate_no")
+  phone           String?
+  plateNo         String?  @map("plate_no")
+  visitStartTime  DateTime @map("visit_start_time")
+  visitEndTime    DateTime @map("visit_end_time")
+  hikVisitorId    String?  @map("hik_visitor_id")
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  @@map("visitors")
+}
+
+model AccessEvent {
+  id         String   @id @default(uuid())
+  personName String   @map("person_name")
+  eventTime  DateTime @map("event_time")
+  deviceName String   @map("device_name")
+  doorName   String   @map("door_name")
+  eventType  String   @map("event_type")
+  picUri     String?  @map("pic_uri")
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  @@map("access_events")
+}
+
+model User {
+  id                 String              @id @default(uuid())
+  email              String              @unique
+  password           String
+  name               String
+  role               String              @default("ADMIN")
+  createdAt          DateTime            @default(now()) @map("created_at")
+  refreshSessions    RefreshSession[]
+  sessionAuditEvents SessionAuditEvent[]
+
+  @@map("users")
+}
+
+model RefreshSession {
+  id                  String    @id @default(uuid())
+  userId              String    @map("user_id")
+  tokenHash           String    @unique @map("token_hash")
+  expiresAt           DateTime  @map("expires_at")
+  revokedAt           DateTime? @map("revoked_at")
+  replacedByTokenHash String?   @map("replaced_by_token_hash")
+  createdAt           DateTime  @default(now()) @map("created_at")
+  user                User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+  @@map("refresh_sessions")
+}
+
+model SessionAuditEvent {
+  id        String   @id @default(uuid())
+  userId    String?  @map("user_id")
+  userEmail String?  @map("user_email")
+  eventType String   @map("event_type")
+  success   Boolean  @default(true)
+  sessionId String?  @map("session_id")
+  ipAddress String?  @map("ip_address")
+  userAgent String?  @map("user_agent")
+  details   String?
+  createdAt DateTime @default(now()) @map("created_at")
+  user      User?    @relation(fields: [userId], references: [id])
+
+  @@index([userId, createdAt])
+  @@index([eventType, createdAt])
+  @@index([createdAt])
+  @@index([ipAddress, createdAt])
+  @@index([userEmail, createdAt])
+  @@map("session_audit_events")
+}
+
+model ServiceProvider {
+  id                 String   @id @default(uuid())
+  fullName           String   @map("full_name")
+  companyName        String?  @map("company_name")
+  document           String
+  phone              String?
+  email              String?
+  serviceType        String   @map("service_type")
+  providerType       String   @default("temporary") @map("provider_type")
+  photoUrl           String?  @map("photo_url")
+  documentPhotoUrl   String?  @map("document_photo_url")
+  tower              String?
+  visitingResident   String?  @map("visiting_resident")
+  validFrom          String?  @map("valid_from")
+  validUntil         String?  @map("valid_until")
+  authorizedUnits    Json?    @map("authorized_units")
+  notes              String?
+  hikcentralPersonId String?  @map("hikcentral_person_id")
+  createdBy          String?  @map("created_by")
+  createdAt          DateTime @default(now()) @map("created_at")
+  updatedAt          DateTime @updatedAt @map("updated_at")
+
+  @@index([fullName])
+  @@index([serviceType])
+  @@index([providerType])
+  @@index([tower])
+  @@map("service_providers")
+}
+
+model Tower {
+  id          String   @id @default(uuid())
+  name        String   @unique
+  description String?
+  isActive    Boolean  @default(true) @map("is_active")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  @@index([isActive])
+  @@map("towers")
+}
+
+model SecurityMetricSnapshot {
+  id                  String   @id @default(uuid())
+  generatedAt         DateTime @map("generated_at")
+  periodStart         DateTime @map("period_start")
+  periodEnd           DateTime @map("period_end")
+  windowHours         Int      @map("window_hours")
+  topN                Int      @map("top_n")
+  loginAttempts       Int      @map("login_attempts")
+  loginFailedAttempts Int      @map("login_failed_attempts")
+  loginFailureRate    Float    @map("login_failure_rate")
+  topIpAttempts       Json     @default("[]") @map("top_ip_attempts")
+  topUserAttempts     Json     @default("[]") @map("top_user_attempts")
+  createdAt           DateTime @default(now()) @map("created_at")
+
+  @@index([generatedAt])
+  @@index([windowHours, generatedAt])
+  @@map("security_metric_snapshots")
+}
