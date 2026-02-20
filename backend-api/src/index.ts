@@ -1733,7 +1733,7 @@ app.get('/api/dashboard/stats', authMiddleware, async (req, res) => {
         let onlineDevices = 0;
         let offlineDevices = 0;
         try {
-            const deviceResult = await HikCentralService.getAcsDeviceList(1, 1000);
+            const deviceResult = await HikCentralService.getAcsDeviceList(1, 100);
             const devices = deviceResult?.data?.list || [];
             onlineDevices = devices.filter((d: any) => d.status === 1).length;
             offlineDevices = devices.filter((d: any) => d.status === 0).length;
@@ -1761,7 +1761,7 @@ app.get('/api/dashboard/stats', authMiddleware, async (req, res) => {
 
 app.get('/api/devices/status', authMiddleware, async (req, res) => {
     try {
-        const deviceResult = await HikCentralService.getAcsDeviceList(1, 1000);
+        const deviceResult = await HikCentralService.getAcsDeviceList(1, 100);
         const devices = deviceResult?.data?.list || [];
 
         // Return a clean list of devices with their status
