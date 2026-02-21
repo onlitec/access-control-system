@@ -1471,9 +1471,12 @@ app.get('/api/residents', authMiddleware, async (req, res) => {
                 }
 
                 // Salvar/atualizar no banco local com orgIndexCode correto
+                // E recuperar photoUrl local existente para exibir
+                const localPhotos: Record<string, string | null> = {};
                 for (const r of residents) {
                     try {
-                        await prisma.person.upsert({
+                        const existing = await prisma.person.findFirst({ where: { hikPersonId: r.hikPersonId } });
+                        const upserted = await prisma.person.upsert({
                             where: { hikPersonId: r.hikPersonId || `temp-${r.id}` },
                             update: {
                                 firstName: r.firstName,
@@ -1481,6 +1484,7 @@ app.get('/api/residents', authMiddleware, async (req, res) => {
                                 phone: r.phone,
                                 email: r.email,
                                 orgIndexCode: r.orgIndexCode,
+                                // NÃO sobrescrever photoUrl — preservar a foto local
                             },
                             create: {
                                 firstName: r.firstName,
@@ -1491,6 +1495,8 @@ app.get('/api/residents', authMiddleware, async (req, res) => {
                                 hikPersonId: r.hikPersonId,
                             },
                         });
+                        // Guardar a photoUrl local para usar no mapeamento
+                        localPhotos[r.hikPersonId] = existing?.photoUrl || upserted.photoUrl || null;
                     } catch (e) {
                         // Ignora erros de upsert individual
                     }
@@ -1506,7 +1512,8 @@ app.get('/api/residents', authMiddleware, async (req, res) => {
                         unit_number: r.orgIndexCode || '',
                         block: null,
                         tower: r.orgName || null,
-                        photo_url: r.personPhoto || null,
+                        // Prioridade: foto do HikCentral > foto salva localmente
+                        photo_url: r.personPhoto || localPhotos[r.hikPersonId] || null,
                         is_owner: true,
                         hikcentral_person_id: r.hikPersonId || null,
                         notes: `HikCentral | Depto: ${r.orgName} | Perfil: ${r.role}`,
