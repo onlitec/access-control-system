@@ -1447,7 +1447,23 @@ app.get('/api/residents', authMiddleware, async (req, res) => {
                 }
 
                 return res.json({
-                    data: filtered,
+                    data: filtered.map((r: any) => ({
+                        id: r.id,
+                        full_name: `${r.firstName} ${r.lastName}`.trim() || '-',
+                        cpf: r.certificateNo || '',
+                        phone: r.phone || null,
+                        email: r.email || null,
+                        unit_number: r.orgIndexCode || '',
+                        block: null,
+                        tower: r.orgName || null,
+                        photo_url: r.personPhoto || null,
+                        is_owner: true,
+                        hikcentral_person_id: r.hikPersonId || null,
+                        notes: `HikCentral | Depto: ${r.orgName} | Perfil: ${r.role}`,
+                        created_by: null,
+                        created_at: r.createdAt,
+                        updated_at: r.updatedAt,
+                    })),
                     count: hikResult?.data?.total || filtered.length,
                     source: 'hikcentral',
                 });
@@ -1474,7 +1490,25 @@ app.get('/api/residents', authMiddleware, async (req, res) => {
             orderBy: { createdAt: 'desc' }
         });
         const count = await prisma.person.count({ where });
-        res.json({ data, count, source: 'local' });
+        // Mapear para o contrato snake_case que o frontend espera
+        const localMapped = data.map((p: any) => ({
+            id: p.id,
+            full_name: `${p.firstName} ${p.lastName}`.trim() || '-',
+            cpf: '',
+            phone: p.phone || null,
+            email: p.email || null,
+            unit_number: p.orgIndexCode || '',
+            block: null,
+            tower: HIK_ORG_NAMES[p.orgIndexCode] || null,
+            photo_url: null,
+            is_owner: true,
+            hikcentral_person_id: p.hikPersonId || null,
+            notes: null,
+            created_by: null,
+            created_at: p.createdAt,
+            updated_at: p.updatedAt,
+        }));
+        res.json({ data: localMapped, count, source: 'local' });
     } catch (error: any) {
         res.status(500).json({ error: error.message });
     }
