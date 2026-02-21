@@ -1515,8 +1515,8 @@ app.get('/api/residents', authMiddleware, async (req, res) => {
                         unit_number: r.orgIndexCode || '',
                         block: null,
                         tower: r.orgName || null,
-                        // Prioridade: foto do HikCentral > foto salva localmente
-                        photo_url: r.personPhoto || localPhotos[r.hikPersonId] || null,
+                        // Prioridade: foto local salva > foto via proxy HikCentral
+                        photo_url: localPhotos[r.hikPersonId] || (r.hikPersonId ? `/api/hikcentral/person-photo/${r.hikPersonId}` : null),
                         is_owner: true,
                         hikcentral_person_id: r.hikPersonId || null,
                         notes: `HikCentral | Depto: ${r.orgName} | Perfil: ${r.role}`,
@@ -1560,7 +1560,7 @@ app.get('/api/residents', authMiddleware, async (req, res) => {
             unit_number: p.orgIndexCode || '',
             block: null,
             tower: HIK_ORG_NAMES[p.orgIndexCode] || null,
-            photo_url: p.photoUrl || null,
+            photo_url: p.photoUrl || (p.hikPersonId ? `/api/hikcentral/person-photo/${p.hikPersonId}` : null),
             is_owner: true,
             hikcentral_person_id: p.hikPersonId || null,
             notes: null,
@@ -1680,6 +1680,42 @@ app.get('/api/hikcentral/person-properties', authMiddleware, async (req, res) =>
     }
 });
 
+// ============ Person Photo Proxy (HikCentral) ============
+app.get('/api/hikcentral/person-photo/:personId', authMiddleware, async (req, res) => {
+    try {
+        const { personId } = req.params;
+
+        // Primeiro checar se temos foto local no banco
+        const localPerson = await prisma.person.findFirst({ where: { hikPersonId: personId } });
+        if (localPerson?.photoUrl) {
+            // Se a foto local é base64, retorna como imagem
+            if (localPerson.photoUrl.startsWith('data:')) {
+                const matches = localPerson.photoUrl.match(/^data:([^;]+);base64,(.+)$/);
+                if (matches) {
+                    const contentType = matches[1];
+                    const buffer = Buffer.from(matches[2], 'base64');
+                    res.set('Content-Type', contentType);
+                    res.set('Cache-Control', 'public, max-age=3600');
+                    return res.send(buffer);
+                }
+            }
+        }
+
+        // Buscar foto do HikCentral via proxy autenticado
+        const photoResult = await HikCentralService.getPersonPhoto(personId);
+
+        if (!photoResult) {
+            return res.status(404).json({ error: 'Foto não encontrada' });
+        }
+
+        res.set('Content-Type', photoResult.contentType);
+        res.set('Cache-Control', 'public, max-age=3600');
+        res.send(photoResult.buffer);
+    } catch (error: any) {
+        console.error('[Photo Proxy] Erro:', error.message);
+        res.status(500).json({ error: error.message });
+    }
+});
 
 app.get('/api/residents/select', authMiddleware, async (req, res) => {
     try {

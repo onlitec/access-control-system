@@ -101,6 +101,104 @@ export class HikCentralService {
     }
 
     /**
+     * Requisição ao HikCentral que retorna dados binários (imagens, etc.)
+     */
+    public static async hikRequestRaw(path: string, options: any = {}): Promise<Buffer> {
+        const config = await prisma.hikcentralConfig.findFirst({ orderBy: { createdAt: 'desc' } });
+        if (!config || !config.apiUrl || !config.appKey || !config.appSecret) {
+            throw new Error("HikCentral credentials not configured in Admin panel.");
+        }
+
+        const method = options.method || 'POST';
+        const timestamp = Date.now().toString();
+
+        const headers: Record<string, string> = {
+            'Accept': '*/*',
+            'Content-Type': 'application/json;charset=UTF-8',
+            'X-Ca-Key': config.appKey,
+            'X-Ca-Timestamp': timestamp,
+            'X-Ca-Signature-Headers': 'x-ca-key,x-ca-timestamp',
+            ...options.headers,
+        };
+
+        if (options.body) {
+            headers['Content-MD5'] = crypto.createHash('md5').update(options.body, 'utf8').digest('base64');
+        }
+
+        const cleanPath = path.startsWith('/') ? path : `/${path}`;
+        const signature = await this.generateSignature(method, cleanPath, headers, config.appSecret);
+        headers['X-Ca-Signature'] = signature;
+
+        const baseUrl = config.apiUrl.endsWith('/') ? config.apiUrl.slice(0, -1) : config.apiUrl;
+        const url = `${baseUrl}${cleanPath}`;
+
+        const response = await fetch(url, {
+            ...options,
+            headers,
+            // @ts-ignore
+            agent: new (require('https').Agent)({ rejectUnauthorized: false })
+        });
+
+        if (!response.ok) {
+            throw new Error(`Erro ao buscar imagem do HikCentral: ${response.statusText}`);
+        }
+
+        const arrayBuffer = await response.arrayBuffer();
+        return Buffer.from(arrayBuffer);
+    }
+
+    /**
+     * Buscar foto (face) de uma pessoa pelo personId
+     * Tenta buscar via picUri do personPhoto ou via API dedicada
+     */
+    public static async getPersonPhoto(personId: string): Promise<{ buffer: Buffer; contentType: string } | null> {
+        try {
+            // Primeiro: buscar dados da pessoa para obter picUri
+            const personResult = await this.hikRequest('/artemis/api/resource/v1/person/personList', {
+                method: 'POST',
+                body: JSON.stringify({ personIds: personId, pageNo: 1, pageSize: 1 }),
+            });
+
+            const person = personResult?.data?.list?.[0];
+            if (!person?.personPhoto) return null;
+
+            const picUri = person.personPhoto.picUri || person.personPhoto.uri || '';
+            if (!picUri) return null;
+
+            // picUri pode ser uma URL relativa - fazer download autenticado
+            const config = await prisma.hikcentralConfig.findFirst({ orderBy: { createdAt: 'desc' } });
+            if (!config) return null;
+
+            const baseUrl = config.apiUrl.endsWith('/') ? config.apiUrl.slice(0, -1) : config.apiUrl;
+
+            // Construir a URL completa da imagem
+            let imageUrl = '';
+            if (picUri.startsWith('http')) {
+                imageUrl = picUri;
+            } else if (picUri.startsWith('/')) {
+                imageUrl = `${baseUrl}${picUri}`;
+            } else {
+                // picUri é um hash - tentar via endpoint /pic 
+                imageUrl = `${baseUrl}/artemis/media/pic/${picUri}`;
+            }
+
+            const imageResponse = await fetch(imageUrl, {
+                // @ts-ignore
+                agent: new (require('https').Agent)({ rejectUnauthorized: false })
+            });
+
+            if (!imageResponse.ok) return null;
+
+            const contentType = imageResponse.headers.get('content-type') || 'image/jpeg';
+            const arrayBuffer = await imageResponse.arrayBuffer();
+            return { buffer: Buffer.from(arrayBuffer), contentType };
+        } catch (error: any) {
+            console.error(`[HikCentral] Erro ao buscar foto de ${personId}:`, error.message);
+            return null;
+        }
+    }
+
+    /**
      * Sincronização de moradores (addPerson)
      */
     public static async addPerson(person: {

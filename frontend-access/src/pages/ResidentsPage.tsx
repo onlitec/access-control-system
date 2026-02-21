@@ -634,8 +634,10 @@ export default function ResidentsPage() {
                     <TableCell>
                       <Avatar>
                         <AvatarImage src={resident.photo_url || undefined} />
-                        <AvatarFallback>
-                          <User className="h-4 w-4" />
+                        <AvatarFallback className="bg-primary/10 text-primary font-semibold text-sm">
+                          {resident.full_name
+                            ? resident.full_name.split(' ').map((n: string) => n[0]).filter(Boolean).slice(0, 2).join('').toUpperCase()
+                            : <User className="h-4 w-4" />}
                         </AvatarFallback>
                       </Avatar>
                     </TableCell>
