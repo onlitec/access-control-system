@@ -1616,8 +1616,40 @@ app.get('/api/residents/select', authMiddleware, async (req, res) => {
 
 app.post('/api/residents', authMiddleware, async (req, res) => {
     try {
-        const person = await prisma.person.create({ data: req.body });
-        res.json(person);
+        const body = { ...req.body };
+        const prismaData: any = {};
+
+        if (body.full_name) {
+            const parts = body.full_name.trim().split(' ');
+            prismaData.firstName = parts[0] || '';
+            prismaData.lastName = parts.slice(1).join(' ') || '';
+        }
+
+        prismaData.phone = body.phone || null;
+        prismaData.email = body.email || null;
+        prismaData.orgIndexCode = body.unit_number || '7';
+        prismaData.hikPersonId = body.hikcentral_person_id || null;
+
+        const person = await prisma.person.create({ data: prismaData });
+
+        // Responder no formato snake_case esperado
+        res.json({
+            id: person.id,
+            full_name: `${person.firstName} ${person.lastName}`.trim(),
+            cpf: '',
+            phone: person.phone || null,
+            email: person.email || null,
+            unit_number: person.orgIndexCode || '',
+            block: null,
+            tower: HIK_ORG_NAMES[person.orgIndexCode] || null,
+            photo_url: null,
+            is_owner: true,
+            hikcentral_person_id: person.hikPersonId || null,
+            notes: null,
+            created_by: null,
+            created_at: person.createdAt,
+            updated_at: person.updatedAt,
+        });
     } catch (error: any) {
         res.status(500).json({ error: error.message });
     }
