@@ -128,6 +128,37 @@ export class HikCentralService {
     }
 
     /**
+     * Atualizar pessoa existente no HikCentral (updatePerson)
+     */
+    public static async updatePerson(person: {
+        personId: string;
+        personGivenName?: string;
+        personFamilyName?: string;
+        orgIndexCode?: string;
+        phoneNo?: string;
+        email?: string;
+        faces?: { faceData: string }[];
+        personProperties?: { propertyName: string, propertyValue: string }[];
+    }) {
+        const payload: any = { ...person };
+        // Mapear personId para indexCode (campo esperado pela API HikCentral)
+        payload.indexCode = person.personId;
+
+        if (person.personProperties) {
+            payload.personCustomList = person.personProperties.map((p: any) => ({
+                customFieldName: p.propertyName,
+                customFieldValue: p.propertyValue
+            }));
+            delete payload.personProperties;
+        }
+
+        return this.hikRequest('/artemis/api/resource/v1/person/single/update', {
+            method: 'POST',
+            body: JSON.stringify(payload),
+        });
+    }
+
+    /**
      * Implementação da API v1 de visitantes (reserveVisitor)
      */
     public static async reserveVisitor(visitor: {
