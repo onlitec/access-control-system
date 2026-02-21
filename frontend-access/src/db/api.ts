@@ -191,3 +191,8 @@ export const getAccessLogs = async (page = 1, limit = 100, filters: any = {}) =>
 export const getDevicesStatus = async (): Promise<DeviceStatus[]> => {
   return request<DeviceStatus[]>(`/devices/status`);
 };
+
+// ============ HikCentral Person Properties ============
+export const getPersonProperties = async (): Promise<{ options: string[] }> => {
+  return request<{ options: string[] }>(`/hikcentral/person-properties`);
+};

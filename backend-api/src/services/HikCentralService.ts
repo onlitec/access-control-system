@@ -110,10 +110,20 @@ export class HikCentralService {
         phoneNo?: string;
         email?: string;
         faces?: { faceData: string }[];
+        personProperties?: { propertyName: string, propertyValue: string }[];
     }) {
+        const payload: any = { ...person };
+        if (person.personProperties) {
+            payload.personCustomList = person.personProperties.map((p: any) => ({
+                customFieldName: p.propertyName,
+                customFieldValue: p.propertyValue
+            }));
+            delete payload.personProperties;
+        }
+
         return this.hikRequest('/artemis/api/resource/v1/person/single/add', {
             method: 'POST',
-            body: JSON.stringify(person),
+            body: JSON.stringify(payload),
         });
     }
 
