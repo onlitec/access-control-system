@@ -11,6 +11,7 @@ export async function addPerson(person: {
     orgIndexCode: string;
     phoneNo?: string;
     email?: string;
+    personProperties?: { propertyName: string, propertyValue: string }[];
     faces?: { faceData: string }[];
 }) {
     // Map to backend expected format
@@ -22,6 +23,7 @@ export async function addPerson(person: {
             phone: person.phoneNo,
             email: person.email,
             orgIndexCode: person.orgIndexCode,
+            personProperties: person.personProperties,
             faces: person.faces // Backend might not handle faces yet, but pass it
         }),
     });

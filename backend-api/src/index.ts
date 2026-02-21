@@ -1276,7 +1276,7 @@ app.get('/api/health', (req, res) => {
 // ============ Residents Sync (HikCentral + Local DB) ============
 app.post('/api/persons/sync', authMiddleware, async (req, res) => {
     try {
-        const { firstName, lastName, phone, email, orgIndexCode } = req.body;
+        const { firstName, lastName, phone, email, orgIndexCode, personProperties } = req.body;
 
         // 1. Sync with HikCentral
         const hikResult = await HikCentralService.addPerson({
@@ -1285,6 +1285,7 @@ app.post('/api/persons/sync', authMiddleware, async (req, res) => {
             phoneNo: phone,
             email: email,
             orgIndexCode: orgIndexCode || '1',
+            personProperties: personProperties
         });
 
         const hikPersonId = hikResult?.data?.personId;
@@ -1595,6 +1596,39 @@ app.post('/api/hikcentral/persons/sync', authMiddleware, async (req, res) => {
         res.status(500).json({ error: error.message });
     }
 });
+
+// ============ Person Properties (Dynamic Fields) ============
+app.get('/api/hikcentral/person-properties', authMiddleware, async (req, res) => {
+    try {
+        // Default options according to prompt as a reliable fallback
+        const defaultOptions = ['TORRE - PERFECTO', 'TORRE - NOBILE', 'TORRE - DESEO', 'TORRE - PARAÍSO'];
+
+        try {
+            // Tentativa de buscar os campos customizados do Artemis (OpenAPI)
+            const result = await HikCentralService.hikRequest('/artemis/api/resource/v1/person/customData/list', {
+                method: 'POST', body: JSON.stringify({})
+            });
+
+            const customFields = result?.data || [];
+            const torreField = customFields.find((f: any) => f.name === 'Torre' || f.customFieldName === 'Torre' || f.title === 'Torre');
+
+            if (torreField && (torreField.options || torreField.selectOptions)) {
+                // Se o Artemis retornar as opções estruturadas no campo
+                const options = torreField.options || torreField.selectOptions;
+                return res.json({ options });
+            }
+        } catch (apiErr: any) {
+            console.warn('[HikCentral] GET person-properties failed, returning local fallback:', apiErr.message);
+        }
+
+        // Se a API não retornar ou falhar, retorna o fallback rígido
+        res.json({ options: defaultOptions });
+
+    } catch (error: any) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
 
 app.get('/api/residents/select', authMiddleware, async (req, res) => {
     try {

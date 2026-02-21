@@ -39,7 +39,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { useToast } from '@/hooks/use-toast';
-import { getResidents, createResident, updateResident, deleteResident, getActiveTowers } from '@/db/api';
+import { getResidents, createResident, updateResident, deleteResident, getPersonProperties } from '@/db/api';
 import { urlToBase64 } from '@/lib/utils';
 import { addPerson, reapplyAuthorization, getOrganizations } from '@/services/hikcentral';
 import { useAuth } from '@/contexts/AuthContext';
@@ -64,7 +64,7 @@ import {
 
 export default function ResidentsPage() {
   const [residents, setResidents] = useState<Resident[]>([]);
-  const [towers, setTowers] = useState<Tower[]>([]);
+  const [towers, setTowers] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -118,8 +118,10 @@ export default function ResidentsPage() {
 
   const loadTowers = async () => {
     try {
-      const data = await getActiveTowers();
-      setTowers(data);
+      const data = await getPersonProperties();
+      if (data?.options) {
+        setTowers(data.options);
+      }
     } catch (error) {
       console.error('Erro ao carregar torres:', error);
     }
@@ -256,6 +258,15 @@ export default function ResidentsPage() {
           phoneNo: data.phone || undefined,
           email: data.email || undefined,
         };
+
+        if (data.tower) {
+          syncData.personProperties = [
+            {
+              propertyName: "Torre",
+              propertyValue: data.tower
+            }
+          ];
+        }
 
         if (data.photo_url) {
           const base64Face = await urlToBase64(data.photo_url);
@@ -500,9 +511,9 @@ export default function ResidentsPage() {
                           </SelectTrigger>
                         </FormControl>
                         <SelectContent>
-                          {towers.map((tower) => (
-                            <SelectItem key={tower.id} value={tower.name}>
-                              {tower.name}
+                          {towers.map((towerName, i) => (
+                            <SelectItem key={i} value={towerName}>
+                              {towerName}
                             </SelectItem>
                           ))}
                         </SelectContent>
@@ -624,8 +635,8 @@ export default function ResidentsPage() {
                     <TableCell>{resident.tower || '-'}</TableCell>
                     <TableCell>{resident.phone || '-'}</TableCell>
                     <TableCell>
-                      <Badge variant={resident.is_owner ? 'default' : 'secondary'}>
-                        {resident.is_owner ? 'Proprietário' : 'Inquilino'}
+                      <Badge variant="default">
+                        MORADOR
                       </Badge>
                     </TableCell>
                     <TableCell>
