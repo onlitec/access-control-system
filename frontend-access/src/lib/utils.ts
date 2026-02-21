@@ -38,6 +38,11 @@ export function formatDate(
   }).format(new Date(date));
 }
 export async function urlToBase64(url: string): Promise<string> {
+  // Se já for uma data URL, extrai e retorna direto
+  if (url.startsWith('data:')) {
+    return url.split(',')[1];
+  }
+
   const response = await fetch(url);
   const blob = await response.blob();
   return new Promise((resolve, reject) => {
