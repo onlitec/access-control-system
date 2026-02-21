@@ -18,6 +18,59 @@ import type { SignOptions } from 'jsonwebtoken';
 
 dotenv.config();
 
+// ============ HikCentral Department → Platform Role Mapping ============
+/**
+ * Mapeamento dinâmico: orgIndexCode (HikCentral) → Role da plataforma.
+ * Baseado nos departamentos reais do condomínio Calabasas:
+ *   1  = CALABASAS (raiz - ignorado)
+ *   3  = PRESTADORES
+ *   4  = ADMINISTRADORES
+ *   5  = PORTARIA
+ *   6  = CONDOMINIO
+ *   7  = MORADORES
+ *   8  = VISITANTES
+ */
+const HIK_ORG_ROLE_MAP: Record<string, string> = {
+    '1': 'SISTEMA',       // Raiz - ignorado nas listagens
+    '3': 'PRESTADOR',     // Prestadores de serviço
+    '4': 'ADMIN',         // Administradores / Gestão
+    '5': 'PORTARIA',      // Equipe da Portaria
+    '6': 'ADMIN',         // Condomínio (também admin)
+    '7': 'MORADOR',       // Moradores / Condôminos
+    '8': 'VISITANTE',     // Visitantes cadastrados
+};
+
+/**
+ * Nomes legíveis dos departamentos HikCentral.
+ */
+const HIK_ORG_NAMES: Record<string, string> = {
+    '1': 'CALABASAS',
+    '3': 'PRESTADORES',
+    '4': 'ADMINISTRADORES',
+    '5': 'PORTARIA',
+    '6': 'CONDOMINIO',
+    '7': 'MORADORES',
+    '8': 'VISITANTES',
+};
+
+/**
+ * Retorna o role da plataforma baseado no orgIndexCode do HikCentral.
+ * Faz lookup dinâmico no mapa, com fallback para busca por nome no HikCentral.
+ */
+function resolveRoleFromOrg(orgIndexCode: string): string {
+    return HIK_ORG_ROLE_MAP[orgIndexCode] || 'DESCONHECIDO';
+}
+
+/**
+ * org codes que representam Moradores (exibidos no painel de portaria).
+ */
+const RESIDENT_ORG_CODES = ['7'];
+
+/**
+ * org codes que NÃO devem aparecer em listagens operacionais.
+ */
+const SYSTEM_ORG_CODES = ['1'];
+
 const app = express();
 const prisma = new PrismaClient();
 const port = process.env.PORT || 3001;
@@ -1320,28 +1373,41 @@ app.get('/api/residents', authMiddleware, async (req, res) => {
         const pageNum = parseInt(page);
         const limitNum = parseInt(limit);
 
-        // Tentar buscar do HikCentral primeiro
+        // Buscar somente MORADORES do HikCentral (orgIndexCode=7)
         try {
-            const hikResult = await HikCentralService.getPersonListByOrgName('MORADORES', pageNum, limitNum);
+            const hikResult = await HikCentralService.getPersonList({
+                orgIndexCode: '7', // MORADORES
+                pageNo: pageNum,
+                pageSize: limitNum,
+            });
             const hikPersons = hikResult?.data?.list || [];
 
             if (hikPersons.length > 0) {
-                // Mapear dados do HikCentral para o formato local
-                const residents = hikPersons.map((p: any) => ({
-                    id: p.personId || p.indexCode || `hik-${Math.random().toString(36).substr(2, 9)}`,
-                    firstName: p.personGivenName || p.personName || '',
-                    lastName: p.personFamilyName || '',
-                    phone: p.phoneNo || p.phone || null,
-                    email: p.email || null,
-                    orgIndexCode: p.orgIndexCode || '',
-                    hikPersonId: p.personId || p.indexCode || null,
-                    orgName: p.orgName || 'MORADORES',
-                    gender: p.gender || null,
-                    certificateNo: p.certificateNo || null,
-                    personPhoto: p.personPhoto ? `https://100.77.145.39${p.personPhoto.picUri || ''}` : null,
-                    createdAt: p.createTime || new Date().toISOString(),
-                    updatedAt: p.updateTime || new Date().toISOString(),
-                }));
+                // Mapear dados do HikCentral com classificação correta por departamento
+                const residents = hikPersons.map((p: any) => {
+                    const orgCode = String(p.orgIndexCode || '7');
+                    const role = resolveRoleFromOrg(orgCode);
+                    const orgName = HIK_ORG_NAMES[orgCode] || p.orgName || 'DESCONHECIDO';
+
+                    console.log(`[HikCentral] Pessoa importada: ${p.personGivenName || ''} ${p.personFamilyName || ''} | Perfil: ${role} | Departamento: ${orgName} (${orgCode})`);
+
+                    return {
+                        id: p.personId || p.indexCode || `hik-${Math.random().toString(36).substr(2, 9)}`,
+                        firstName: p.personGivenName || p.personName || '',
+                        lastName: p.personFamilyName || '',
+                        phone: p.phoneNo || p.phone || null,
+                        email: p.email || null,
+                        orgIndexCode: orgCode,
+                        hikPersonId: p.personId || p.indexCode || null,
+                        orgName,
+                        role,
+                        gender: p.gender || null,
+                        certificateNo: p.certificateNo || null,
+                        personPhoto: p.personPhoto ? `https://100.77.145.39${p.personPhoto.picUri || ''}` : null,
+                        createdAt: p.createTime || new Date().toISOString(),
+                        updatedAt: p.updateTime || new Date().toISOString(),
+                    };
+                });
 
                 // Filtrar por busca se necessário
                 let filtered = residents;
@@ -1354,7 +1420,7 @@ app.get('/api/residents', authMiddleware, async (req, res) => {
                     );
                 }
 
-                // Salvar/atualizar no banco local (em background)
+                // Salvar/atualizar no banco local com orgIndexCode correto
                 for (const r of residents) {
                     try {
                         await prisma.person.upsert({
@@ -1390,24 +1456,100 @@ app.get('/api/residents', authMiddleware, async (req, res) => {
             console.log('Fallback to local DB for residents:', hikError.message);
         }
 
-        // Fallback: buscar do banco local
+        // Fallback: buscar do banco local (somente orgIndexCode de MORADORES)
         const skip = (pageNum - 1) * limitNum;
+        const baseWhere: any = { orgIndexCode: { in: RESIDENT_ORG_CODES } };
         const where = search ? {
+            ...baseWhere,
             OR: [
                 { firstName: { contains: search as string, mode: 'insensitive' as const } },
                 { lastName: { contains: search as string, mode: 'insensitive' as const } },
             ]
-        } : {};
+        } : baseWhere;
 
         const data = await prisma.person.findMany({
-            where: where as any,
+            where,
             skip,
             take: limitNum,
             orderBy: { createdAt: 'desc' }
         });
-        const count = await prisma.person.count({ where: where as any });
+        const count = await prisma.person.count({ where });
         res.json({ data, count, source: 'local' });
     } catch (error: any) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// ============ Sincronização completa de todas as pessoas por departamento ============
+app.post('/api/hikcentral/persons/sync', authMiddleware, async (req, res) => {
+    try {
+        const summary: Record<string, { role: string; count: number; names: string[] }> = {};
+        const errors: string[] = [];
+
+        // Busca todos os departamentos operacionais (excluindo raiz e sistema)
+        const orgCodesToSync = Object.entries(HIK_ORG_ROLE_MAP)
+            .filter(([code]) => !SYSTEM_ORG_CODES.includes(code));
+
+        for (const [orgCode, role] of orgCodesToSync) {
+            const orgName = HIK_ORG_NAMES[orgCode] || orgCode;
+            try {
+                const result = await HikCentralService.getPersonList({
+                    orgIndexCode: orgCode,
+                    pageNo: 1,
+                    pageSize: 100,
+                });
+                const persons = result?.data?.list || [];
+
+                summary[orgName] = { role, count: persons.length, names: [] };
+
+                for (const p of persons) {
+                    const fullName = `${p.personGivenName || p.personName || ''} ${p.personFamilyName || ''}`.trim();
+                    console.log(`[Sync] Pessoa: ${fullName} | Perfil: ${role} | Departamento: ${orgName} (${orgCode})`);
+                    summary[orgName].names.push(fullName);
+
+                    const hikPersonId = p.personId || p.indexCode || null;
+                    if (!hikPersonId) continue;
+
+                    try {
+                        await prisma.person.upsert({
+                            where: { hikPersonId },
+                            update: {
+                                firstName: p.personGivenName || p.personName || '',
+                                lastName: p.personFamilyName || '',
+                                phone: p.phoneNo || p.phone || null,
+                                email: p.email || null,
+                                orgIndexCode: orgCode,
+                            },
+                            create: {
+                                firstName: p.personGivenName || p.personName || '',
+                                lastName: p.personFamilyName || '',
+                                phone: p.phoneNo || p.phone || null,
+                                email: p.email || null,
+                                orgIndexCode: orgCode,
+                                hikPersonId,
+                            },
+                        });
+                    } catch (upsertErr: any) {
+                        errors.push(`Upsert falhou para ${fullName}: ${upsertErr.message}`);
+                    }
+                }
+            } catch (deptErr: any) {
+                errors.push(`Depto ${orgName} (${orgCode}): ${deptErr.message}`);
+                console.error(`[Sync] Erro no departamento ${orgName}:`, deptErr.message);
+            }
+        }
+
+        const totalSynced = Object.values(summary).reduce((acc, v) => acc + v.count, 0);
+        console.log(`[Sync] Sincronização concluída. Total: ${totalSynced} pessoas.`);
+
+        res.json({
+            success: true,
+            totalSynced,
+            summary,
+            errors: errors.length > 0 ? errors : undefined,
+        });
+    } catch (error: any) {
+        console.error('[Sync] Erro geral:', error.message);
         res.status(500).json({ error: error.message });
     }
 });
