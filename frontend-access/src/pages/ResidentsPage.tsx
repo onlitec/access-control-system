@@ -633,7 +633,10 @@ export default function ResidentsPage() {
                   <TableRow key={resident.id}>
                     <TableCell>
                       <Avatar>
-                        <AvatarImage src={resident.photo_url || undefined} />
+                        <AvatarImage
+                          src={resident.photo_url || undefined}
+                          alt={`Foto de perfil de ${resident.full_name}`}
+                        />
                         <AvatarFallback className="bg-primary/10 text-primary font-semibold text-sm">
                           {resident.full_name
                             ? resident.full_name.split(' ').map((n: string) => n[0]).filter(Boolean).slice(0, 2).join('').toUpperCase()
