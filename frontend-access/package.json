@@ -4,7 +4,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc -b && vite build",
+    "build": "vite build",
     "lint": "tsgo -p tsconfig.check.json; biome lint --only=correctness/noUndeclaredDependencies; ast-grep scan",
     "preview": "vite preview"
   },
