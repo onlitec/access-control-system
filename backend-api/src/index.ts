@@ -1415,18 +1415,18 @@ app.get('/api/residents', authMiddleware, async (req, res) => {
         const pageNum = parseInt(page);
         const limitNum = parseInt(limit);
 
-        // Buscar somente MORADORES do HikCentral (orgIndexCode=7)
+        // Buscar pessoas do HikCentral - pedir mais registros porque precisamos pós-filtrar
         try {
             const hikResult = await HikCentralService.getPersonList({
                 orgIndexCode: '7', // MORADORES
-                pageNo: pageNum,
-                pageSize: limitNum,
+                pageNo: 1,
+                pageSize: 200, // Buscar todas para pós-filtrar corretamente
             });
             const hikPersons = hikResult?.data?.list || [];
 
             if (hikPersons.length > 0) {
                 // Mapear dados do HikCentral com classificação correta por departamento
-                const residents = hikPersons.map((p: any) => {
+                const allPersons = hikPersons.map((p: any) => {
                     const orgCode = String(p.orgIndexCode || '7');
                     const role = resolveRoleFromOrg(orgCode);
                     const orgName = HIK_ORG_NAMES[orgCode] || p.orgName || 'DESCONHECIDO';
@@ -1448,8 +1448,6 @@ app.get('/api/residents', authMiddleware, async (req, res) => {
                         personPhoto: (() => {
                             const pic = p.personPhoto;
                             if (!pic) return null;
-                            // picUri deve começar com '/' para ser um caminho válido
-                            // Hashes hexadecimais (sem '/') são ignorados
                             const uri = pic.picUri || pic.uri || '';
                             if (!uri || !uri.startsWith('/')) return null;
                             return `https://100.77.145.39${uri}`;
@@ -1459,7 +1457,12 @@ app.get('/api/residents', authMiddleware, async (req, res) => {
                     };
                 });
 
-                // Filtrar por busca se necessário
+                // ===== PÓS-FILTRAGEM POR DEPARTAMENTO =====
+                // O HikCentral pode retornar suborganizações. Filtrar somente MORADORES.
+                const residents = allPersons.filter((r: any) => RESIDENT_ORG_CODES.includes(r.orgIndexCode));
+                console.log(`[HikCentral] Total recebido: ${allPersons.length} | Filtrado MORADORES: ${residents.length}`);
+
+                // Filtrar por busca de texto se necessário
                 let filtered = residents;
                 if (search) {
                     const searchLower = (search as string).toLowerCase();
