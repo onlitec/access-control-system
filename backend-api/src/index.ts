@@ -1403,7 +1403,15 @@ app.get('/api/residents', authMiddleware, async (req, res) => {
                         role,
                         gender: p.gender || null,
                         certificateNo: p.certificateNo || null,
-                        personPhoto: p.personPhoto ? `https://100.77.145.39${p.personPhoto.picUri || ''}` : null,
+                        personPhoto: (() => {
+                            const pic = p.personPhoto;
+                            if (!pic) return null;
+                            // picUri deve começar com '/' para ser um caminho válido
+                            // Hashes hexadecimais (sem '/') são ignorados
+                            const uri = pic.picUri || pic.uri || '';
+                            if (!uri || !uri.startsWith('/')) return null;
+                            return `https://100.77.145.39${uri}`;
+                        })(),
                         createdAt: p.createTime || new Date().toISOString(),
                         updatedAt: p.updateTime || new Date().toISOString(),
                     };
@@ -1617,8 +1625,68 @@ app.post('/api/residents', authMiddleware, async (req, res) => {
 
 app.patch('/api/residents/:id', authMiddleware, async (req, res) => {
     try {
-        const person = await prisma.person.update({ where: { id: req.params.id }, data: req.body });
-        res.json(person);
+        const { id } = req.params;
+        const body = { ...req.body };
+
+        // Remover photo_url do body se for base64 (evita 413 Payload Too Large)
+        if (body.photo_url && typeof body.photo_url === 'string' && body.photo_url.startsWith('data:')) {
+            delete body.photo_url;
+        }
+
+        // Mapear campos snake_case do frontend para camelCase do Prisma
+        const prismaData: any = {};
+        if (body.full_name !== undefined) {
+            const parts = (body.full_name || '').trim().split(' ');
+            prismaData.firstName = parts[0] || '';
+            prismaData.lastName = parts.slice(1).join(' ') || '';
+        }
+        if (body.phone !== undefined) prismaData.phone = body.phone;
+        if (body.email !== undefined) prismaData.email = body.email;
+        if (body.unit_number !== undefined) prismaData.orgIndexCode = body.unit_number;
+        if (body.hikcentral_person_id !== undefined) prismaData.hikPersonId = body.hikcentral_person_id;
+        if (body.hikPersonId !== undefined) prismaData.hikPersonId = body.hikPersonId;
+        if (body.hikcentral_person_id !== undefined) prismaData.hikPersonId = body.hikcentral_person_id;
+
+        // Campo legado: aceitar direto também
+        if (body.firstName !== undefined) prismaData.firstName = body.firstName;
+        if (body.lastName !== undefined) prismaData.lastName = body.lastName;
+        if (body.orgIndexCode !== undefined) prismaData.orgIndexCode = body.orgIndexCode;
+
+        // Tentar atualizar por UUID primeiro, depois por hikPersonId (para IDs do HikCentral como "22")
+        let person: any;
+        try {
+            person = await prisma.person.update({ where: { id }, data: prismaData });
+        } catch (uuidErr: any) {
+            // Fallback: buscar pelo hikPersonId se o ID não for um UUID válido
+            if (uuidErr?.code === 'P2025' || uuidErr?.message?.includes('Invalid') || uuidErr?.code === 'P2023') {
+                const existing = await prisma.person.findFirst({ where: { hikPersonId: id } });
+                if (!existing) {
+                    return res.status(404).json({ error: 'Morador não encontrado' });
+                }
+                person = await prisma.person.update({ where: { id: existing.id }, data: prismaData });
+            } else {
+                throw uuidErr;
+            }
+        }
+
+        // Responder no formato snake_case que o frontend espera
+        res.json({
+            id: person.id,
+            full_name: `${person.firstName} ${person.lastName}`.trim(),
+            cpf: '',
+            phone: person.phone || null,
+            email: person.email || null,
+            unit_number: person.orgIndexCode || '',
+            block: null,
+            tower: HIK_ORG_NAMES[person.orgIndexCode] || null,
+            photo_url: null,
+            is_owner: true,
+            hikcentral_person_id: person.hikPersonId || null,
+            notes: null,
+            created_by: null,
+            created_at: person.createdAt,
+            updated_at: person.updatedAt,
+        });
     } catch (error: any) {
         res.status(500).json({ error: error.message });
     }
@@ -1626,7 +1694,18 @@ app.patch('/api/residents/:id', authMiddleware, async (req, res) => {
 
 app.delete('/api/residents/:id', authMiddleware, async (req, res) => {
     try {
-        await prisma.person.delete({ where: { id: req.params.id } });
+        const { id } = req.params;
+        try {
+            await prisma.person.delete({ where: { id } });
+        } catch (uuidErr: any) {
+            if (uuidErr?.code === 'P2025' || uuidErr?.code === 'P2023') {
+                const existing = await prisma.person.findFirst({ where: { hikPersonId: id } });
+                if (!existing) return res.status(404).json({ error: 'Morador não encontrado' });
+                await prisma.person.delete({ where: { id: existing.id } });
+            } else {
+                throw uuidErr;
+            }
+        }
         res.status(204).send();
     } catch (error: any) {
         res.status(500).json({ error: error.message });
