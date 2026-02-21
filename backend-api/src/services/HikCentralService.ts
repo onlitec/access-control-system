@@ -46,7 +46,7 @@ export class HikCentralService {
 
         stringToSign += path;
 
-        console.log('StringToSign:', stringToSign.replace(/\n/g, '\\n'));
+        // console.log('StringToSign:', stringToSign.replace(/\n/g, '\\n'));
 
         return crypto
             .createHmac('sha256', appSecret)
@@ -153,47 +153,74 @@ export class HikCentralService {
      */
     public static async getPersonPhoto(personId: string): Promise<{ buffer: Buffer; contentType: string } | null> {
         try {
-            // Primeiro: buscar dados da pessoa para obter picUri
+            // 1. Buscar dados detalhados da pessoa para obter picUri atualizada
             const personResult = await this.hikRequest('/artemis/api/resource/v1/person/personList', {
                 method: 'POST',
                 body: JSON.stringify({ personIds: personId, pageNo: 1, pageSize: 1 }),
             });
 
             const person = personResult?.data?.list?.[0];
-            if (!person?.personPhoto) return null;
-
-            const picUri = person.personPhoto.picUri || person.personPhoto.uri || '';
-            if (!picUri) return null;
-
-            // picUri pode ser uma URL relativa - fazer download autenticado
-            const config = await prisma.hikcentralConfig.findFirst({ orderBy: { createdAt: 'desc' } });
-            if (!config) return null;
-
-            const baseUrl = config.apiUrl.endsWith('/') ? config.apiUrl.slice(0, -1) : config.apiUrl;
-
-            // Construir a URL completa da imagem
-            let imageUrl = '';
-            if (picUri.startsWith('http')) {
-                imageUrl = picUri;
-            } else if (picUri.startsWith('/')) {
-                imageUrl = `${baseUrl}${picUri}`;
-            } else {
-                // picUri é um hash - tentar via endpoint /pic 
-                imageUrl = `${baseUrl}/artemis/media/pic/${picUri}`;
+            if (!person?.personPhoto) {
+                console.log(`[HikCentral] Pessoa ${personId} não possui personPhoto na API.`);
+                return null;
             }
 
-            const imageResponse = await fetch(imageUrl, {
-                // @ts-ignore
-                agent: new (require('https').Agent)({ rejectUnauthorized: false })
-            });
+            const picUri = person.personPhoto.picUri || person.personPhoto.uri || '';
+            if (!picUri) {
+                console.log(`[HikCentral] Pessoa ${personId} possui objeto de foto mas picUri está vazio.`);
+                return null;
+            }
 
-            if (!imageResponse.ok) return null;
+            console.log(`[HikCentral] Buscando foto para ${personId} com picUri: ${picUri}`);
 
-            const contentType = imageResponse.headers.get('content-type') || 'image/jpeg';
-            const arrayBuffer = await imageResponse.arrayBuffer();
-            return { buffer: Buffer.from(arrayBuffer), contentType };
+            let buffer: Buffer;
+            let contentType = 'image/jpeg';
+
+            // Se for um link absoluto externo (raro no Artemis)
+            if (picUri.startsWith('http')) {
+                const imgRes = await fetch(picUri, {
+                    // @ts-ignore
+                    agent: new (require('https').Agent)({ rejectUnauthorized: false })
+                });
+                if (!imgRes.ok) throw new Error(`Fetch externo falhou: ${imgRes.statusText}`);
+                buffer = Buffer.from(await imgRes.arrayBuffer());
+                contentType = imgRes.headers.get('content-type') || 'image/jpeg';
+            } else {
+                // Se for um caminho relativo ou hash, usamos hikRequestRaw para garantir assinatura
+                let apiPath = picUri;
+
+                // Formatos comuns de picUri no Artemis:
+                // 1. "/artemis/static/..."
+                // 2. "abc123hash" 
+                // Se não começa com "/", geralmente é um identificador que precisa do endpoint de mídia
+                if (!picUri.startsWith('/')) {
+                    apiPath = `/artemis/media/pic/${picUri}`;
+                }
+
+                try {
+                    // Tentamos a requisição assinada (Artemis Gateway resolve esses paths)
+                    buffer = await this.hikRequestRaw(apiPath, { method: 'GET' });
+                    contentType = 'image/jpeg';
+                } catch (e: any) {
+                    console.warn(`[HikCentral] Falha no path direto ${apiPath}, tentando via person/picture API:`, e.message);
+
+                    // Fallback para API oficial de picture se disponível
+                    try {
+                        buffer = await this.hikRequestRaw('/artemis/api/resource/v1/person/picture', {
+                            method: 'POST',
+                            body: JSON.stringify({ personId, picUri })
+                        });
+                        contentType = 'image/jpeg';
+                    } catch (e2: any) {
+                        console.error(`[HikCentral] Todas as tentativas de buscar foto para ${personId} falharam:`, e2.message);
+                        return null;
+                    }
+                }
+            }
+
+            return { buffer, contentType };
         } catch (error: any) {
-            console.error(`[HikCentral] Erro ao buscar foto de ${personId}:`, error.message);
+            console.error(`[HikCentral] Erro crítico ao buscar foto de ${personId}:`, error.message);
             return null;
         }
     }

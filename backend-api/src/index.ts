@@ -1291,23 +1291,52 @@ app.post('/api/persons/sync', authMiddleware, async (req, res) => {
 
         const hikPersonId = hikResult?.data?.personId;
 
+        // Extrair a foto se enviada no faces
+        let photoUrlToSave: string | undefined = undefined;
+        if (faces && Array.isArray(faces) && faces.length > 0 && faces[0].faceData) {
+            const base64 = faces[0].faceData;
+            photoUrlToSave = base64.startsWith('data:') ? base64 : `data:image/jpeg;base64,${base64}`;
+        }
+
         // 2. Save/Update Local DB
+        // Tentar encontrar por hikPersonId OU por Telefone/Email (para unificar cadastros legados)
+        let existingPersonId: string | undefined = undefined;
+        if (hikPersonId) {
+            const p = await prisma.person.findFirst({ where: { hikPersonId } });
+            if (p) existingPersonId = p.id;
+        }
+
+        if (!existingPersonId && (phone || email)) {
+            const p = await prisma.person.findFirst({
+                where: {
+                    OR: [
+                        phone ? { phone } : undefined,
+                        email ? { email } : undefined
+                    ].filter(Boolean) as any
+                }
+            });
+            if (p) existingPersonId = p.id;
+        }
+
         const person = await prisma.person.upsert({
-            where: { hikPersonId: hikPersonId || '' },
+            where: { id: existingPersonId || 'non-existent-uuid' },
             update: {
                 firstName,
                 lastName,
-                phone,
-                email,
+                phone: phone || null,
+                email: email || null,
                 orgIndexCode: orgIndexCode || '1',
+                hikPersonId: hikPersonId || undefined,
+                ...(photoUrlToSave ? { photoUrl: photoUrlToSave } : {})
             },
             create: {
                 firstName,
                 lastName,
-                phone,
-                email,
+                phone: phone || null,
+                email: email || null,
                 orgIndexCode: orgIndexCode || '1',
-                hikPersonId: hikPersonId,
+                hikPersonId: hikPersonId || null,
+                photoUrl: photoUrlToSave || null
             },
         });
 
@@ -1339,15 +1368,23 @@ app.put('/api/persons/sync', authMiddleware, async (req, res) => {
             faces: faces
         });
 
+        // Extrair a foto se enviada no faces
+        let photoUrlToSave: string | undefined = undefined;
+        if (faces && Array.isArray(faces) && faces.length > 0 && faces[0].faceData) {
+            const base64 = faces[0].faceData;
+            photoUrlToSave = base64.startsWith('data:') ? base64 : `data:image/jpeg;base64,${base64}`;
+        }
+
         // 2. Atualizar no banco local
         const person = await prisma.person.update({
             where: { hikPersonId },
             data: {
                 firstName,
                 lastName,
-                phone,
-                email,
+                phone: phone || null,
+                email: email || null,
                 orgIndexCode: orgIndexCode || '7',
+                ...(photoUrlToSave ? { photoUrl: photoUrlToSave } : {})
             },
         });
 
@@ -1431,7 +1468,7 @@ app.get('/api/residents', authMiddleware, async (req, res) => {
                     const role = resolveRoleFromOrg(orgCode);
                     const orgName = HIK_ORG_NAMES[orgCode] || p.orgName || 'DESCONHECIDO';
 
-                    console.log(`[HikCentral] Pessoa importada: ${p.personGivenName || ''} ${p.personFamilyName || ''} | Perfil: ${role} | Departamento: ${orgName} (${orgCode})`);
+                    console.log(`[HikCentral] Pessoa importada: ${p.personGivenName || ''} ${p.personFamilyName || ''} | Perfil: ${role} | Departamento: ${orgName} (${orgCode}) | personPhoto: ${JSON.stringify(p.personPhoto)} | faceData: ${p.faceData ? 'YES(' + String(p.faceData).length + 'chars)' : 'NO'}`);
 
                     return {
                         id: p.personId || p.indexCode || `hik-${Math.random().toString(36).substr(2, 9)}`,
