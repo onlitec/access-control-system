@@ -1276,7 +1276,7 @@ app.get('/api/health', (req, res) => {
 // ============ Residents Sync (HikCentral + Local DB) ============
 app.post('/api/persons/sync', authMiddleware, async (req, res) => {
     try {
-        const { firstName, lastName, phone, email, orgIndexCode, personProperties } = req.body;
+        const { firstName, lastName, phone, email, orgIndexCode, personProperties, faces } = req.body;
 
         // 1. Sync with HikCentral
         const hikResult = await HikCentralService.addPerson({
@@ -1285,7 +1285,8 @@ app.post('/api/persons/sync', authMiddleware, async (req, res) => {
             phoneNo: phone,
             email: email,
             orgIndexCode: orgIndexCode || '1',
-            personProperties: personProperties
+            personProperties: personProperties,
+            faces: faces
         });
 
         const hikPersonId = hikResult?.data?.personId;
@@ -1313,6 +1314,46 @@ app.post('/api/persons/sync', authMiddleware, async (req, res) => {
         res.json({ success: true, person, hikResult });
     } catch (error: any) {
         console.error('Sync Error:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// ============ Residents Update Sync (HikCentral UPDATE, não ADD) ============
+app.put('/api/persons/sync', authMiddleware, async (req, res) => {
+    try {
+        const { hikPersonId, firstName, lastName, phone, email, orgIndexCode, personProperties, faces } = req.body;
+
+        if (!hikPersonId) {
+            return res.status(400).json({ error: 'hikPersonId é obrigatório para atualização' });
+        }
+
+        // 1. Atualizar no HikCentral (UPDATE, não ADD)
+        const hikResult = await HikCentralService.updatePerson({
+            personId: hikPersonId,
+            personGivenName: firstName,
+            personFamilyName: lastName,
+            phoneNo: phone,
+            email: email,
+            orgIndexCode: orgIndexCode || '7',
+            personProperties: personProperties,
+            faces: faces
+        });
+
+        // 2. Atualizar no banco local
+        const person = await prisma.person.update({
+            where: { hikPersonId },
+            data: {
+                firstName,
+                lastName,
+                phone,
+                email,
+                orgIndexCode: orgIndexCode || '7',
+            },
+        });
+
+        res.json({ success: true, person, hikResult });
+    } catch (error: any) {
+        console.error('Update Sync Error:', error);
         res.status(500).json({ error: error.message });
     }
 });
@@ -1509,7 +1550,7 @@ app.get('/api/residents', authMiddleware, async (req, res) => {
             unit_number: p.orgIndexCode || '',
             block: null,
             tower: HIK_ORG_NAMES[p.orgIndexCode] || null,
-            photo_url: null,
+            photo_url: p.photoUrl || null,
             is_owner: true,
             hikcentral_person_id: p.hikPersonId || null,
             notes: null,
@@ -1676,7 +1717,7 @@ app.post('/api/residents', authMiddleware, async (req, res) => {
             unit_number: person.orgIndexCode || '',
             block: null,
             tower: HIK_ORG_NAMES[person.orgIndexCode] || null,
-            photo_url: null,
+            photo_url: person.photoUrl || null,
             is_owner: true,
             hikcentral_person_id: person.hikPersonId || null,
             notes: null,
@@ -1694,9 +1735,10 @@ app.patch('/api/residents/:id', authMiddleware, async (req, res) => {
         const { id } = req.params;
         const body = { ...req.body };
 
-        // Remover photo_url do body se for base64 (evita 413 Payload Too Large)
-        if (body.photo_url && typeof body.photo_url === 'string' && body.photo_url.startsWith('data:')) {
-            delete body.photo_url;
+        // Salvar photo_url como photoUrl no Prisma (base64 comprimida vinda do frontend)
+        let photoUrl: string | null = null;
+        if (body.photo_url && typeof body.photo_url === 'string') {
+            photoUrl = body.photo_url;
         }
 
         // Mapear campos snake_case do frontend para camelCase do Prisma
@@ -1717,6 +1759,9 @@ app.patch('/api/residents/:id', authMiddleware, async (req, res) => {
         if (body.firstName !== undefined) prismaData.firstName = body.firstName;
         if (body.lastName !== undefined) prismaData.lastName = body.lastName;
         if (body.orgIndexCode !== undefined) prismaData.orgIndexCode = body.orgIndexCode;
+
+        // Foto
+        if (photoUrl !== null) prismaData.photoUrl = photoUrl;
 
         // Tentar atualizar por UUID primeiro, depois por hikPersonId (para IDs do HikCentral como "22")
         let person: any;
@@ -1745,7 +1790,7 @@ app.patch('/api/residents/:id', authMiddleware, async (req, res) => {
             unit_number: person.orgIndexCode || '',
             block: null,
             tower: HIK_ORG_NAMES[person.orgIndexCode] || null,
-            photo_url: null,
+            photo_url: person.photoUrl || null,
             is_owner: true,
             hikcentral_person_id: person.hikPersonId || null,
             notes: null,

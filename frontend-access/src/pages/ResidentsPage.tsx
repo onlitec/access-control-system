@@ -41,7 +41,7 @@ import {
 import { useToast } from '@/hooks/use-toast';
 import { getResidents, createResident, updateResident, deleteResident, getPersonProperties } from '@/db/api';
 import { urlToBase64 } from '@/lib/utils';
-import { addPerson, reapplyAuthorization, getOrganizations } from '@/services/hikcentral';
+import { addPerson, updatePersonSync, reapplyAuthorization, getOrganizations } from '@/services/hikcentral';
 import { useAuth } from '@/contexts/AuthContext';
 import type { Resident, Tower } from '@/types';
 import { Plus, Search, Pencil, Trash2, User, Camera, Link as LinkIcon } from 'lucide-react';
@@ -254,7 +254,7 @@ export default function ResidentsPage() {
         const syncData: any = {
           personGivenName: givenName,
           personFamilyName: familyName,
-          orgIndexCode: orgIndexCode || 'root', // Fallback caso não encontre
+          orgIndexCode: orgIndexCode || 'root',
           phoneNo: data.phone || undefined,
           email: data.email || undefined,
         };
@@ -268,18 +268,30 @@ export default function ResidentsPage() {
           ];
         }
 
-        if (data.photo_url) {
+        if (data.photo_url && data.photo_url.startsWith('data:')) {
           const base64Face = await urlToBase64(data.photo_url);
           syncData.faces = [{ faceData: base64Face }];
         }
 
-        const hikResponse: any = await addPerson(syncData);
-        const hikPersonId = hikResponse?.data?.personId;
+        // Se já existe no HikCentral (editando), usar UPDATE. Senão, ADD.
+        const existingHikId = editingResident?.hikcentral_person_id;
 
-        if (hikPersonId) {
-          await updateResident(residentId, {
-            hikcentral_person_id: hikPersonId
-          });
+        if (existingHikId) {
+          // UPDATE: pessoa já existe no HikCentral
+          syncData.hikPersonId = existingHikId;
+          await updatePersonSync(syncData);
+          console.log('[HikCentral] Pessoa ATUALIZADA:', existingHikId);
+        } else {
+          // ADD: nova pessoa no HikCentral
+          const hikResponse: any = await addPerson(syncData);
+          const hikPersonId = hikResponse?.data?.personId;
+
+          if (hikPersonId) {
+            await updateResident(residentId, {
+              hikcentral_person_id: hikPersonId
+            });
+          }
+          console.log('[HikCentral] Pessoa CRIADA:', hikPersonId);
         }
 
         await reapplyAuthorization();

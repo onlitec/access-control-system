@@ -30,6 +30,34 @@ export async function addPerson(person: {
 }
 
 /**
+ * Atualizar Pessoa existente (Morador) - Proxied to Backend (PUT)
+ */
+export async function updatePersonSync(person: {
+    hikPersonId: string;
+    personGivenName: string;
+    personFamilyName: string;
+    orgIndexCode: string;
+    phoneNo?: string;
+    email?: string;
+    personProperties?: { propertyName: string, propertyValue: string }[];
+    faces?: { faceData: string }[];
+}) {
+    return request('/persons/sync', {
+        method: 'PUT',
+        body: JSON.stringify({
+            hikPersonId: person.hikPersonId,
+            firstName: person.personGivenName,
+            lastName: person.personFamilyName,
+            phone: person.phoneNo,
+            email: person.email,
+            orgIndexCode: person.orgIndexCode,
+            personProperties: person.personProperties,
+            faces: person.faces
+        }),
+    });
+}
+
+/**
  * Agendar Visitante - Proxied to Backend
  */
 export async function createAppointment(appointment: {
