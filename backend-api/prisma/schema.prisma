@@ -37,13 +37,19 @@ model Person {
 model Visitor {
   id              String   @id @default(uuid())
   name            String
+  surname         String?
+  type            String?  @default("VISITOR")
   certificateType String?  @map("certificate_type")
   certificateNo   String?  @map("certificate_no")
+  email           String?
   phone           String?
   plateNo         String?  @map("plate_no")
   visitStartTime  DateTime @map("visit_start_time")
   visitEndTime    DateTime @map("visit_end_time")
   hikVisitorId    String?  @map("hik_visitor_id")
+  status          String?  @default("ACTIVE")
+  inviteToken     String?  @map("invite_token")
+  accessLevelId   String?  @map("access_level_id")
   createdAt       DateTime @default(now()) @map("created_at")
 
   @@map("visitors")

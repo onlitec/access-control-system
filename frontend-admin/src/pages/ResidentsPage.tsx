@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { getResidents, createResident, deleteResident } from '@/services/api';
-import { Users, Plus, Search, Trash2, X, Loader2, AlertTriangle } from 'lucide-react';
+import { getResidents, createResident, deleteResident, syncResidentsFromHikCentral } from '@/services/api';
+import { Users, Plus, Search, Trash2, X, Loader2, AlertTriangle, RefreshCw } from 'lucide-react';
 
 export default function ResidentsPage() {
     const [residents, setResidents] = useState<any[]>([]);
@@ -9,8 +9,9 @@ export default function ResidentsPage() {
     const [search, setSearch] = useState('');
     const [loading, setLoading] = useState(true);
     const [showForm, setShowForm] = useState(false);
-    const [formData, setFormData] = useState({ firstName: '', lastName: '', phone: '', email: '', orgIndexCode: '1' });
+    const [formData, setFormData] = useState({ firstName: '', lastName: '', phone: '', email: '', orgIndexCode: '1', photoBase64: '' });
     const [formLoading, setFormLoading] = useState(false);
+    const [syncing, setSyncing] = useState(false);
     const [error, setError] = useState('');
 
     useEffect(() => {
@@ -36,13 +37,48 @@ export default function ResidentsPage() {
         try {
             await createResident(formData);
             setShowForm(false);
-            setFormData({ firstName: '', lastName: '', phone: '', email: '', orgIndexCode: '1' });
+            setFormData({ firstName: '', lastName: '', phone: '', email: '', orgIndexCode: '1', photoBase64: '' });
             loadResidents();
         } catch (err: any) {
             setError(err.message);
         } finally {
             setFormLoading(false);
         }
+    };
+
+    const handlePhotoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0];
+        if (!file) return;
+
+        const reader = new FileReader();
+        reader.onload = (event) => {
+            const img = new Image();
+            img.onload = () => {
+                const canvas = document.createElement('canvas');
+                // Calculate new dimensions keeping aspect ratio (max width/height 600px)
+                const maxSize = 600;
+                let width = img.width;
+                let height = img.height;
+
+                if (width > height && width > maxSize) {
+                    height *= maxSize / width;
+                    width = maxSize;
+                } else if (height > maxSize) {
+                    width *= maxSize / height;
+                    height = maxSize;
+                }
+
+                canvas.width = width;
+                canvas.height = height;
+                const ctx = canvas.getContext('2d');
+                ctx?.drawImage(img, 0, 0, width, height);
+                // Compress to JPEG with 0.8 quality
+                const compressedBase64 = canvas.toDataURL('image/jpeg', 0.8);
+                setFormData({ ...formData, photoBase64: compressedBase64 });
+            };
+            img.src = event.target?.result as string;
+        };
+        reader.readAsDataURL(file);
     };
 
     const handleDelete = async (id: string) => {
@@ -55,6 +91,19 @@ export default function ResidentsPage() {
         }
     };
 
+    const handleSync = async () => {
+        setSyncing(true);
+        setError('');
+        try {
+            await syncResidentsFromHikCentral();
+            loadResidents();
+        } catch (err: any) {
+            setError(err.message);
+        } finally {
+            setSyncing(false);
+        }
+    };
+
     const totalPages = Math.ceil(count / 20);
 
     return (
@@ -64,9 +113,15 @@ export default function ResidentsPage() {
                     <h1><Users size={24} /> Moradores</h1>
                     <p>{count} moradores cadastrados</p>
                 </div>
-                <button className="btn btn-primary" onClick={() => setShowForm(true)}>
-                    <Plus size={18} /> Novo Morador
-                </button>
+                <div style={{ display: 'flex', gap: '8px' }}>
+                    <button className="btn btn-ghost" onClick={handleSync} disabled={syncing}>
+                        {syncing ? <Loader2 size={18} className="spin" /> : <RefreshCw size={18} />}
+                        {syncing ? ' Sincronizando...' : ' Sincronizar'}
+                    </button>
+                    <button className="btn btn-primary" onClick={() => setShowForm(true)}>
+                        <Plus size={18} /> Novo Morador
+                    </button>
+                </div>
             </div>
 
             {error && (
@@ -117,7 +172,14 @@ export default function ResidentsPage() {
                             </div>
                             <div className="form-group">
                                 <label>Unidade / Bloco</label>
-                                <input value={formData.orgIndexCode} onChange={(e) => setFormData({ ...formData, orgIndexCode: e.target.value })} />
+                                <input required value={formData.orgIndexCode} onChange={(e) => setFormData({ ...formData, orgIndexCode: e.target.value })} />
+                            </div>
+                            <div className="form-group">
+                                <label>Foto para Reconh. Facial</label>
+                                <input type="file" accept="image/*" onChange={handlePhotoUpload} />
+                                {formData.photoBase64 && (
+                                    <img src={formData.photoBase64} alt="Preview" style={{ marginTop: 10, width: '100px', borderRadius: '8px' }} />
+                                )}
                             </div>
                             <div className="modal-actions">
                                 <button type="button" className="btn btn-ghost" onClick={() => setShowForm(false)}>Cancelar</button>

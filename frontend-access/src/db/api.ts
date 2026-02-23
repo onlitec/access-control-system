@@ -63,6 +63,12 @@ export const updateResident = async (id: string, updates: Partial<Resident>) => 
   });
 };
 
+export const generateRecoveryLink = async (id: string) => {
+  return request<{ message: string, onboarding_url: string }>(`/residents/${id}/recovery-link`, {
+    method: 'POST',
+  });
+};
+
 export const deleteResident = async (id: string) => {
   return request<void>(`/residents/${id}`, {
     method: 'DELETE',
@@ -76,6 +82,17 @@ export const getAllResidentsForSelect = async () => {
 // ============ Towers ============
 export const getActiveTowers = async () => {
   return request<Tower[]>(`/towers/active`);
+};
+
+export const getStaff = async (search = '') => {
+  return request<{ data: any[], success: boolean }>(`/staff?search=${search}`);
+};
+
+export const createStaff = async (staff: any) => {
+  return request<any>(`/staff`, {
+    method: 'POST',
+    body: JSON.stringify(staff),
+  });
 };
 
 // ============ Service Providers ============
@@ -192,7 +209,19 @@ export const getDevicesStatus = async (): Promise<DeviceStatus[]> => {
   return request<DeviceStatus[]>(`/devices/status`);
 };
 
-// ============ HikCentral Person Properties ============
+// ============ HikCentral Metadata ============
+export const getHikcentralAccessLevels = async () => {
+  return request<{ success: boolean, data: { list: any[] } }>(`/hikcentral/access-levels`);
+};
+
+export const getHikcentralCustomFields = async () => {
+  return request<{ success: boolean, data: { list: any[] } }>(`/hikcentral/custom-fields`);
+};
+
+export const syncResidents = async () => {
+  return request<{ success: boolean, count: number }>(`/hikcentral/residents/sync`, { method: 'POST' });
+};
+
 export const getPersonProperties = async (): Promise<{ options: string[] }> => {
   return request<{ options: string[] }>(`/hikcentral/person-properties`);
 };
