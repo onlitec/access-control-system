@@ -1,8 +1,8 @@
 // Centralized API service for Admin Panel
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'https://172.20.120.41:8443/api';
-const ACCESS_KEY = 'admin_token';
-const REFRESH_KEY = 'admin_refresh_token';
-const USER_KEY = 'admin_user';
+const ACCESS_KEY = 'auth_token';
+const REFRESH_KEY = 'auth_refresh_token';
+const USER_KEY = 'auth_user';
 
 let refreshInFlight: Promise<string | null> | null = null;
 
@@ -178,6 +178,10 @@ export const updateResident = async (id: string, data: any) => {
 
 export const deleteResident = async (id: string) => {
     return request<void>(`/residents/${id}`, { method: 'DELETE' });
+};
+
+export const syncResidentsFromHikCentral = async () => {
+    return request<{ success: boolean; count: number }>('/hikcentral/residents/sync', { method: 'POST' });
 };
 
 // ============ Visitors ============

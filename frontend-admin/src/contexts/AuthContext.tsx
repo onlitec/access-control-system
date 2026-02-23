@@ -25,8 +25,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const [isLoading, setIsLoading] = useState(true);
 
     useEffect(() => {
-        const savedToken = localStorage.getItem('admin_token');
-        const savedUser = localStorage.getItem('admin_user');
+        const savedToken = localStorage.getItem('auth_token');
+        const savedUser = localStorage.getItem('auth_user');
         if (savedToken && savedUser) {
             setToken(savedToken);
             try {

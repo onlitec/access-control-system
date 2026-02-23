@@ -16,7 +16,6 @@ import {
   DialogDescription,
   DialogHeader,
   DialogTitle,
-  DialogTrigger
 } from '@/components/ui/dialog';
 import {
   Form,
@@ -27,10 +26,11 @@ import {
   FormMessage
 } from '@/components/ui/form';
 import { Label } from '@/components/ui/label';
-import { Checkbox } from '@/components/ui/checkbox';
 import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Checkbox } from '@/components/ui/checkbox';
 import {
   Select,
   SelectContent,
@@ -39,17 +39,19 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { useToast } from '@/hooks/use-toast';
-import { getResidents, createResident, updateResident, deleteResident, getPersonProperties } from '@/db/api';
-import { urlToBase64 } from '@/lib/utils';
-import { addPerson, updatePersonSync, reapplyAuthorization, getOrganizations } from '@/services/hikcentral';
+import {
+  Plus, Search, Pencil, Trash2, User, Camera, FileText,
+  Link as LinkIcon, Copy, CheckCircle2, MessageSquare, Mail, Send, Loader2
+} from 'lucide-react';
+import {
+  getResidents, createResident, updateResident, deleteResident,
+  syncResidents, getPersonProperties, generateRecoveryLink,
+  getHikcentralAccessLevels
+} from '@/db/api';
+import { getOrganizations, addPerson } from '@/services/hikcentral';
 import { useAuth } from '@/contexts/AuthContext';
-import type { Resident, Tower } from '@/types';
-import { Plus, Search, Pencil, Trash2, User, Camera, Link as LinkIcon } from 'lucide-react';
-import { Skeleton } from '@/components/ui/skeleton';
 import { useForm } from 'react-hook-form';
 import { uploadImage } from '@/lib/upload';
-import { Dropzone } from '@/components/dropzone';
-import { useFileUpload } from '@/hooks/use-file-upload';
 import { CameraCapture } from '@/components/CameraCapture';
 import {
   AlertDialog,
@@ -61,18 +63,25 @@ import {
   AlertDialogHeader,
   AlertDialogTitle
 } from '@/components/ui/alert-dialog';
+import { Skeleton } from '@/components/ui/skeleton';
+import { urlToBase64 } from '@/lib/utils';
 
 export default function ResidentsPage() {
-  const [residents, setResidents] = useState<Resident[]>([]);
+  const [residents, setResidents] = useState<any[]>([]);
   const [towers, setTowers] = useState<string[]>([]);
+  const [accessLevelsList, setAccessLevelsList] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [dialogOpen, setDialogOpen] = useState(false);
   const [cameraDialogOpen, setCameraDialogOpen] = useState(false);
-  const [editingResident, setEditingResident] = useState<Resident | null>(null);
+  const [cameraType, setCameraType] = useState<'facial' | 'document'>('facial');
+  const [editingResident, setEditingResident] = useState<any | null>(null);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
-  const [residentToDelete, setResidentToDelete] = useState<Resident | null>(null);
+  const [residentToDelete, setResidentToDelete] = useState<any | null>(null);
   const [orgIndexCode, setOrgIndexCode] = useState<string>('');
+  const [showSuccessState, setShowSuccessState] = useState(false);
+  const [onboardingUrl, setOnboardingUrl] = useState<string | null>(null);
+  const [generatingLink, setGeneratingLink] = useState<string | null>(null);
   const { profile } = useAuth();
   const { toast } = useToast();
 
@@ -86,23 +95,32 @@ export default function ResidentsPage() {
       block: '',
       tower: '',
       photo_url: '',
-      is_owner: true,
-      notes: ''
+      document_photo_url: '',
+      notes: '',
+      access_levels: [] as string[],
+      is_owner: true
     }
   });
 
   const [uploading, setUploading] = useState(false);
 
-  // @ts-ignore - Ignore type differences for now
-  const dropzoneProps = useFileUpload({
-    maxFiles: 1,
-    maxFileSize: 1024 * 1024
-  });
+  // Helper para anexar token às URLs de fotos proxied
+  const getProxiedPhotoUrl = (url: string | null | undefined) => {
+    if (!url) return undefined;
+    if (url.startsWith('/api/hikcentral/person-photo/')) {
+      const token = localStorage.getItem('auth_token');
+      if (!token || token === 'null') return undefined;
+      const separator = url.includes('?') ? '&' : '?';
+      return `${url}${separator}token=${token}`;
+    }
+    return url;
+  };
 
   useEffect(() => {
     loadResidents();
     loadTowers();
     loadOrganizations();
+    loadAccessLevels();
   }, [search]);
 
   const loadOrganizations = async () => {
@@ -113,6 +131,17 @@ export default function ResidentsPage() {
       }
     } catch (error) {
       console.error('Erro ao carregar organizações do Hikcentral:', error);
+    }
+  };
+
+  const loadAccessLevels = async () => {
+    try {
+      const resp = await getHikcentralAccessLevels();
+      if (resp?.success && resp.data?.list) {
+        setAccessLevelsList(resp.data.list);
+      }
+    } catch (e) {
+      console.error('Erro ao carregar Níveis de Acesso:', e);
     }
   };
 
@@ -134,30 +163,68 @@ export default function ResidentsPage() {
       setResidents(data);
     } catch (error) {
       console.error('Erro ao carregar moradores:', error);
-      toast({
-        title: 'Erro',
-        description: 'Não foi possível carregar os moradores',
-        variant: 'destructive'
-      });
     } finally {
       setLoading(false);
     }
   };
 
-  const handleOpenDialog = (resident?: Resident) => {
+  const handleAfterSuccess = (onboarding_url: string) => {
+    setOnboardingUrl(onboarding_url);
+    setShowSuccessState(true);
+    setDialogOpen(true);
+  };
+
+  const handleGenerateRecoveryLink = async (id: string) => {
+    try {
+      setGeneratingLink(id);
+      const response = await generateRecoveryLink(id);
+      if (response && response.onboarding_url) {
+        handleAfterSuccess(response.onboarding_url);
+      }
+    } catch (error: any) {
+      toast({
+        title: 'Erro',
+        description: error.response?.data?.error || 'Falha ao gerar link de acesso.',
+        variant: 'destructive',
+      });
+    } finally {
+      setGeneratingLink(null);
+    }
+  };
+
+  const handleCopyLink = () => {
+    if (onboardingUrl) {
+      navigator.clipboard.writeText(onboardingUrl);
+      toast({
+        title: 'Copiado!',
+        description: 'Link copiado para a área de transferência',
+      });
+    }
+  };
+
+  const handleWhatsAppShare = () => {
+    if (onboardingUrl) {
+      const message = `Olá! Seu cadastro de morador foi concluído no Calabasas. Acesse o link abaixo para registrar seus visitantes e prestadores: ${onboardingUrl}`;
+      window.open(`https://wa.me/${form.getValues('phone').replace(/\D/g, '')}?text=${encodeURIComponent(message)}`, '_blank');
+    }
+  };
+
+  const handleOpenDialog = (resident?: any) => {
     if (resident) {
       setEditingResident(resident);
       form.reset({
         full_name: resident.full_name,
-        cpf: resident.cpf,
+        cpf: resident.cpf || '',
         phone: resident.phone || '',
         email: resident.email || '',
-        unit_number: resident.unit_number,
+        unit_number: resident.unit_number || '',
         block: resident.block || '',
         tower: resident.tower || '',
         photo_url: resident.photo_url || '',
-        is_owner: resident.is_owner,
-        notes: resident.notes || ''
+        document_photo_url: resident.document_photo_url || '',
+        notes: resident.notes || '',
+        access_levels: resident.accessLevels || [],
+        is_owner: resident.is_owner ?? true
       });
     } else {
       setEditingResident(null);
@@ -170,58 +237,37 @@ export default function ResidentsPage() {
         block: '',
         tower: '',
         photo_url: '',
-        is_owner: true,
-        notes: ''
+        document_photo_url: '',
+        notes: '',
+        access_levels: [],
+        is_owner: true
       });
     }
+    setShowSuccessState(false);
     setDialogOpen(true);
   };
 
   const handleCameraCapture = (imageUrl: string) => {
-    form.setValue('photo_url', imageUrl);
+    if (cameraType === 'facial') {
+      form.setValue('photo_url', imageUrl);
+    } else {
+      form.setValue('document_photo_url', imageUrl);
+    }
     toast({
       title: 'Sucesso',
       description: 'Foto capturada com sucesso'
     });
   };
 
-  const openCameraDialog = () => {
-    setCameraDialogOpen(true);
-  };
-
-  const handleFileUpload = async (files: File[]) => {
-    if (files.length === 0) return;
-
-    try {
-      setUploading(true);
-      const url = await uploadImage(files[0], 'app-9hbwbnibthc3_access_images');
-      form.setValue('photo_url', url);
-      toast({
-        title: 'Sucesso',
-        description: 'Foto enviada com sucesso'
-      });
-    } catch (error) {
-      toast({
-        title: 'Erro',
-        description: 'Erro ao enviar foto',
-        variant: 'destructive'
-      });
-    } finally {
-      setUploading(false);
-    }
-  };
-
   const onSubmit = async (data: any) => {
     try {
+      setUploading(true);
+
       let residentId = '';
       if (editingResident) {
         await updateResident(editingResident.id, {
           ...data,
-          phone: data.phone || null,
-          email: data.email || null,
-          block: data.block || null,
-          photo_url: data.photo_url || null,
-          notes: data.notes || null
+          orgIndexCode: orgIndexCode || '7'
         });
         residentId = editingResident.id;
         toast({
@@ -229,20 +275,21 @@ export default function ResidentsPage() {
           description: 'Morador atualizado com sucesso'
         });
       } else {
-        const newResident = await createResident({
+        const response: any = await createResident({
           ...data,
-          phone: data.phone || null,
-          email: data.email || null,
-          block: data.block || null,
-          photo_url: data.photo_url || null,
-          notes: data.notes || null,
-          created_by: profile?.id || null
+          orgIndexCode: orgIndexCode || '7'
         });
-        residentId = newResident.id;
+        residentId = response.id;
         toast({
           title: 'Sucesso',
           description: 'Morador cadastrado com sucesso'
         });
+
+        if (response.onboarding_url) {
+          handleAfterSuccess(response.onboarding_url);
+        } else {
+          setDialogOpen(false);
+        }
       }
 
       // Sincronização com HikCentral
@@ -254,62 +301,39 @@ export default function ResidentsPage() {
         const syncData: any = {
           personGivenName: givenName,
           personFamilyName: familyName,
-          orgIndexCode: orgIndexCode || 'root',
+          orgIndexCode: orgIndexCode || '7',
           phoneNo: data.phone || undefined,
           email: data.email || undefined,
+          personProperties: []
         };
 
         if (data.tower) {
-          syncData.personProperties = [
-            {
-              propertyName: "Torre",
-              propertyValue: data.tower
-            }
-          ];
+          syncData.personProperties.push({ propertyName: "Torre", propertyValue: data.tower });
         }
 
-        if (data.photo_url && data.photo_url.startsWith('data:')) {
+        if (data.photo_url) {
           const base64Face = await urlToBase64(data.photo_url);
           syncData.faces = [{ faceData: base64Face }];
         }
 
-        // Se já existe no HikCentral (editando), usar UPDATE. Senão, ADD.
-        const existingHikId = editingResident?.hikcentral_person_id;
-
-        if (existingHikId) {
-          // UPDATE: pessoa já existe no HikCentral
-          syncData.hikPersonId = existingHikId;
-          await updatePersonSync(syncData);
-          console.log('[HikCentral] Pessoa ATUALIZADA:', existingHikId);
-        } else {
-          // ADD: nova pessoa no HikCentral
-          const hikResponse: any = await addPerson(syncData);
-          const hikPersonId = hikResponse?.data?.personId;
-
-          if (hikPersonId) {
-            await updateResident(residentId, {
-              hikcentral_person_id: hikPersonId
-            });
-          }
-          console.log('[HikCentral] Pessoa CRIADA:', hikPersonId);
+        const hikResponse: any = await addPerson(syncData);
+        if (hikResponse?.data?.personId) {
+          await updateResident(residentId, {
+            hikcentral_person_id: hikResponse.data.personId
+          });
         }
-
-        await reapplyAuthorization();
-
-        toast({
-          title: 'Sincronização',
-          description: 'Dados sincronizados com Hikcentral com sucesso'
-        });
       } catch (syncError: any) {
         console.error('Erro na sincronização Hikcentral:', syncError);
         toast({
           title: 'Erro de Sincronização',
-          description: 'O morador foi salvo localmente, mas houve um erro ao enviar para o Hikcentral: ' + syncError.message,
-          variant: 'warning'
+          description: 'Morador salvo localmente, mas erro ao enviar para o Hikcentral.',
+          variant: 'destructive'
         } as any);
       }
 
-      setDialogOpen(false);
+      if (editingResident) {
+        setDialogOpen(false);
+      }
       loadResidents();
     } catch (error: any) {
       toast({
@@ -317,6 +341,8 @@ export default function ResidentsPage() {
         description: error.message || 'Erro ao salvar morador',
         variant: 'destructive'
       });
+    } finally {
+      setUploading(false);
     }
   };
 
@@ -350,346 +376,562 @@ export default function ResidentsPage() {
             Gerencie os moradores do condomínio
           </p>
         </div>
-        <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-          <DialogTrigger asChild>
-            <Button onClick={() => handleOpenDialog()}>
-              <Plus className="mr-2 h-4 w-4" />
-              Novo Morador
-            </Button>
-          </DialogTrigger>
-          <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
-            <DialogHeader>
-              <DialogTitle>
-                {editingResident ? 'Editar Morador' : 'Novo Morador'}
-              </DialogTitle>
-              <DialogDescription>
-                Preencha os dados do morador
-              </DialogDescription>
-            </DialogHeader>
-            <Form {...form}>
-              <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between">
-                    <Label>Foto</Label>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      onClick={openCameraDialog}
-                    >
-                      <Camera className="mr-2 h-4 w-4" />
-                      Capturar da Câmera
+        <div className="flex gap-2">
+          <Button variant="outline" onClick={async () => {
+            try {
+              toast({ title: 'Sincronizando...', description: 'Aguarde enquanto buscamos os dados do HikCentral' });
+              const res = await syncResidents();
+              toast({ title: 'Sincronizado', description: `${res.count} moradores sincronizados` });
+              loadResidents();
+            } catch (err: any) {
+              toast({ title: 'Erro', description: err.message, variant: 'destructive' });
+            }
+          }}>
+            <Search className="mr-2 h-4 w-4" />
+            Sincronizar HikCentral
+          </Button>
+          <Button onClick={() => handleOpenDialog()}>
+            <Plus className="mr-2 h-4 w-4" />
+            Novo Morador
+          </Button>
+        </div>
+      </div>
+
+      <Dialog open={dialogOpen} onOpenChange={(open) => {
+        setDialogOpen(open);
+        if (!open) {
+          setShowSuccessState(false);
+          setOnboardingUrl(null);
+        }
+      }}>
+        <DialogContent
+          className="w-[95vw] max-h-[90vh] overflow-hidden p-0 gap-0 border-none shadow-2xl rounded-2xl flex flex-col bg-zinc-50"
+          style={{ maxWidth: '1200px' }}
+        >
+          {showSuccessState ? (
+            <div className="flex-1 flex flex-col justify-center items-center bg-white p-12 overflow-y-auto">
+              {/* Success content unchanged */}
+              <div className="text-center space-y-6 animate-in fade-in zoom-in duration-300">
+                <div className="h-24 w-24 bg-green-100 text-green-600 rounded-full flex items-center justify-center mx-auto mb-4">
+                  <CheckCircle2 className="h-14 w-14" />
+                </div>
+                <div>
+                  <h2 className="text-3xl font-bold text-zinc-900">Convite Pronto!</h2>
+                  <p className="text-muted-foreground mt-3 max-w-sm mx-auto text-lg">
+                    Compartilhe o link abaixo para que o morador configure sua senha.
+                  </p>
+                </div>
+                <div className="w-full max-w-lg bg-zinc-50 p-5 rounded-2xl border border-dashed border-zinc-200 flex flex-col gap-5 mx-auto">
+                  <div className="flex items-center justify-between gap-2 overflow-hidden bg-white p-4 rounded-xl border">
+                    <span className="text-base font-mono truncate text-zinc-600 flex-1 text-left">
+                      {onboardingUrl}
+                    </span>
+                    <Button variant="ghost" size="icon" onClick={handleCopyLink} className="shrink-0 h-10 w-10">
+                      <Copy className="h-5 w-5" />
                     </Button>
                   </div>
-                  <Dropzone {...dropzoneProps} className="min-h-32" />
-                  {dropzoneProps.files.length > 0 && (
-                    <div className="flex flex-col gap-2">
-                      {dropzoneProps.files.map((file, index) => (
-                        <div key={index} className="flex items-center gap-2 text-sm">
-                          <span>{file.name}</span>
-                          {file.errors.length > 0 && (
-                            <span className="text-destructive">{file.errors[0].message}</span>
-                          )}
+                  <div className="grid grid-cols-3 gap-3">
+                    <Button variant="outline" className="flex flex-col h-auto py-4 gap-3 border-zinc-100 hover:bg-green-50 hover:text-green-600 hover:border-green-200 transition-all font-bold" onClick={handleWhatsAppShare}>
+                      <MessageSquare className="h-6 w-6" />
+                      <span className="text-[11px] uppercase tracking-wider">WhatsApp</span>
+                    </Button>
+                    <Button variant="outline" className="flex flex-col h-auto py-4 gap-3 border-zinc-100 hover:bg-blue-50 hover:text-blue-600 hover:border-blue-200 transition-all font-bold" onClick={() => window.open(`mailto:${form.getValues('email')}?subject=Bem-vindo! Acesse seu App Visitor&body=Olá! Acesse o link para configurar seu acesso: ${onboardingUrl}`, '_blank')}>
+                      <Mail className="h-6 w-6" />
+                      <span className="text-[11px] uppercase tracking-wider">E-mail</span>
+                    </Button>
+                    <Button variant="outline" className="flex flex-col h-auto py-4 gap-3 border-zinc-100 hover:bg-slate-50 hover:text-slate-600 hover:border-slate-200 transition-all font-bold">
+                      <Send className="h-6 w-6" />
+                      <span className="text-[11px] uppercase tracking-wider">SMS</span>
+                    </Button>
+                  </div>
+                </div>
+                <Button variant="link" onClick={() => setDialogOpen(false)} className="text-zinc-500 font-medium text-lg mt-4">
+                  Fechar Dialog
+                </Button>
+              </div>
+            </div>
+          ) : (
+            <Form {...form}>
+              <form onSubmit={form.handleSubmit(onSubmit)} className="flex flex-col flex-1 bg-white overflow-hidden">
+                {/* Header */}
+                <DialogHeader className="p-6 border-b bg-zinc-50 rounded-t-2xl flex-shrink-0">
+                  <DialogTitle className="text-2xl font-bold flex gap-3 items-center">
+                    <User className="h-6 w-6 text-red-600" />
+                    {editingResident ? 'Editar Morador' : 'Cadastrar Novo Morador'}
+                  </DialogTitle>
+                </DialogHeader>
+
+                <div className="flex flex-col md:flex-row flex-1 overflow-hidden min-h-0">
+                  {/* Left Column (Photo & Document) - Sidebar Style */}
+                  <div className="w-full md:w-[320px] flex-shrink-0 bg-white border-r border-zinc-100 p-8 overflow-y-auto space-y-6">
+                    <div className="aspect-[4/5] w-full relative group border-2 border-zinc-200 rounded-2xl bg-zinc-50/50 overflow-hidden flex flex-col items-center justify-center transition-all hover:border-red-200 shadow-sm">
+                      {form.watch('photo_url') ? (
+                        <>
+                          <img
+                            src={getProxiedPhotoUrl(form.watch('photo_url'))}
+                            className="w-full h-full object-cover"
+                            alt="Face capture"
+                          />
+                          <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 flex items-center justify-center gap-2 transition-all">
+                            <Button type="button" size="sm" variant="secondary" onClick={() => { setCameraType('facial'); setCameraDialogOpen(true); }} className="h-9 font-bold px-4 rounded-xl">
+                              Trocar Foto
+                            </Button>
+                          </div>
+                        </>
+                      ) : (
+                        <div className="flex flex-col items-center gap-3 text-zinc-400 p-4">
+                          <Camera className="h-14 w-14 opacity-20" />
+                          <span className="text-[11px] uppercase font-black tracking-[0.2em] opacity-50">SEM FOTO</span>
                         </div>
-                      ))}
+                      )}
+                    </div>
+
+                    <div className="flex flex-col gap-3">
                       <Button
                         type="button"
-                        size="sm"
-                        onClick={async () => {
-                          if (dropzoneProps.files.length > 0 && dropzoneProps.files[0].errors.length === 0) {
-                            await handleFileUpload(dropzoneProps.files);
+                        onClick={() => { setCameraType('facial'); setCameraDialogOpen(true); }}
+                        className="w-full bg-red-50 text-red-600 hover:bg-red-100 border border-red-200 h-11 shadow-sm text-[11px] font-bold uppercase tracking-wider rounded-xl transition-all"
+                      >
+                        <Camera className="mr-2 h-4 w-4" />
+                        Cap. via Facial
+                      </Button>
+
+                      <div className="relative flex items-center justify-center py-2">
+                        <span className="text-[10px] uppercase font-bold text-zinc-400 bg-white px-3 z-10 italic">ou</span>
+                        <div className="absolute w-full h-[1px] bg-zinc-100 top-1/2 -translate-y-1/2"></div>
+                      </div>
+
+                      <Button
+                        type="button"
+                        variant="outline"
+                        onClick={() => document.getElementById('res-photo-upload')?.click()}
+                        className="w-full text-[10px] h-10 border-dashed border-zinc-300 font-bold uppercase tracking-wider text-zinc-500 hover:bg-zinc-50 hover:text-zinc-900 rounded-xl transition-all"
+                      >
+                        Enviar em Arquivo
+                      </Button>
+                      <input
+                        id="res-photo-upload"
+                        type="file"
+                        className="hidden"
+                        accept="image/*"
+                        onChange={async (e) => {
+                          const file = e.target.files?.[0];
+                          if (file) {
+                            try {
+                              setUploading(true);
+                              const url = await uploadImage(file, 'app-9hbwbnibthc3_access_images');
+                              form.setValue('photo_url', url);
+                            } catch (err) {
+                              toast({ title: 'Erro', description: 'Erro no upload', variant: 'destructive' });
+                            } finally {
+                              setUploading(false);
+                            }
                           }
                         }}
-                        disabled={uploading || dropzoneProps.files[0]?.errors.length > 0}
+                      />
+                    </div>
+
+                    <div className="pt-8 border-t border-zinc-100 mt-4">
+                      <Label className="text-[10px] uppercase font-black text-zinc-400 mb-4 block text-center tracking-[0.2em]">DOCUMENTO (OPC.)</Label>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        onClick={() => { setCameraType('document'); setCameraDialogOpen(true); }}
+                        className={`w-full h-12 text-[11px] gap-3 rounded-xl border-zinc-200 shadow-sm font-bold uppercase tracking-wider transition-all ${form.watch('document_photo_url') ? 'bg-green-50 border-green-200 text-green-700' : 'text-zinc-600 hover:bg-zinc-50'}`}
                       >
-                        {uploading ? 'Enviando...' : 'Enviar Foto'}
+                        <FileText className="h-4 w-4 opacity-70" />
+                        {form.watch('document_photo_url') ? 'Doc. Salvo' : 'Foto Documento'}
                       </Button>
                     </div>
-                  )}
-                  {form.watch('photo_url') && (
-                    <div className="flex items-center gap-2">
-                      <Avatar>
-                        <AvatarImage src={form.watch('photo_url')} />
-                        <AvatarFallback>
-                          <User className="h-4 w-4" />
-                        </AvatarFallback>
-                      </Avatar>
-                      <span className="text-sm text-muted-foreground">Foto carregada</span>
-                    </div>
-                  )}
-                </div>
+                  </div>
 
-                <FormField
-                  control={form.control}
-                  name="full_name"
-                  rules={{ required: 'Nome completo é obrigatório' }}
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Nome Completo *</FormLabel>
-                      <FormControl>
-                        <Input {...field} placeholder="Nome completo do morador" />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
+                  {/* Right Column (Tabs & Settings) - Form Fields */}
+                  <div className="flex-1 overflow-hidden flex flex-col bg-zinc-50/30">
+                    <Tabs defaultValue="dados" className="h-full flex flex-col">
+                      <TabsList className="flex w-full justify-start h-16 bg-white rounded-none px-8 gap-8 border-b border-zinc-100 shrink-0 overflow-x-auto">
+                        <TabsTrigger value="dados" className="data-[state=active]:bg-transparent data-[state=active]:shadow-none data-[state=active]:border-b-2 data-[state=active]:border-red-600 data-[state=active]:text-red-600 rounded-none px-2 h-16 font-bold text-sm text-zinc-500">
+                          Dados Básicos
+                        </TabsTrigger>
+                        <TabsTrigger value="local" className="data-[state=active]:bg-transparent data-[state=active]:shadow-none data-[state=active]:border-b-2 data-[state=active]:border-red-600 data-[state=active]:text-red-600 rounded-none px-2 h-16 font-bold text-sm text-zinc-500">
+                          Local / Bloco
+                        </TabsTrigger>
+                        <TabsTrigger value="acesso" className="data-[state=active]:bg-transparent data-[state=active]:shadow-none data-[state=active]:border-b-2 data-[state=active]:border-red-600 data-[state=active]:text-red-600 rounded-none px-2 h-16 font-bold text-sm text-zinc-500">
+                          Níveis de Acesso
+                        </TabsTrigger>
+                        <TabsTrigger value="outros" className="data-[state=active]:bg-transparent data-[state=active]:shadow-none data-[state=active]:border-b-2 data-[state=active]:border-red-600 data-[state=active]:text-red-600 rounded-none px-2 h-16 font-bold text-sm text-zinc-500">
+                          Outros / Atributos
+                        </TabsTrigger>
+                      </TabsList>
 
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <FormField
-                    control={form.control}
-                    name="cpf"
-                    rules={{ required: 'CPF é obrigatório' }}
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>CPF *</FormLabel>
-                        <FormControl>
-                          <Input {...field} placeholder="000.000.000-00" />
-                        </FormControl>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
+                      <div className="flex-1 overflow-y-auto p-8 relative">
+                        {/* 1. DADOS BÁSICOS */}
+                        <TabsContent value="dados" className="mt-0 space-y-6 animate-in slide-in-from-right-4 duration-500 fade-in">
+                          <FormField
+                            control={form.control}
+                            name="full_name"
+                            rules={{ required: 'Nome completo é obrigatório' }}
+                            render={({ field }) => (
+                              <FormItem>
+                                <FormLabel className="text-zinc-800 font-bold text-sm">Nome Completo *</FormLabel>
+                                <FormControl>
+                                  <Input {...field} placeholder="Ex: João Silva" className="h-12 bg-white border-zinc-200 rounded-xl focus:ring-red-500 transition-all text-base px-4" />
+                                </FormControl>
+                                <FormMessage />
+                              </FormItem>
+                            )}
+                          />
 
-                  <FormField
-                    control={form.control}
-                    name="phone"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Telefone</FormLabel>
-                        <FormControl>
-                          <Input {...field} placeholder="(00) 00000-0000" />
-                        </FormControl>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-                </div>
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                            <FormField
+                              control={form.control}
+                              name="cpf"
+                              rules={{ required: 'Documento é obrigatório' }}
+                              render={({ field }) => (
+                                <FormItem>
+                                  <FormLabel className="text-zinc-800 font-bold text-sm">Documento (RG/CPF) *</FormLabel>
+                                  <FormControl>
+                                    <Input {...field} placeholder="Número do documento" className="h-12 bg-white border-zinc-200 rounded-xl text-base px-4" />
+                                  </FormControl>
+                                  <FormMessage />
+                                </FormItem>
+                              )}
+                            />
 
-                <FormField
-                  control={form.control}
-                  name="email"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>E-mail</FormLabel>
-                      <FormControl>
-                        <Input {...field} type="email" placeholder="email@exemplo.com" />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
+                            <FormField
+                              control={form.control}
+                              name="phone"
+                              render={({ field }) => (
+                                <FormItem>
+                                  <FormLabel className="text-zinc-800 font-bold text-sm">Telefone Celular</FormLabel>
+                                  <FormControl>
+                                    <Input {...field} placeholder="(00) 00000-0000" className="h-12 bg-white border-zinc-200 rounded-xl text-base px-4" />
+                                  </FormControl>
+                                  <FormMessage />
+                                </FormItem>
+                              )}
+                            />
+                          </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <FormField
-                    control={form.control}
-                    name="unit_number"
-                    rules={{ required: 'Número da unidade é obrigatório' }}
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Unidade *</FormLabel>
-                        <FormControl>
-                          <Input {...field} placeholder="Ex: 101" />
-                        </FormControl>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
+                          <FormField
+                            control={form.control}
+                            name="email"
+                            render={({ field }) => (
+                              <FormItem>
+                                <FormLabel className="text-zinc-800 font-bold text-sm">E-mail</FormLabel>
+                                <FormControl>
+                                  <Input {...field} type="email" placeholder="email@exemplo.com" className="h-12 bg-white border-zinc-200 rounded-xl text-base px-4" />
+                                </FormControl>
+                                <FormMessage />
+                              </FormItem>
+                            )}
+                          />
+                        </TabsContent>
 
-                  <FormField
-                    control={form.control}
-                    name="block"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Bloco</FormLabel>
-                        <FormControl>
-                          <Input {...field} placeholder="Ex: A" />
-                        </FormControl>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-                </div>
+                        {/* 2. LOCAL */}
+                        <TabsContent value="local" className="mt-0 space-y-8 animate-in slide-in-from-right-4 duration-500 fade-in">
+                          <div className="bg-white p-6 rounded-2xl border border-zinc-200 shadow-sm space-y-6">
+                            <h3 className="text-lg font-bold text-zinc-800 border-b pb-4">Endereço no Condomínio</h3>
 
-                <FormField
-                  control={form.control}
-                  name="tower"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Torre</FormLabel>
-                      <Select onValueChange={field.onChange} value={field.value}>
-                        <FormControl>
-                          <SelectTrigger>
-                            <SelectValue placeholder="Selecione a torre" />
-                          </SelectTrigger>
-                        </FormControl>
-                        <SelectContent>
-                          {towers.map((towerName, i) => (
-                            <SelectItem key={i} value={towerName}>
-                              {towerName}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
+                            <FormField
+                              control={form.control}
+                              name="tower"
+                              render={({ field }) => (
+                                <FormItem>
+                                  <FormLabel className="text-zinc-800 font-bold text-sm">Local / Torre (Integrado HikCentral)</FormLabel>
+                                  <Select onValueChange={field.onChange} value={field.value}>
+                                    <FormControl>
+                                      <SelectTrigger className="h-12 bg-white border-zinc-200 rounded-xl text-zinc-700 text-base px-4">
+                                        <SelectValue placeholder="Selecione o local de acesso..." />
+                                      </SelectTrigger>
+                                    </FormControl>
+                                    <SelectContent className="rounded-xl border-zinc-100">
+                                      {towers.length > 0 ? towers.map((tower, idx) => (
+                                        <SelectItem key={idx} value={tower}>{tower}</SelectItem>
+                                      )) : (
+                                        <div className="p-3 text-sm text-zinc-500 italic">Nenhuma torre carregada da integração.</div>
+                                      )}
+                                    </SelectContent>
+                                  </Select>
+                                  <FormMessage />
+                                </FormItem>
+                              )}
+                            />
 
-                <FormField
-                  control={form.control}
-                  name="is_owner"
-                  render={({ field }) => (
-                    <FormItem className="flex flex-row items-start space-x-3 space-y-0">
-                      <FormControl>
-                        <Checkbox
-                          checked={field.value}
-                          onCheckedChange={field.onChange}
-                        />
-                      </FormControl>
-                      <div className="space-y-1 leading-none">
-                        <FormLabel>Proprietário</FormLabel>
+                            <div className="grid grid-cols-2 gap-6">
+                              <FormField
+                                control={form.control}
+                                name="block"
+                                render={({ field }) => (
+                                  <FormItem>
+                                    <FormLabel className="text-zinc-800 font-bold text-sm">Bloco</FormLabel>
+                                    <FormControl>
+                                      <Input {...field} placeholder="Ex: A" className="h-12 bg-white border-zinc-200 rounded-xl text-base px-4" />
+                                    </FormControl>
+                                    <FormMessage />
+                                  </FormItem>
+                                )}
+                              />
+                              <FormField
+                                control={form.control}
+                                name="unit_number"
+                                rules={{ required: 'Unidade é obrigatória' }}
+                                render={({ field }) => (
+                                  <FormItem>
+                                    <FormLabel className="text-zinc-800 font-bold text-sm">Unidade / Apto *</FormLabel>
+                                    <FormControl>
+                                      <Input {...field} placeholder="Ex: 101" className="h-12 bg-white border-zinc-200 rounded-xl text-base px-4" />
+                                    </FormControl>
+                                    <FormMessage />
+                                  </FormItem>
+                                )}
+                              />
+                            </div>
+                          </div>
+                        </TabsContent>
+
+                        {/* 3. ACESSO */}
+                        <TabsContent value="acesso" className="mt-0 space-y-6 animate-in slide-in-from-right-4 duration-500 fade-in">
+                          <div className="bg-white p-6 border border-zinc-200 rounded-2xl shadow-sm">
+                            <div className="mb-6">
+                              <h3 className="text-lg font-bold text-zinc-800">Grupos de Acesso (HikCentral)</h3>
+                              <p className="text-sm text-zinc-500 mt-1">Selecione os perfis de acesso liberados para o morador entrar no condomínio.</p>
+                            </div>
+
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                              {accessLevelsList.length > 0 ? accessLevelsList.map((level) => {
+                                const isChecked = form.watch('access_levels').includes(level.accessLevelId);
+                                return (
+                                  <div
+                                    key={level.accessLevelId}
+                                    className={`flex items-start space-x-3 p-4 rounded-xl border transition-all cursor-pointer ${isChecked ? 'bg-red-50/50 border-red-200' : 'bg-white border-zinc-200 hover:bg-zinc-50'}`}
+                                    onClick={() => {
+                                      const current = form.getValues('access_levels') || [];
+                                      if (isChecked) {
+                                        form.setValue('access_levels', current.filter(id => id !== level.accessLevelId));
+                                      } else {
+                                        form.setValue('access_levels', [...current, level.accessLevelId]);
+                                      }
+                                    }}
+                                  >
+                                    <Checkbox
+                                      checked={isChecked}
+                                      className="mt-1 data-[state=checked]:bg-red-600 data-[state=checked]:border-red-600"
+                                      onCheckedChange={(checked) => {
+                                        const current = form.getValues('access_levels') || [];
+                                        if (!checked) {
+                                          form.setValue('access_levels', current.filter(id => id !== level.accessLevelId));
+                                        } else {
+                                          form.setValue('access_levels', [...current, level.accessLevelId]);
+                                        }
+                                      }}
+                                    />
+                                    <div className="space-y-1 select-none">
+                                      <Label className="font-bold text-zinc-800 cursor-pointer">{level.accessLevelName}</Label>
+                                      {level.description && <p className="text-xs text-zinc-500">{level.description}</p>}
+                                    </div>
+                                  </div>
+                                );
+                              }) : (
+                                <div className="col-span-full py-8 text-center bg-zinc-50 rounded-xl border border-dashed border-zinc-200">
+                                  <p className="text-zinc-500">Nenhum nível de acesso sincronizado com o HikCentral.</p>
+                                  <Button variant="outline" size="sm" className="mt-4" onClick={(e) => { e.preventDefault(); loadAccessLevels(); }}>
+                                    Buscar Níveis
+                                  </Button>
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        </TabsContent>
+
+                        {/* 4. OUTROS */}
+                        <TabsContent value="outros" className="mt-0 space-y-6 animate-in slide-in-from-right-4 duration-500 fade-in">
+                          <div className="bg-white p-6 border border-zinc-200 rounded-2xl shadow-sm space-y-6">
+                            <FormField
+                              control={form.control}
+                              name="is_owner"
+                              render={({ field }) => (
+                                <FormItem className="flex flex-row items-start space-x-4 space-y-0 p-5 border border-zinc-200 rounded-xl bg-zinc-50/50">
+                                  <FormControl>
+                                    <Checkbox
+                                      checked={field.value}
+                                      onCheckedChange={field.onChange}
+                                      className="h-5 w-5 data-[state=checked]:bg-red-600 data-[state=checked]:border-red-600 mt-0.5"
+                                    />
+                                  </FormControl>
+                                  <div className="space-y-1 leading-none">
+                                    <FormLabel className="text-base font-bold text-zinc-800 cursor-pointer select-none">Proprietário do Imóvel</FormLabel>
+                                    <p className="text-sm text-zinc-500">Marque se este morador é o dono responsável pela unidade.</p>
+                                  </div>
+                                </FormItem>
+                              )}
+                            />
+
+                            <FormField
+                              control={form.control}
+                              name="notes"
+                              render={({ field }) => (
+                                <FormItem>
+                                  <FormLabel className="text-zinc-800 font-bold text-sm">Observações e Informações Adicionais</FormLabel>
+                                  <FormControl>
+                                    <Textarea {...field} placeholder="Observações..." rows={5} className="bg-white border-zinc-200 rounded-xl resize-none p-4 text-base focus:ring-red-500" />
+                                  </FormControl>
+                                  <FormMessage />
+                                </FormItem>
+                              )}
+                            />
+                          </div>
+                        </TabsContent>
                       </div>
-                    </FormItem>
-                  )}
-                />
+                    </Tabs>
+                  </div>
+                </div>
 
-                <FormField
-                  control={form.control}
-                  name="notes"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Observações</FormLabel>
-                      <FormControl>
-                        <Textarea {...field} placeholder="Observações adicionais" rows={3} />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-
-                <div className="flex justify-end gap-2">
-                  <Button type="button" variant="outline" onClick={() => setDialogOpen(false)}>
+                {/* Footer Action Bar */}
+                <div className="flex justify-end gap-4 p-6 border-t border-zinc-200 bg-white shrink-0 rounded-b-2xl shadow-[0_-4px_24px_-12px_rgba(0,0,0,0.1)]">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => setDialogOpen(false)}
+                    className="h-12 px-10 rounded-xl font-bold text-zinc-500 hover:bg-zinc-100 border-zinc-200 shadow-sm"
+                  >
                     Cancelar
                   </Button>
-                  <Button type="submit" disabled={uploading}>
-                    {uploading ? 'Enviando...' : 'Salvar'}
+                  <Button
+                    type="submit"
+                    disabled={uploading}
+                    className="h-12 px-12 rounded-xl bg-red-600 hover:bg-red-700 text-white font-black shadow-lg shadow-red-600/30 min-w-[220px] transition-all active:scale-[0.98]"
+                  >
+                    {uploading ? (
+                      <span className="flex items-center gap-2">
+                        <Loader2 className="h-5 w-5 animate-spin" />
+                        SALVANDO...
+                      </span>
+                    ) : (
+                      editingResident ? 'SALVAR ALTERAÇÕES' : 'CONCLUIR CADASTRO'
+                    )}
                   </Button>
                 </div>
               </form>
             </Form>
-          </DialogContent>
-        </Dialog>
-      </div>
+          )}
+        </DialogContent>
+      </Dialog>
 
-      <Card>
-        <CardHeader>
-          <div className="flex items-center gap-2">
-            <Search className="h-4 w-4 text-muted-foreground" />
-            <Input
-              placeholder="Buscar por nome, CPF ou unidade..."
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              className="max-w-sm"
-            />
+      <Card className="border-zinc-200 shadow-sm rounded-2xl overflow-hidden">
+        <CardHeader className="bg-white border-b border-zinc-100 p-6">
+          <div className="flex items-center gap-4">
+            <div className="relative flex-1 max-w-md">
+              <Search className="absolute left-4 top-1/2 -translate-y-1/2 h-5 w-5 text-zinc-400" />
+              <Input
+                placeholder="Buscar moradores..."
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                className="pl-12 h-12 bg-zinc-50 border-zinc-200 rounded-xl shadow-none focus:ring-red-600 focus:bg-white transition-all text-base"
+              />
+            </div>
           </div>
         </CardHeader>
-        <CardContent>
+        <CardContent className="p-0 bg-white">
           <Table>
             <TableHeader>
-              <TableRow>
-                <TableHead>Foto</TableHead>
-                <TableHead>Nome</TableHead>
-                <TableHead>CPF</TableHead>
-                <TableHead>Unidade</TableHead>
-                <TableHead>Torre</TableHead>
-                <TableHead>Telefone</TableHead>
-                <TableHead>Tipo</TableHead>
-                <TableHead>HikCentral</TableHead>
-                <TableHead className="text-right">Ações</TableHead>
+              <TableRow className="bg-zinc-50/80 border-b-zinc-200">
+                <TableHead className="w-[80px] pl-8">Foto</TableHead>
+                <TableHead className="font-bold text-zinc-600">Nome do Morador</TableHead>
+                <TableHead className="font-bold text-zinc-600">Documento</TableHead>
+                <TableHead className="font-bold text-zinc-600">Local</TableHead>
+                <TableHead className="font-bold text-zinc-600">Contato</TableHead>
+                <TableHead className="font-bold text-zinc-600">Status Integ.</TableHead>
+                <TableHead className="text-right pr-8 font-bold text-zinc-600">Ações</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {loading ? (
                 Array.from({ length: 5 }).map((_, i) => (
                   <TableRow key={i}>
-                    <TableCell><Skeleton className="h-10 w-10 rounded-full bg-muted" /></TableCell>
-                    <TableCell><Skeleton className="h-4 w-32 bg-muted" /></TableCell>
-                    <TableCell><Skeleton className="h-4 w-28 bg-muted" /></TableCell>
-                    <TableCell><Skeleton className="h-4 w-16 bg-muted" /></TableCell>
-                    <TableCell><Skeleton className="h-4 w-20 bg-muted" /></TableCell>
-                    <TableCell><Skeleton className="h-4 w-24 bg-muted" /></TableCell>
-                    <TableCell><Skeleton className="h-4 w-20 bg-muted" /></TableCell>
-                    <TableCell><Skeleton className="h-8 w-20 bg-muted ml-auto" /></TableCell>
+                    <TableCell className="pl-8"><Skeleton className="h-12 w-12 rounded-full bg-zinc-100" /></TableCell>
+                    <TableCell><Skeleton className="h-4 w-40 bg-zinc-100" /></TableCell>
+                    <TableCell><Skeleton className="h-4 w-32 bg-zinc-100" /></TableCell>
+                    <TableCell><Skeleton className="h-4 w-16 bg-zinc-100" /></TableCell>
+                    <TableCell><Skeleton className="h-4 w-28 bg-zinc-100" /></TableCell>
+                    <TableCell><Skeleton className="h-4 w-20 bg-zinc-100" /></TableCell>
+                    <TableCell className="text-right pr-8"><Skeleton className="h-10 w-24 bg-zinc-100 ml-auto" /></TableCell>
                   </TableRow>
                 ))
               ) : residents.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={8} className="text-center text-muted-foreground">
-                    Nenhum morador encontrado
+                  <TableCell colSpan={7} className="text-center py-24 text-zinc-400">
+                    <div className="flex flex-col items-center gap-3">
+                      <User className="h-12 w-12 text-zinc-200" />
+                      <p className="text-base font-medium">Nenhum morador encontrado.</p>
+                    </div>
                   </TableCell>
                 </TableRow>
               ) : (
                 residents.map((resident) => (
-                  <TableRow key={resident.id}>
-                    <TableCell>
-                      <Avatar>
+                  <TableRow key={resident.id} className="hover:bg-zinc-50 transition-colors border-zinc-100 group">
+                    <TableCell className="pl-8 py-4">
+                      <Avatar className="h-12 w-12 border border-zinc-200 shadow-sm">
                         <AvatarImage
-                          src={resident.photo_url || undefined}
-                          alt={`Foto de perfil de ${resident.full_name}`}
+                          src={getProxiedPhotoUrl(resident.photo_url)}
+                          alt={resident.full_name}
                         />
-                        <AvatarFallback className="bg-primary/10 text-primary font-semibold text-sm">
-                          {resident.full_name
-                            ? resident.full_name.split(' ').map((n: string) => n[0]).filter(Boolean).slice(0, 2).join('').toUpperCase()
-                            : <User className="h-4 w-4" />}
+                        <AvatarFallback className="bg-zinc-100 text-zinc-400 font-bold">
+                          {resident.full_name?.substring(0, 2).toUpperCase() || <User className="h-5 w-5" />}
                         </AvatarFallback>
                       </Avatar>
                     </TableCell>
-                    <TableCell className="font-medium">{resident.full_name}</TableCell>
-                    <TableCell>{resident.cpf}</TableCell>
                     <TableCell>
-                      {resident.block ? `${resident.block}-` : ''}{resident.unit_number}
-                    </TableCell>
-                    <TableCell>{resident.tower || '-'}</TableCell>
-                    <TableCell>{resident.phone || '-'}</TableCell>
-                    <TableCell>
-                      <Badge variant="default">
-                        MORADOR
-                      </Badge>
-                    </TableCell>
-                    <TableCell>
-                      {resident.hikcentral_person_id ? (
-                        <Badge variant="outline" className="text-green-600 border-green-200 bg-green-50">
-                          Sincronizado
-                        </Badge>
+                      <div className="font-bold text-zinc-900 text-base">{resident.full_name}</div>
+                      {resident.is_owner ? (
+                        <div className="text-[10px] uppercase font-black tracking-widest text-zinc-400 mt-0.5">Proprietário</div>
                       ) : (
-                        <Badge variant="outline" className="text-muted-foreground border-slate-200">
-                          Não Sincronizado
-                        </Badge>
+                        <div className="text-[10px] uppercase font-bold tracking-widest text-zinc-400 mt-0.5">Morador</div>
                       )}
                     </TableCell>
-                    <TableCell className="text-right">
-                      <div className="flex justify-end gap-2">
+                    <TableCell className="text-zinc-500 font-mono text-sm">{resident.cpf || '-'}</TableCell>
+                    <TableCell>
+                      <Badge variant="outline" className="font-bold bg-white border-zinc-200 text-zinc-700 px-3 py-1">
+                        {resident.block ? `${resident.block}-` : ''}{resident.unit_number}
+                        {resident.tower && ` (${resident.tower})`}
+                      </Badge>
+                    </TableCell>
+                    <TableCell className="text-zinc-600">{resident.phone || '-'}</TableCell>
+                    <TableCell>
+                      {resident.hikcentral_person_id ? (
+                        <div className="flex items-center gap-2 text-green-600 font-bold text-[11px] uppercase tracking-wider bg-green-50 px-2 py-1 rounded-md inline-flex border border-green-100">
+                          <span className="h-1.5 w-1.5 rounded-full bg-green-500" />
+                          Sincronizado
+                        </div>
+                      ) : (
+                        <div className="flex items-center gap-2 text-zinc-500 font-bold text-[11px] uppercase tracking-wider bg-zinc-100 px-2 py-1 rounded-md inline-flex border border-zinc-200">
+                          <span className="h-1.5 w-1.5 rounded-full bg-zinc-400" />
+                          Local
+                        </div>
+                      )}
+                    </TableCell>
+                    <TableCell className="text-right pr-8">
+                      <div className="flex justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                         <Button
                           variant="ghost"
                           size="icon"
                           onClick={() => handleOpenDialog(resident)}
+                          className="hover:bg-zinc-100 text-zinc-400 hover:text-zinc-900 h-9 w-9 rounded-lg"
                         >
                           <Pencil className="h-4 w-4" />
                         </Button>
                         <Button
                           variant="ghost"
                           size="icon"
-                          onClick={() => {
-                            const url = `${window.location.origin}/setup/${resident.id}`;
-                            navigator.clipboard.writeText(url);
-                            toast({
-                              title: 'Link Copiado',
-                              description: 'Link do portal do morador copiado para a área de transferência'
-                            });
-                          }}
-                          title="Copiar link do portal"
+                          onClick={() => handleGenerateRecoveryLink(resident.id)}
+                          title="Gerar Link de Acesso"
+                          disabled={generatingLink === resident.id}
+                          className="hover:bg-red-50 text-zinc-400 hover:text-red-600 h-9 w-9 rounded-lg"
                         >
-                          <LinkIcon className="h-4 w-4" />
+                          {generatingLink === resident.id ? (
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                          ) : (
+                            <LinkIcon className="h-4 w-4" />
+                          )}
                         </Button>
                         {profile?.role === 'admin' && (
                           <Button
@@ -699,8 +941,9 @@ export default function ResidentsPage() {
                               setResidentToDelete(resident);
                               setDeleteDialogOpen(true);
                             }}
+                            className="hover:bg-red-50 text-zinc-400 hover:text-red-600 h-9 w-9 rounded-lg"
                           >
-                            <Trash2 className="h-4 w-4 text-destructive" />
+                            <Trash2 className="h-4 w-4" />
                           </Button>
                         )}
                       </div>
@@ -714,17 +957,16 @@ export default function ResidentsPage() {
       </Card>
 
       <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
-        <AlertDialogContent>
+        <AlertDialogContent className="rounded-2xl border-none shadow-2xl">
           <AlertDialogHeader>
-            <AlertDialogTitle>Confirmar exclusão</AlertDialogTitle>
-            <AlertDialogDescription>
-              Tem certeza que deseja excluir o morador {residentToDelete?.full_name}?
-              Esta ação não pode ser desfeita.
+            <AlertDialogTitle className="text-2xl font-black text-red-600">Confirmar Exclusão</AlertDialogTitle>
+            <AlertDialogDescription className="text-zinc-600 text-base">
+              Tem certeza que deseja excluir permanentemente o morador <strong>{residentToDelete?.full_name}</strong>? Esta ação revogará qualquer acesso existente de imediato.
             </AlertDialogDescription>
           </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancelar</AlertDialogCancel>
-            <AlertDialogAction onClick={handleDelete}>Excluir</AlertDialogAction>
+          <AlertDialogFooter className="mt-8 gap-3">
+            <AlertDialogCancel className="font-bold rounded-xl border-zinc-200 h-12 px-6">CANCELAR</AlertDialogCancel>
+            <AlertDialogAction onClick={handleDelete} className="bg-red-600 hover:bg-red-700 text-white font-black rounded-xl h-12 px-6">EXCLUIR AGORA</AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
@@ -732,9 +974,9 @@ export default function ResidentsPage() {
       <CameraCapture
         open={cameraDialogOpen}
         onOpenChange={setCameraDialogOpen}
-        cameraType="facial"
+        cameraType={cameraType}
         onCapture={handleCameraCapture}
       />
-    </div >
+    </div>
   );
 }

@@ -16,6 +16,7 @@ import ActiveProvidersPage from './pages/ActiveProvidersPage';
 import FinishedProvidersPage from './pages/FinishedProvidersPage';
 import TodayAccessesPage from './pages/TodayAccessesPage';
 import DeviceStatusPage from './pages/DeviceStatusPage';
+import StaffPage from './pages/StaffPage';
 
 export interface RouteConfig {
   name: string;
@@ -56,6 +57,11 @@ const routes: RouteConfig[] = [
     name: 'Prestadores',
     path: '/providers',
     element: <ServiceProvidersPage />
+  },
+  {
+    name: 'Prestadores Calabasas',
+    path: '/staff',
+    element: <StaffPage />
   },
   { name: 'Histórico de Acesso', path: '/access-logs', element: <AccessLogsPage /> },
   { name: 'Visitas Ativas', path: '/visitas-ativas', element: <ActiveVisitsPage /> },

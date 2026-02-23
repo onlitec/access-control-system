@@ -22,3 +22,57 @@
 [backup] latest -> calabasas_db_20260220_150007.dump
 [backup-status] latest=calabasas_db_20260220_150007.dump age_hours=0 size=192K
 [backup-status][OK] backup freshness within 24h
+[backup] creating: /opt/access-control-system/backups/calabasas_db_20260220_210001.dump
+[backup] done: /opt/access-control-system/backups/calabasas_db_20260220_210001.dump (236K)
+[backup] pruning old backups (keep 15)
+[backup] latest -> calabasas_db_20260220_210001.dump
+[backup-status] latest=calabasas_db_20260220_210001.dump age_hours=0 size=236K
+[backup-status][OK] backup freshness within 24h
+[backup] creating: /opt/access-control-system/backups/calabasas_db_20260221_030001.dump
+[backup] done: /opt/access-control-system/backups/calabasas_db_20260221_030001.dump (276K)
+[backup] pruning old backups (keep 15)
+[backup] latest -> calabasas_db_20260221_030001.dump
+[backup-status] latest=calabasas_db_20260221_030001.dump age_hours=0 size=276K
+[backup-status][OK] backup freshness within 24h
+[backup] creating: /opt/access-control-system/backups/calabasas_db_20260221_090001.dump
+[backup] done: /opt/access-control-system/backups/calabasas_db_20260221_090001.dump (360K)
+[backup] pruning old backups (keep 15)
+[backup] latest -> calabasas_db_20260221_090001.dump
+[backup-status] latest=calabasas_db_20260221_090001.dump age_hours=0 size=360K
+[backup-status][OK] backup freshness within 24h
+[backup] creating: /opt/access-control-system/backups/calabasas_db_20260221_150001.dump
+[backup] done: /opt/access-control-system/backups/calabasas_db_20260221_150001.dump (436K)
+[backup] pruning old backups (keep 15)
+[backup] latest -> calabasas_db_20260221_150001.dump
+[backup-status] latest=calabasas_db_20260221_150001.dump age_hours=0 size=436K
+[backup-status][OK] backup freshness within 24h
+[backup] creating: /opt/access-control-system/backups/calabasas_db_20260221_210001.dump
+[backup] done: /opt/access-control-system/backups/calabasas_db_20260221_210001.dump (464K)
+[backup] pruning old backups (keep 15)
+[backup] latest -> calabasas_db_20260221_210001.dump
+[backup-status] latest=calabasas_db_20260221_210001.dump age_hours=0 size=464K
+[backup-status][OK] backup freshness within 24h
+[backup] creating: /opt/access-control-system/backups/calabasas_db_20260222_030001.dump
+[backup] done: /opt/access-control-system/backups/calabasas_db_20260222_030001.dump (816K)
+[backup] pruning old backups (keep 15)
+[backup] latest -> calabasas_db_20260222_030001.dump
+[backup-status] latest=calabasas_db_20260222_030001.dump age_hours=0 size=816K
+[backup-status][OK] backup freshness within 24h
+[backup] creating: /opt/access-control-system/backups/calabasas_db_20260222_090002.dump
+[backup] done: /opt/access-control-system/backups/calabasas_db_20260222_090002.dump (856K)
+[backup] pruning old backups (keep 15)
+[backup] latest -> calabasas_db_20260222_090002.dump
+[backup-status] latest=calabasas_db_20260222_090002.dump age_hours=0 size=856K
+[backup-status][OK] backup freshness within 24h
+[backup] creating: /opt/access-control-system/backups/calabasas_db_20260222_150001.dump
+[backup] done: /opt/access-control-system/backups/calabasas_db_20260222_150001.dump (900K)
+[backup] pruning old backups (keep 15)
+[backup] latest -> calabasas_db_20260222_150001.dump
+[backup-status] latest=calabasas_db_20260222_150001.dump age_hours=0 size=900K
+[backup-status][OK] backup freshness within 24h
+[backup] creating: /opt/access-control-system/backups/calabasas_db_20260222_210001.dump
+[backup] done: /opt/access-control-system/backups/calabasas_db_20260222_210001.dump (940K)
+[backup] pruning old backups (keep 15)
+[backup] latest -> calabasas_db_20260222_210001.dump
+[backup-status] latest=calabasas_db_20260222_210001.dump age_hours=0 size=940K
+[backup-status][OK] backup freshness within 24h

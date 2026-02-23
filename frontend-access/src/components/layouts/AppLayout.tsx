@@ -32,6 +32,7 @@ import {
   History,
   Settings,
   Shield,
+  ShieldCheck,
   LogOut,
   UserCog
 } from 'lucide-react';
@@ -60,6 +61,11 @@ const menuItems = [
     title: 'Prestadores',
     icon: Briefcase,
     path: '/providers'
+  },
+  {
+    title: 'P. Calabasas',
+    icon: ShieldCheck,
+    path: '/staff'
   },
   {
     title: 'Histórico de Acesso',
@@ -113,7 +119,7 @@ export default function AppLayout({ children }: AppLayoutProps) {
               </div>
             </div>
           </SidebarHeader>
-          
+
           <SidebarContent>
             <SidebarGroup>
               <SidebarGroupLabel>Menu Principal</SidebarGroupLabel>
