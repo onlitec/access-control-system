@@ -5,3 +5,16 @@ certbot/
 certs/
 auth/
 .env
+
+# Arquivos temporários de teste
+.agent/
+backend-api/dist/scripts/check-*.js
+backend-api/dist/scripts/test-*.js
+backend-api/fix-visitor-group.js
+backend-api/test-hikcentral.js
+backend-api/inspect_tables.js
+backend-api/list_tables.js
+backend-api/query_db.js
+backend-api/testsprite_tests/
+backend-api/src/scripts/test-*.ts
+documentation/TECNOLOGIAS_E_ESTRUTURA.md
