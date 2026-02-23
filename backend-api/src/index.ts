@@ -67,6 +67,11 @@ function resolveRoleFromOrg(orgIndexCode: string): string {
 const RESIDENT_ORG_CODES = ['7'];
 
 /**
+ * org codes que representam Administração e Portaria (Prestadores Calabasas).
+ */
+const STAFF_ORG_CODES = ['4', '5', '6'];
+
+/**
  * org codes que NÃO devem aparecer em listagens operacionais.
  */
 const SYSTEM_ORG_CODES = ['1'];
@@ -124,7 +129,8 @@ const corsOptions = CORS_ORIGIN === '*' ? {} : { origin: allowedOrigins, credent
 
 app.use(helmet());
 app.use(cors(corsOptions));
-app.use(express.json());
+app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
 const parseDurationToMs = (input: string): number => {
     const match = /^(\d+)([smhd])$/i.exec(input.trim());
@@ -761,17 +767,155 @@ app.post('/api/auth/logout', async (req, res) => {
     }
 });
 
+// ============ First Access (Onboarding) ============
+app.post('/api/auth/first-access/validate', async (req, res) => {
+    const { token } = req.body;
+    try {
+        if (!token) {
+            return res.status(400).json({ valid: false, message: 'Token é obrigatório' });
+        }
+
+        const decoded: any = jwt.verify(token, JWT_SECRET as string);
+
+        if (decoded.type !== 'onboarding') {
+            return res.status(400).json({ valid: false, message: 'Tipo de token inválido' });
+        }
+
+        const person = await prisma.person.findUnique({
+            where: { id: decoded.personId }
+        });
+
+        if (!person) {
+            return res.status(404).json({ valid: false, message: 'Morador não encontrado no sistema' });
+        }
+
+        if (person.email) {
+            const existingUser = await prisma.user.findUnique({
+                where: { email: person.email }
+            });
+
+            if (existingUser) {
+                return res.json({
+                    valid: true,
+                    alreadyActive: true,
+                    message: 'Sua conta já está ativa!'
+                });
+            }
+        }
+
+        return res.json({
+            valid: true,
+            personId: person.id,
+            name: `${person.firstName} ${person.lastName}`.trim(),
+            email: person.email,
+            phone: person.phone,
+            role: 'MORADOR'
+        });
+    } catch (err: any) {
+        console.error('First access validation error:', err);
+        return res.status(401).json({ valid: false, message: 'Link de acesso expirado ou inválido. Solicite um novo link.' });
+    }
+});
+
+app.post('/api/auth/first-access/setup-password', async (req, res) => {
+    const { token, password } = req.body;
+    try {
+        if (!token || !password) {
+            return res.status(400).json({ valid: false, message: 'Token e senha são obrigatórios' });
+        }
+
+        const decoded: any = jwt.verify(token, JWT_SECRET as string);
+
+        if (decoded.type !== 'onboarding') {
+            return res.status(400).json({ error: 'Tipo de token inválido' });
+        }
+
+        const person = await prisma.person.findUnique({
+            where: { id: decoded.personId }
+        });
+
+        if (!person) {
+            return res.status(404).json({ error: 'Morador não encontrado' });
+        }
+
+        if (!person.email) {
+            return res.status(400).json({ valid: false, message: 'Este morador não possui e-mail cadastrado. Entre em contato com a administração para atualizar o cadastro.' });
+        }
+
+        // Criar ou atualizar usuário
+        const hashedPassword = await bcrypt.hash(password, 12);
+
+        let user = await prisma.user.findUnique({ where: { email: person.email } });
+
+        if (user) {
+            user = await prisma.user.update({
+                where: { id: user.id },
+                data: {
+                    password: hashedPassword,
+                    role: 'MORADOR',
+                    name: `${person.firstName} ${person.lastName}`.trim()
+                }
+            });
+        } else {
+            user = await prisma.user.create({
+                data: {
+                    email: person.email,
+                    password: hashedPassword,
+                    name: `${person.firstName} ${person.lastName}`.trim(),
+                    role: 'MORADOR'
+                }
+            });
+        }
+
+        // Iniciar sessão (login automático após setup)
+        const accessToken = signAccessToken(user);
+        const refreshToken = generateRefreshToken();
+        const refreshTokenHash = hashRefreshToken(refreshToken);
+
+        const createdSession = await prisma.refreshSession.create({
+            data: {
+                userId: user.id,
+                tokenHash: refreshTokenHash,
+                expiresAt: getRefreshExpiry(),
+            },
+        });
+
+        await logSessionAuditEvent({
+            eventType: 'first_access_setup',
+            success: true,
+            req,
+            userId: user.id,
+            userEmail: user.email,
+            sessionId: createdSession.id,
+            details: 'onboarding_completed'
+        });
+
+        return res.json({
+            access_token: accessToken,
+            refreshToken: refreshToken,
+            user: { id: user.id, email: user.email, name: user.name, role: user.role }
+        });
+    } catch (err: any) {
+        console.error('First access password setup error:', err);
+        return res.status(401).json({ valid: false, message: 'Link de acesso expirado ou inválido. Solicite um novo link.' });
+    }
+});
+
 // ============ Auth Middleware ============
 const authMiddleware = (req: any, res: any, next: any) => {
     const authHeader = req.headers.authorization;
-    if (!authHeader) return res.status(401).json({ error: 'No token provided' });
+    if (!authHeader) {
+        console.warn(`[Auth] 401: No token provided for ${req.method} ${req.url}`);
+        return res.status(401).json({ error: 'No token provided' });
+    }
 
     const token = authHeader.split(' ')[1];
     try {
-        const decoded = jwt.verify(token, JWT_SECRET);
+        const decoded = jwt.verify(token, JWT_SECRET as string);
         (req as any).user = decoded;
         next();
-    } catch (err) {
+    } catch (err: any) {
+        console.warn(`[Auth] 401: Invalid token for ${req.method} ${req.url} - ${err.message}`);
         res.status(401).json({ error: 'Invalid token' });
     }
 };
@@ -1445,6 +1589,72 @@ app.get('/api/hikcentral/organizations', authMiddleware, async (req, res) => {
     }
 });
 
+// ============ Access Levels (HikCentral) ============
+app.get('/api/hikcentral/access-levels', authMiddleware, async (req, res) => {
+    try {
+        const result = await HikCentralService.getAccessLevelList();
+        res.json({ success: true, data: result?.data || { list: [] } });
+    } catch (error: any) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+app.post('/api/hikcentral/authorize', authMiddleware, async (req, res) => {
+    try {
+        const { personId, accessLevels, personType } = req.body;
+        const result = await HikCentralService.authorizePerson(personId, accessLevels, personType || '1');
+        res.json({ success: true, data: result });
+    } catch (error: any) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// ============ Custom Fields (HikCentral) ============
+app.get('/api/hikcentral/custom-fields', authMiddleware, async (req, res) => {
+    try {
+        const result = await HikCentralService.getCustomFields();
+        res.json({ success: true, data: result?.data || { list: [] } });
+    } catch (error: any) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// ============ Sync Residents (Manual trigger) ============
+app.post('/api/hikcentral/residents/sync', authMiddleware, async (req, res) => {
+    try {
+        const result = await HikCentralService.getPersonList({
+            orgIndexCode: '7',
+            pageNo: 1,
+            pageSize: 500
+        });
+        const persons = result?.data?.list || [];
+
+        for (const p of persons) {
+            await prisma.person.upsert({
+                where: { hikPersonId: p.personId },
+                update: {
+                    firstName: p.personGivenName || p.personName || '',
+                    lastName: p.personFamilyName || '',
+                    phone: p.phoneNo || p.phone || null,
+                    email: p.email || null,
+                    orgIndexCode: String(p.orgIndexCode || '7'),
+                },
+                create: {
+                    firstName: p.personGivenName || p.personName || '',
+                    lastName: p.personFamilyName || '',
+                    phone: p.phoneNo || p.phone || null,
+                    email: p.email || null,
+                    orgIndexCode: String(p.orgIndexCode || '7'),
+                    hikPersonId: p.personId,
+                }
+            });
+        }
+        res.json({ success: true, count: persons.length });
+    } catch (error: any) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
 // ============ Residents (Person) CRUD ============
 app.get('/api/residents', authMiddleware, async (req, res) => {
     try {
@@ -1468,7 +1678,7 @@ app.get('/api/residents', authMiddleware, async (req, res) => {
                     const role = resolveRoleFromOrg(orgCode);
                     const orgName = HIK_ORG_NAMES[orgCode] || p.orgName || 'DESCONHECIDO';
 
-                    console.log(`[HikCentral] Pessoa importada: ${p.personGivenName || ''} ${p.personFamilyName || ''} | Perfil: ${role} | Departamento: ${orgName} (${orgCode}) | personPhoto: ${JSON.stringify(p.personPhoto)} | faceData: ${p.faceData ? 'YES(' + String(p.faceData).length + 'chars)' : 'NO'}`);
+                    console.log(`[HikCentral] Pessoa importada: ${p.personGivenName || ''} ${p.personFamilyName || ''} | ID: ${p.personId || p.indexCode} | Perfil: ${role} | Departamento: ${orgName} (${orgCode}) | personPhoto: ${JSON.stringify(p.personPhoto)} | faceData: ${p.faceData ? 'YES(' + String(p.faceData).length + 'chars)' : 'NO'}`);
 
                     return {
                         id: p.personId || p.indexCode || `hik-${Math.random().toString(36).substr(2, 9)}`,
@@ -1482,13 +1692,7 @@ app.get('/api/residents', authMiddleware, async (req, res) => {
                         role,
                         gender: p.gender || null,
                         certificateNo: p.certificateNo || null,
-                        personPhoto: (() => {
-                            const pic = p.personPhoto;
-                            if (!pic) return null;
-                            const uri = pic.picUri || pic.uri || '';
-                            if (!uri || !uri.startsWith('/')) return null;
-                            return `https://100.77.145.39${uri}`;
-                        })(),
+                        personPhoto: p.personPhoto?.picUri || p.personPhoto?.uri || null,
                         createdAt: p.createTime || new Date().toISOString(),
                         updatedAt: p.updateTime || new Date().toISOString(),
                     };
@@ -1552,8 +1756,8 @@ app.get('/api/residents', authMiddleware, async (req, res) => {
                         unit_number: r.orgIndexCode || '',
                         block: null,
                         tower: r.orgName || null,
-                        // Prioridade: foto local salva > foto via proxy HikCentral
-                        photo_url: localPhotos[r.hikPersonId] || (r.hikPersonId ? `/api/hikcentral/person-photo/${r.hikPersonId}` : null),
+                        // Prioridade: foto local salva > foto via proxy HikCentral (anexando picUri para performance)
+                        photo_url: localPhotos[r.hikPersonId] || (r.hikPersonId ? `/api/hikcentral/person-photo/${r.hikPersonId}${r.personPhoto ? `?picUri=${encodeURIComponent(r.personPhoto)}` : ''}` : null),
                         is_owner: true,
                         hikcentral_person_id: r.hikPersonId || null,
                         notes: `HikCentral | Depto: ${r.orgName} | Perfil: ${r.role}`,
@@ -1718,9 +1922,46 @@ app.get('/api/hikcentral/person-properties', authMiddleware, async (req, res) =>
 });
 
 // ============ Person Photo Proxy (HikCentral) ============
-app.get('/api/hikcentral/person-photo/:personId', authMiddleware, async (req, res) => {
+// Versão flexível do auth para fotos (aceita Header ou Query Param)
+app.get('/api/hikcentral/person-photo/:personId', async (req, res) => {
     try {
         const { personId } = req.params;
+        const { token: queryToken, picUri } = req.query;
+        const authHeader = req.headers.authorization;
+        let token = queryToken as string;
+
+        if (authHeader && authHeader.startsWith('Bearer ')) {
+            token = authHeader.split(' ')[1];
+        }
+
+        if (!token) {
+            return res.status(401).json({ error: 'Token não fornecido' });
+        }
+
+        try {
+            jwt.verify(token, JWT_SECRET as string);
+        } catch (err) {
+            return res.status(401).json({ error: 'Token inválido' });
+        }
+
+        // Se o picUri foi passado diretamente (otimização), usamos ele
+        if (picUri && typeof picUri === 'string' && picUri.length > 5) {
+            console.log(`[Photo Proxy] Usando picUri fornecido via query: ${picUri} para person ${personId}`);
+
+            let apiPath = picUri;
+            if (!picUri.startsWith('/')) {
+                apiPath = `/artemis/media/pic/${picUri}`;
+            }
+
+            try {
+                const buffer = await HikCentralService.hikRequestRaw(apiPath, { method: 'GET' });
+                res.set('Content-Type', 'image/jpeg');
+                res.set('Cache-Control', 'public, max-age=3600');
+                return res.send(buffer);
+            } catch (e: any) {
+                console.warn(`[Photo Proxy] Falha ao buscar picUri direto (${picUri}), tentando fallback...`);
+            }
+        }
 
         // Primeiro checar se temos foto local no banco
         const localPerson = await prisma.person.findFirst({ where: { hikPersonId: personId } });
@@ -1738,7 +1979,7 @@ app.get('/api/hikcentral/person-photo/:personId', authMiddleware, async (req, re
             }
         }
 
-        // Buscar foto do HikCentral via proxy autenticado
+        // Buscar foto do HikCentral via proxy autenticado (fallback lento)
         const photoResult = await HikCentralService.getPersonPhoto(personId);
 
         if (!photoResult) {
@@ -1781,34 +2022,77 @@ app.post('/api/residents', authMiddleware, async (req, res) => {
             const parts = body.full_name.trim().split(' ');
             prismaData.firstName = parts[0] || '';
             prismaData.lastName = parts.slice(1).join(' ') || '';
+        } else {
+            prismaData.firstName = body.firstName || '';
+            prismaData.lastName = body.lastName || '';
         }
 
         prismaData.phone = body.phone || null;
         prismaData.email = body.email || null;
-        prismaData.orgIndexCode = body.unit_number || '7';
-        prismaData.hikPersonId = body.hikcentral_person_id || null;
+        // Se veio do frontend como unit_number, mas no HikCentral é departamento
+        prismaData.orgIndexCode = body.orgIndexCode || '7'; // Default MORADORES
 
+        // 1. Cadastrar no HikCentral primeiro se não houver hikPersonId
+        let hikPersonId = body.hikcentral_person_id || null;
+
+        if (!hikPersonId) {
+            const hikResponse: any = await HikCentralService.addPerson({
+                personGivenName: prismaData.firstName,
+                personFamilyName: prismaData.lastName,
+                orgIndexCode: prismaData.orgIndexCode,
+                phoneNo: prismaData.phone || undefined,
+                email: prismaData.email || undefined,
+                certificateNo: body.cpf || undefined,
+                certificateType: body.cpf ? 1 : undefined,
+                personProperties: body.tower ? [{ propertyName: "Torre", propertyValue: body.tower }] : []
+            });
+            hikPersonId = hikResponse?.data?.personId;
+        }
+
+        // 2. Vincular Níveis de Acesso se fornecidos
+        if (hikPersonId && body.accessLevels && Array.isArray(body.accessLevels) && body.accessLevels.length > 0) {
+            await HikCentralService.authorizePerson(hikPersonId, body.accessLevels);
+        }
+
+        // 2.5 Sincronizar Foto (Face Data) se enviada
+        if (hikPersonId && (body.photo || body.photoBase64)) {
+            const b64 = body.photoBase64 || body.photo;
+            const cleanPhotoBase64 = b64.replace(/^data:image\/[a-zA-Z0-9]+;base64,/, '');
+            try {
+                await HikCentralService.addPersonFace(hikPersonId, cleanPhotoBase64);
+                console.log(`[HikCentral] Foto sincronizada para morador ${hikPersonId}`);
+            } catch (faceErr: any) {
+                console.error(`[HikCentral] Erro ao sincronizar foto do morador ${hikPersonId}:`, faceErr.message);
+                // Não falha a criação se a foto der erro (apenas loga)
+            }
+        }
+
+        prismaData.hikPersonId = hikPersonId;
         const person = await prisma.person.create({ data: prismaData });
 
-        // Responder no formato snake_case esperado
+        // 3. Gerar Link Único para o App Visitor
+        const onboardingToken = jwt.sign(
+            { personId: person.id, hikPersonId: person.hikPersonId, type: 'onboarding' },
+            JWT_SECRET as string,
+            { expiresIn: '48h' }
+        );
+        const onboardingUrl = `https://172.20.120.41:8443/login/first-access?token=${onboardingToken}`;
+
+        // 4. Simular Envio de E-mail (Placeholder)
+        if (person.email) {
+            console.log(`[Email Service] Enviando convite para ${person.email}: ${onboardingUrl}`);
+        }
+
         res.json({
+            success: true,
             id: person.id,
             full_name: `${person.firstName} ${person.lastName}`.trim(),
-            cpf: '',
-            phone: person.phone || null,
-            email: person.email || null,
-            unit_number: person.orgIndexCode || '',
-            block: null,
-            tower: HIK_ORG_NAMES[person.orgIndexCode] || null,
-            photo_url: person.photoUrl || null,
-            is_owner: true,
-            hikcentral_person_id: person.hikPersonId || null,
-            notes: null,
-            created_by: null,
-            created_at: person.createdAt,
-            updated_at: person.updatedAt,
+            hikcentral_person_id: person.hikPersonId,
+            onboarding_url: onboardingUrl,
+            data: person
         });
     } catch (error: any) {
+        console.error('Create Resident Error:', error);
         res.status(500).json({ error: error.message });
     }
 });
@@ -1818,53 +2102,56 @@ app.patch('/api/residents/:id', authMiddleware, async (req, res) => {
         const { id } = req.params;
         const body = { ...req.body };
 
-        // Salvar photo_url como photoUrl no Prisma (base64 comprimida vinda do frontend)
-        let photoUrl: string | null = null;
-        if (body.photo_url && typeof body.photo_url === 'string') {
-            photoUrl = body.photo_url;
-        }
+        const existing = await prisma.person.findFirst({
+            where: {
+                OR: [
+                    { id },
+                    { hikPersonId: id }
+                ]
+            }
+        });
 
-        // Mapear campos snake_case do frontend para camelCase do Prisma
-        const prismaData: any = {};
-        if (body.full_name !== undefined) {
-            const parts = (body.full_name || '').trim().split(' ');
-            prismaData.firstName = parts[0] || '';
-            prismaData.lastName = parts.slice(1).join(' ') || '';
-        }
-        if (body.phone !== undefined) prismaData.phone = body.phone;
-        if (body.email !== undefined) prismaData.email = body.email;
-        if (body.unit_number !== undefined) prismaData.orgIndexCode = body.unit_number;
-        if (body.hikcentral_person_id !== undefined) prismaData.hikPersonId = body.hikcentral_person_id;
-        if (body.hikPersonId !== undefined) prismaData.hikPersonId = body.hikPersonId;
-        if (body.hikcentral_person_id !== undefined) prismaData.hikPersonId = body.hikcentral_person_id;
+        if (!existing) return res.status(404).json({ error: 'Morador não encontrado' });
 
-        // Campo legado: aceitar direto também
-        if (body.firstName !== undefined) prismaData.firstName = body.firstName;
-        if (body.lastName !== undefined) prismaData.lastName = body.lastName;
-        if (body.orgIndexCode !== undefined) prismaData.orgIndexCode = body.orgIndexCode;
+        const parts = body.full_name?.trim().split(' ') || [];
+        const updateData: any = {
+            firstName: parts[0] || existing.firstName,
+            lastName: parts.slice(1).join(' ') || existing.lastName,
+            phone: body.phone !== undefined ? body.phone : existing.phone,
+            email: body.email !== undefined ? body.email : existing.email,
+            photoUrl: body.photo_url !== undefined ? body.photo_url : existing.photoUrl
+        };
 
-        // Foto
-        if (photoUrl !== null) prismaData.photoUrl = photoUrl;
+        // 1. Sincronizar com HikCentral se tiver ID
+        if (existing.hikPersonId) {
+            try {
+                await HikCentralService.updatePerson({
+                    personId: existing.hikPersonId,
+                    personGivenName: updateData.firstName,
+                    personFamilyName: updateData.lastName,
+                    phoneNo: updateData.phone || undefined,
+                    email: updateData.email || undefined,
+                    certificateNo: body.cpf || undefined,
+                    certificateType: body.cpf ? 1 : undefined,
+                    personProperties: body.tower ? [{ propertyName: "Torre", propertyValue: body.tower }] : []
+                });
 
-        // Tentar atualizar por UUID primeiro, depois por hikPersonId (para IDs do HikCentral como "22")
-        let person: any;
-        try {
-            person = await prisma.person.update({ where: { id }, data: prismaData });
-        } catch (uuidErr: any) {
-            // Fallback: buscar pelo hikPersonId se o ID não for um UUID válido
-            if (uuidErr?.code === 'P2025' || uuidErr?.message?.includes('Invalid') || uuidErr?.code === 'P2023') {
-                const existing = await prisma.person.findFirst({ where: { hikPersonId: id } });
-                if (!existing) {
-                    return res.status(404).json({ error: 'Morador não encontrado' });
+                // Atualizar autorizações se fornecidas
+                if (body.accessLevels && Array.isArray(body.accessLevels)) {
+                    await HikCentralService.authorizePerson(existing.hikPersonId, body.accessLevels);
                 }
-                person = await prisma.person.update({ where: { id: existing.id }, data: prismaData });
-            } else {
-                throw uuidErr;
+            } catch (hikErr: any) {
+                console.error('[HikCentral] Erro ao atualizar no patch:', hikErr.message);
             }
         }
 
-        // Responder no formato snake_case que o frontend espera
+        const person = await prisma.person.update({
+            where: { id: existing.id },
+            data: updateData
+        });
+
         res.json({
+            success: true,
             id: person.id,
             full_name: `${person.firstName} ${person.lastName}`.trim(),
             cpf: '',
@@ -1882,6 +2169,7 @@ app.patch('/api/residents/:id', authMiddleware, async (req, res) => {
             updated_at: person.updatedAt,
         });
     } catch (error: any) {
+        console.error('Update Resident Error:', error);
         res.status(500).json({ error: error.message });
     }
 });
@@ -1902,6 +2190,225 @@ app.delete('/api/residents/:id', authMiddleware, async (req, res) => {
         }
         res.status(204).send();
     } catch (error: any) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+app.post('/api/residents/:id/recovery-link', authMiddleware, async (req, res) => {
+    try {
+        const { id } = req.params;
+
+        // 1. Tentar buscar no banco local primeiro
+        let person = await prisma.person.findUnique({ where: { id } });
+
+        // Se não encontrar, assume que `id` pode ser o hikPersonId (IndexCode)
+        if (!person) {
+            person = await prisma.person.findFirst({ where: { hikPersonId: id } });
+        }
+
+        if (!person) {
+            return res.status(404).json({ error: 'Morador não encontrado no banco de dados local.' });
+        }
+
+        if (!person.email) {
+            return res.status(400).json({
+                error: 'Este morador não possui e-mail cadastrado. Onboarding do App Visitor requer um e-mail válido.'
+            });
+        }
+
+        // 2. Gerar Token JWT com validade de 48h
+        const onboardingToken = jwt.sign(
+            { personId: person.id, hikPersonId: person.hikPersonId, type: 'onboarding' },
+            JWT_SECRET as string,
+            { expiresIn: '48h' }
+        );
+
+        // 3. Montar a URL de onboarding (adaptada para testes locais conforme registro anterior)
+        const onboardingUrl = `https://172.20.120.41:8443/login/first-access?token=${onboardingToken}`;
+
+        res.status(200).json({
+            message: 'Link de acesso gerado com sucesso.',
+            onboarding_url: onboardingUrl
+        });
+
+    } catch (error: any) {
+        console.error('Erro ao gerar link de recuperação:', error);
+        res.status(500).json({ error: 'Falha interna ao gerar link de acesso.' });
+    }
+});
+
+// ============ Staff (Administração e Portaria) ============
+app.get('/api/staff', authMiddleware, async (req, res) => {
+    try {
+        const { search = '' } = req.query as any;
+
+        // Buscar do HikCentral
+        try {
+            const hikResult = await HikCentralService.getPersonList({
+                pageNo: 1,
+                pageSize: 400, // Staff é geralmente menor
+            });
+            const hikPersons = hikResult?.data?.list || [];
+
+            if (hikPersons.length > 0) {
+                const allPersonsStaff = hikPersons.map((p: any) => {
+                    const orgCode = String(p.orgIndexCode || '');
+                    const role = resolveRoleFromOrg(orgCode);
+                    const orgName = HIK_ORG_NAMES[orgCode] || p.orgName || 'DESCONHECIDO';
+
+                    return {
+                        id: p.personId || p.indexCode || `staff-${Math.random().toString(36).substr(2, 9)}`,
+                        firstName: p.personGivenName || p.personName || '',
+                        lastName: p.personFamilyName || '',
+                        phone: p.phoneNo || p.phone || null,
+                        email: p.email || null,
+                        orgIndexCode: orgCode,
+                        hikPersonId: p.personId || p.indexCode || null,
+                        orgName,
+                        role,
+                        personPhoto: p.personPhoto?.picUri || p.personPhoto?.uri || null,
+                        createdAt: p.createTime || new Date().toISOString(),
+                        updatedAt: p.updateTime || new Date().toISOString(),
+                    };
+                });
+
+                // Filtrar somente departamentos de Staff
+                const staff = allPersonsStaff.filter((r: any) => STAFF_ORG_CODES.includes(r.orgIndexCode));
+
+                let filtered = staff;
+                if (search) {
+                    const searchLower = (search as string).toLowerCase();
+                    filtered = staff.filter((r: any) =>
+                        (r.firstName + ' ' + r.lastName).toLowerCase().includes(searchLower) ||
+                        r.phone?.toLowerCase().includes(searchLower) ||
+                        r.email?.toLowerCase().includes(searchLower)
+                    );
+                }
+
+                // Sincronizar com banco local para preservar fotos
+                const localPhotos: Record<string, string | null> = {};
+                for (const r of staff) {
+                    try {
+                        const existing = await prisma.person.findFirst({ where: { hikPersonId: r.hikPersonId } });
+                        const upserted = await prisma.person.upsert({
+                            where: { hikPersonId: r.hikPersonId || `temp-staff-${r.id}` },
+                            update: {
+                                firstName: r.firstName,
+                                lastName: r.lastName,
+                                phone: r.phone,
+                                email: r.email,
+                                orgIndexCode: r.orgIndexCode,
+                            },
+                            create: {
+                                firstName: r.firstName,
+                                lastName: r.lastName,
+                                phone: r.phone,
+                                email: r.email,
+                                orgIndexCode: r.orgIndexCode,
+                                hikPersonId: r.hikPersonId,
+                            },
+                        });
+                        localPhotos[r.hikPersonId] = existing?.photoUrl || upserted.photoUrl || null;
+                    } catch (e) { }
+                }
+
+                return res.json({
+                    success: true,
+                    data: filtered.map((p: any) => ({
+                        id: p.id || p.indexCode,
+                        full_name: `${p.firstName} ${p.lastName}`.trim() || '-',
+                        first_name: p.firstName,
+                        last_name: p.lastName,
+                        phone: p.phone,
+                        email: p.email,
+                        department: p.orgName,
+                        role: p.role,
+                        photo_url: localPhotos[p.hikPersonId] || (p.hikPersonId ? `/api/hikcentral/person-photo/${p.hikPersonId}${p.personPhoto ? `?picUri=${encodeURIComponent(p.personPhoto)}` : ''}` : null),
+                        hikPersonId: p.hikPersonId || null,
+                        created_at: p.createdAt || new Date().toISOString()
+                    }))
+                });
+            }
+        } catch (hikError: any) {
+            console.error('Staff HikCentral Error:', hikError.message);
+        }
+
+        // Falback local se HikCentral falhar
+        const staffLocal = await prisma.person.findMany({
+            where: {
+                orgIndexCode: { in: STAFF_ORG_CODES },
+                OR: search ? [
+                    { firstName: { contains: search, mode: 'insensitive' } },
+                    { lastName: { contains: search, mode: 'insensitive' } },
+                    { phone: { contains: search, mode: 'insensitive' } },
+                    { email: { contains: search, mode: 'insensitive' } },
+                ] : undefined
+            },
+            orderBy: { createdAt: 'desc' }
+        });
+
+        res.json({
+            success: true,
+            data: staffLocal.map(r => ({
+                id: r.id,
+                full_name: `${r.firstName} ${r.lastName}`.trim(),
+                phone: r.phone,
+                email: r.email,
+                department: HIK_ORG_NAMES[r.orgIndexCode] || 'DESCONHECIDO',
+                role: resolveRoleFromOrg(r.orgIndexCode),
+                hikPersonId: r.hikPersonId,
+                photo_url: r.photoUrl || (r.hikPersonId ? `/api/hikcentral/person-photo/${r.hikPersonId}` : null),
+                updatedAt: r.updatedAt
+            }))
+        });
+    } catch (error: any) {
+        console.error('List Staff Error:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+app.post('/api/staff', authMiddleware, async (req, res) => {
+    try {
+        const body = { ...req.body };
+        const prismaData: any = {};
+
+        if (body.full_name) {
+            const parts = body.full_name.trim().split(' ');
+            prismaData.firstName = parts[0] || '';
+            prismaData.lastName = parts.slice(1).join(' ') || '';
+        }
+
+        prismaData.phone = body.phone || null;
+        prismaData.email = body.email || null;
+        // orgIndexCode vindo do departamento (4, 5 ou 6)
+        prismaData.orgIndexCode = body.orgIndexCode || '4';
+
+        // 1. Cadastrar no HikCentral
+        let hikPersonId = body.hikcentral_person_id || null;
+
+        if (!hikPersonId) {
+            const hikResponse: any = await HikCentralService.addPerson({
+                personGivenName: prismaData.firstName,
+                personFamilyName: prismaData.lastName,
+                orgIndexCode: prismaData.orgIndexCode,
+                phoneNo: prismaData.phone || undefined,
+                email: prismaData.email || undefined,
+            });
+            hikPersonId = hikResponse?.data?.personId;
+        }
+
+        prismaData.hikPersonId = hikPersonId;
+        const person = await prisma.person.create({ data: prismaData });
+
+        res.json({
+            success: true,
+            id: person.id,
+            full_name: `${person.firstName} ${person.lastName}`.trim(),
+            hikcentral_person_id: person.hikPersonId,
+            data: person
+        });
+    } catch (error: any) {
+        console.error('Create Staff Error:', error);
         res.status(500).json({ error: error.message });
     }
 });
@@ -1933,6 +2440,176 @@ app.post('/api/visitors', authMiddleware, async (req, res) => {
         const visitor = await prisma.visitor.create({ data: req.body });
         res.json(visitor);
     } catch (error: any) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+app.post('/api/visitors/pre-register', authMiddleware, async (req, res) => {
+    try {
+        const payload = req.body;
+
+        // Criptografar documento se fornecido ou dummy
+        const phoneParam = payload.phone?.replace(/\D/g, '') || null;
+
+        const inviteToken = crypto.randomBytes(16).toString('hex');
+
+        // Buscar host hikPersonId usando req.user
+        let hostHikPersonId = payload.accessLevelId || null;
+        if ((req as any).user?.email) {
+            const hostPerson = await prisma.person.findFirst({
+                where: { email: (req as any).user.email }
+            });
+            if (hostPerson && hostPerson.hikPersonId) {
+                hostHikPersonId = hostPerson.hikPersonId;
+            }
+        }
+
+        const visitor = await prisma.visitor.create({
+            data: {
+                name: payload.name,
+                surname: payload.surname,
+                type: payload.type || 'VISITOR',
+                visitStartTime: new Date(payload.startTime),
+                visitEndTime: new Date(payload.endTime),
+                email: payload.email || null,
+                phone: phoneParam,
+                inviteToken: inviteToken,
+                status: 'PRE_REGISTERED',
+                // Assuming document is required by Prisma, use a dummy or optional
+                certificateNo: payload.document || `pre-${Date.now()}`,
+                certificateType: '111',
+                accessLevelId: hostHikPersonId
+            }
+        });
+
+        res.status(201).json({
+            ...visitor,
+            completionLink: `/login/guest-complete?token=${inviteToken}`
+        });
+
+    } catch (error: any) {
+        console.error('Pre-register Error:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+app.post('/api/invites/send-link', authMiddleware, async (req, res) => {
+    try {
+        const { reservationId, method } = req.body;
+        // In a real application, implement the WhatsApp/Email service logic here
+        console.log(`[Mock] Sending ${method} invite for reservation ${reservationId}`);
+        res.json({ success: true, message: `Convite enviado via ${method}` });
+    } catch (error: any) {
+        console.error('Send Link Error:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+app.post('/api/invites/validate', async (req, res) => {
+    try {
+        const { token } = req.body;
+        if (!token) return res.status(400).json({ message: "Token não fornecido" });
+
+        const visitor = await prisma.visitor.findFirst({
+            where: { inviteToken: token, status: 'PRE_REGISTERED' }
+        });
+
+        if (!visitor) {
+            return res.status(404).json({ message: "Convite inválido ou já utilizado" });
+        }
+
+        // In this implementation, we don't store host info in Visitor yet, but we mock or return known data
+        res.json({
+            id: visitor.id,
+            name: `${visitor.name} ${visitor.surname}`.trim(),
+            hostName: "Morador", // Fallback
+            unit: "Residência" // Fallback
+        });
+    } catch (error: any) {
+        console.error('Validate Invite Error:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+app.post('/api/invites/complete', async (req, res) => {
+    try {
+        const { token, doc, photoBase64, photo, docPhotoBase64, name, plate } = req.body;
+
+        if (!token) return res.status(400).json({ message: "Token não fornecido" });
+
+        const visitor = await prisma.visitor.findFirst({
+            where: { inviteToken: token, status: 'PRE_REGISTERED' }
+        });
+
+        if (!visitor) {
+            return res.status(404).json({ message: "Convite não encontrado ou já processado" });
+        }
+
+        // Remove base64 prefix if exists
+        const b64 = photoBase64 || photo;
+        const cleanPhotoBase64 = b64 ? b64.replace(/^data:image\/[a-zA-Z0-9]+;base64,/, '') : undefined;
+
+        // Sincronizar com HikCentral
+        const hikResult: any = await HikCentralService.reserveVisitor({
+            visitorName: `${visitor.name} ${visitor.surname || ''}`.trim(),
+            certificateNo: doc || visitor.certificateNo || `DOC${Date.now()}`,
+            visitStartTime: visitor.visitStartTime.toISOString(),
+            visitEndTime: visitor.visitEndTime.toISOString(),
+            plateNo: plate || visitor.plateNo || undefined,
+            visitorPicData: cleanPhotoBase64
+        });
+
+        // Tentar aplicar herança de níveis de acesso do Morador (hostHikPersonId salvo em accessLevelId)
+        const hostHikPersonId = visitor.accessLevelId;
+        if (hostHikPersonId && hikResult?.data?.visitorId) {
+            try {
+                const accessLevelsRes: any = await HikCentralService.getPersonAccessLevels(hostHikPersonId);
+                const accessLevels = accessLevelsRes?.data?.list?.map((a: any) => a.accessLevelIndexCode || a.privilegeGroupId) || [];
+
+                if (accessLevels.length > 0) {
+                    await HikCentralService.authorizePerson(hikResult.data.visitorId, accessLevels, '2');
+                    console.log(`[HikCentral] Direitos do host ${hostHikPersonId} passados para vis. ${hikResult.data.visitorId}`);
+                }
+            } catch (err: any) {
+                console.error('[HikCentral] Erro ao herdar níveis de acesso para visitante:', err.message);
+            }
+        }
+
+        const updatedVisitor = await prisma.visitor.update({
+            where: { id: visitor.id },
+            data: {
+                status: 'ACTIVE',
+                certificateNo: doc || visitor.certificateNo,
+                plateNo: plate || visitor.plateNo,
+                hikVisitorId: hikResult?.data?.visitorId
+            }
+        });
+
+        res.json({ success: true, visitor: updatedVisitor, qrCodeData: "Visitante cadastrado com sucesso e liberado!" });
+
+    } catch (error: any) {
+        console.error('Complete Invite Error:', error);
+        res.status(500).json({ message: error.message });
+    }
+});
+
+app.get('/api/visitors/active', authMiddleware, async (req, res) => {
+    try {
+        const activeVisitors = await prisma.visitor.findMany({
+            where: {
+                status: 'ACTIVE',
+                visitEndTime: {
+                    gte: new Date()
+                }
+            },
+            orderBy: {
+                createdAt: 'desc'
+            }
+        });
+
+        res.json({ data: activeVisitors, count: activeVisitors.length });
+    } catch (error: any) {
+        console.error('Active Visitors Error:', error);
         res.status(500).json({ error: error.message });
     }
 });

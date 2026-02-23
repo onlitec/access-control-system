@@ -40,7 +40,7 @@ import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { useToast } from '@/hooks/use-toast';
 import { getVisitors, createVisitor, createVisitLog, getAllResidentsForSelect, getActiveTowers } from '@/db/api';
 import { urlToBase64 } from '@/lib/utils';
-import { createAppointment, reapplyAuthorization } from '@/services/hikcentral';
+import { createAppointment, reapplyAuthorization, getAccessLevels, authorizeHikPerson } from '@/services/hikcentral';
 import { useAuth } from '@/contexts/AuthContext';
 import type { Visitor, Tower } from '@/types';
 import { Plus, Search, User, Clock, Camera, FileText } from 'lucide-react';
@@ -56,6 +56,7 @@ export default function VisitorsPage() {
   const [visitors, setVisitors] = useState<Visitor[]>([]);
   const [residents, setResidents] = useState<Array<{ id: string; full_name: string; unit_number: string; block: string | null; tower: string | null }>>([]);
   const [towers, setTowers] = useState<Tower[]>([]);
+  const [accessLevels, setAccessLevels] = useState<{ accessLevelIndexCode: string; accessLevelName: string }[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -75,7 +76,8 @@ export default function VisitorsPage() {
       tower: '',
       visiting_resident: '',
       purpose: '',
-      notes: ''
+      notes: '',
+      accessLevelIndexCode: '0'
     }
   });
 
@@ -91,7 +93,19 @@ export default function VisitorsPage() {
     loadVisitors();
     loadResidents();
     loadTowers();
+    loadAccessLevels();
   }, [search]);
+
+  const loadAccessLevels = async () => {
+    try {
+      const res: any = await getAccessLevels();
+      if (res?.data?.list) {
+        setAccessLevels([{ accessLevelIndexCode: '0', accessLevelName: 'Nenhum' }, ...res.data.list]);
+      }
+    } catch (e) {
+      console.warn("Failed to load access levels:", e);
+    }
+  };
 
   const loadTowers = async () => {
     try {
@@ -204,7 +218,12 @@ export default function VisitorsPage() {
             appointmentData.visitorInfoList[0].faces = [{ faceData: base64Face }];
           }
 
-          await createAppointment(appointmentData);
+          const hikResult: any = await createAppointment(appointmentData);
+
+          if (data.accessLevelIndexCode && data.accessLevelIndexCode !== '0' && hikResult?.data?.visitorId) {
+            await authorizeHikPerson(hikResult.data.visitorId, [data.accessLevelIndexCode]);
+          }
+
           await reapplyAuthorization();
 
           toast({
@@ -270,235 +289,266 @@ export default function VisitorsPage() {
               Registrar Visitante
             </Button>
           </DialogTrigger>
-          <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
-            <DialogHeader>
-              <DialogTitle>Registrar Novo Visitante</DialogTitle>
-              <DialogDescription>
-                Preencha os dados do visitante
-              </DialogDescription>
+          <DialogContent
+            className="w-[95vw] max-h-[95vh] overflow-y-auto p-0 gap-0 border-primary/20 shadow-2xl"
+            style={{ maxWidth: '1200px' }}
+          >
+            <DialogHeader className="p-6 pb-2 border-b bg-muted/20">
+              <DialogTitle className="text-xl flex items-center gap-2">
+                <span className="p-2 bg-primary/10 text-primary rounded-lg">
+                  <Plus className="h-5 w-5" />
+                </span>
+                Registrar Novo Visitante
+              </DialogTitle>
             </DialogHeader>
-            <Form {...form}>
-              <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between">
-                    <Label>Foto Facial</Label>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      onClick={() => openCameraDialog('facial')}
-                    >
-                      <Camera className="mr-2 h-4 w-4" />
-                      Capturar da Câmera
-                    </Button>
-                  </div>
-                  <Dropzone {...dropzoneProps} className="min-h-32" />
-                  {dropzoneProps.files.length > 0 && (
-                    <div className="flex flex-col gap-2">
-                      {dropzoneProps.files.map((file, index) => (
-                        <div key={index} className="flex items-center gap-2 text-sm">
-                          <span>{file.name}</span>
-                          {file.errors.length > 0 && (
-                            <span className="text-destructive">{file.errors[0].message}</span>
-                          )}
+            <div className="p-6">
+              <Form {...form}>
+                <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
+                  <div className="flex flex-col md:flex-row gap-8">
+                    {/* Photo Section */}
+                    <div className="w-full md:w-[200px] flex-shrink-0 space-y-4">
+                      <div className="aspect-square w-full relative group border-4 border-muted rounded-xl bg-muted/30 overflow-hidden flex flex-col items-center justify-center transition-all hover:border-primary/20 shadow-inner">
+                        {form.watch('photo_url') ? (
+                          <>
+                            <img
+                              src={form.watch('photo_url')}
+                              className="w-full h-full object-cover"
+                              alt="Face capture"
+                            />
+                            <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 flex items-center justify-center gap-2 transition-all">
+                              <Button type="button" size="sm" variant="secondary" onClick={() => openCameraDialog('facial')} className="h-8">
+                                Trocar
+                              </Button>
+                            </div>
+                          </>
+                        ) : (
+                          <div className="flex flex-col items-center gap-2 text-muted-foreground p-4">
+                            <Camera className="h-10 w-10 opacity-20" />
+                            <span className="text-[10px] uppercase font-bold opacity-40">Sem Foto</span>
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="flex flex-col gap-2">
+                        <Button type="button" size="sm" onClick={() => openCameraDialog('facial')} className="w-full bg-primary/10 text-primary hover:bg-primary/20 border-none">
+                          <Camera className="mr-2 h-4 w-4" />
+                          Capturar pela Facial
+                        </Button>
+                        <div className="relative">
+                          <div className="absolute inset-0 flex items-center">
+                            <span className="w-full border-t border-muted" />
+                          </div>
+                          <div className="relative flex justify-center text-[8px] uppercase font-bold text-muted-foreground">
+                            <span className="bg-background px-2">ou</span>
+                          </div>
                         </div>
-                      ))}
-                      <Button
-                        type="button"
-                        size="sm"
-                        onClick={async () => {
-                          if (dropzoneProps.files.length > 0 && dropzoneProps.files[0].errors.length === 0) {
-                            await handleFileUpload(dropzoneProps.files);
-                          }
-                        }}
-                        disabled={uploading || dropzoneProps.files[0]?.errors.length > 0}
-                      >
-                        {uploading ? 'Enviando...' : 'Enviar Foto'}
-                      </Button>
-                    </div>
-                  )}
-                  {form.watch('photo_url') && (
-                    <div className="flex items-center gap-2">
-                      <Avatar>
-                        <AvatarImage src={form.watch('photo_url')} />
-                        <AvatarFallback>
-                          <User className="h-4 w-4" />
-                        </AvatarFallback>
-                      </Avatar>
-                      <span className="text-sm text-muted-foreground">Foto facial carregada</span>
-                    </div>
-                  )}
-                </div>
+                        <Button type="button" size="sm" variant="outline" onClick={() => document.getElementById('visitor-photo-upload')?.click()} className="w-full text-[10px] h-8 border-dashed">
+                          enviar foto em arquivo
+                        </Button>
+                        <input
+                          id="visitor-photo-upload"
+                          type="file"
+                          className="hidden"
+                          accept="image/*"
+                          onChange={async (e) => {
+                            const file = e.target.files?.[0];
+                            if (file) {
+                              const url = await uploadImage(file);
+                              form.setValue('photo_url', url);
+                            }
+                          }}
+                        />
+                      </div>
 
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between">
-                    <Label>Foto do Documento</Label>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      onClick={() => openCameraDialog('document')}
-                    >
-                      <Camera className="mr-2 h-4 w-4" />
-                      Capturar da Câmera
+                      <div className="pt-4 border-t">
+                        <Label className="text-[10px] uppercase font-bold text-muted-foreground mb-2 block text-center">Documento</Label>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          className="w-full h-8 text-[10px] gap-2"
+                          onClick={() => openCameraDialog('document')}
+                        >
+                          <FileText className="h-3 w-3" />
+                          {form.watch('document_photo_url') ? 'Anexo Ok' : 'Foto Documento'}
+                        </Button>
+                      </div>
+                    </div>
+
+                    {/* Fields Section */}
+                    <div className="flex-1 space-y-4">
+                      <FormField
+                        control={form.control}
+                        name="full_name"
+                        rules={{ required: 'Nome completo é obrigatório' }}
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Nome Completo *</FormLabel>
+                            <FormControl>
+                              <Input {...field} placeholder="Ex: João Silva" />
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <FormField
+                          control={form.control}
+                          name="document"
+                          rules={{ required: 'Documento é obrigatório' }}
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>Documento (RG/CPF) *</FormLabel>
+                              <FormControl>
+                                <Input {...field} placeholder="Número do documento" />
+                              </FormControl>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+
+                        <FormField
+                          control={form.control}
+                          name="phone"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>Telefone</FormLabel>
+                              <FormControl>
+                                <Input {...field} placeholder="(00) 00000-0000" />
+                              </FormControl>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+                      </div>
+
+                      <FormField
+                        control={form.control}
+                        name="visiting_resident"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Morador Visitado</FormLabel>
+                            <FormControl>
+                              <ResidentCombobox
+                                residents={residents}
+                                value={field.value}
+                                onValueChange={field.onChange}
+                                placeholder="Selecione o morador..."
+                              />
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+
+                      <FormField
+                        control={form.control}
+                        name="visiting_unit"
+                        rules={{ required: 'Unidade visitada é obrigatória' }}
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Unidade Visitada *</FormLabel>
+                            <FormControl>
+                              <Input {...field} placeholder="Ex: 101" />
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+
+                      <FormField
+                        control={form.control}
+                        name="tower"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Torre</FormLabel>
+                            <Select onValueChange={field.onChange} value={field.value}>
+                              <FormControl>
+                                <SelectTrigger>
+                                  <SelectValue placeholder="Selecione a torre" />
+                                </SelectTrigger>
+                              </FormControl>
+                              <SelectContent>
+                                {towers.map((tower) => (
+                                  <SelectItem key={tower.id} value={tower.name}>
+                                    {tower.name}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+
+                      <FormField
+                        control={form.control}
+                        name="purpose"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Motivo da Visita</FormLabel>
+                            <FormControl>
+                              <Input {...field} placeholder="Ex: Visita social, entrega, etc." />
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+
+                      <FormField
+                        control={form.control}
+                        name="accessLevelIndexCode"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Nível de Acesso</FormLabel>
+                            <Select onValueChange={field.onChange} value={field.value}>
+                              <FormControl>
+                                <SelectTrigger>
+                                  <SelectValue placeholder="Selecione..." />
+                                </SelectTrigger>
+                              </FormControl>
+                              <SelectContent>
+                                {accessLevels.map((al) => (
+                                  <SelectItem key={al.accessLevelIndexCode} value={al.accessLevelIndexCode}>
+                                    {al.accessLevelName}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+
+                      <FormField
+                        control={form.control}
+                        name="notes"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Observações</FormLabel>
+                            <FormControl>
+                              <Textarea {...field} placeholder="Observações adicionais" rows={3} />
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+
+                    </div>
+                  </div>
+
+                  <div className="flex justify-end gap-2 p-6 border-t bg-muted/20">
+                    <Button type="button" variant="outline" onClick={() => setDialogOpen(false)}>
+                      Cancelar
+                    </Button>
+                    <Button type="submit" disabled={uploading}>
+                      {uploading ? 'Enviando...' : 'Concluir Cadastro'}
                     </Button>
                   </div>
-                  {form.watch('document_photo_url') && (
-                    <div className="flex items-center gap-2 border rounded-lg p-2">
-                      <FileText className="h-4 w-4 text-muted-foreground" />
-                      <span className="text-sm text-muted-foreground">Documento carregado</span>
-                    </div>
-                  )}
-                  {!form.watch('document_photo_url') && (
-                    <p className="text-sm text-muted-foreground">
-                      Clique em "Capturar da Câmera" para fotografar o documento
-                    </p>
-                  )}
-                </div>
-
-                <FormField
-                  control={form.control}
-                  name="full_name"
-                  rules={{ required: 'Nome completo é obrigatório' }}
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Nome Completo *</FormLabel>
-                      <FormControl>
-                        <Input {...field} placeholder="Nome completo do visitante" />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <FormField
-                    control={form.control}
-                    name="document"
-                    rules={{ required: 'Documento é obrigatório' }}
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Documento (RG/CPF) *</FormLabel>
-                        <FormControl>
-                          <Input {...field} placeholder="Número do documento" />
-                        </FormControl>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-
-                  <FormField
-                    control={form.control}
-                    name="phone"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Telefone</FormLabel>
-                        <FormControl>
-                          <Input {...field} placeholder="(00) 00000-0000" />
-                        </FormControl>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-                </div>
-
-                <FormField
-                  control={form.control}
-                  name="visiting_resident"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Morador Visitado</FormLabel>
-                      <FormControl>
-                        <ResidentCombobox
-                          residents={residents}
-                          value={field.value}
-                          onValueChange={field.onChange}
-                          placeholder="Selecione o morador..."
-                        />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-
-                <FormField
-                  control={form.control}
-                  name="visiting_unit"
-                  rules={{ required: 'Unidade visitada é obrigatória' }}
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Unidade Visitada *</FormLabel>
-                      <FormControl>
-                        <Input {...field} placeholder="Ex: 101" />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-
-                <FormField
-                  control={form.control}
-                  name="tower"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Torre</FormLabel>
-                      <Select onValueChange={field.onChange} value={field.value}>
-                        <FormControl>
-                          <SelectTrigger>
-                            <SelectValue placeholder="Selecione a torre" />
-                          </SelectTrigger>
-                        </FormControl>
-                        <SelectContent>
-                          {towers.map((tower) => (
-                            <SelectItem key={tower.id} value={tower.name}>
-                              {tower.name}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-
-                <FormField
-                  control={form.control}
-                  name="purpose"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Motivo da Visita</FormLabel>
-                      <FormControl>
-                        <Input {...field} placeholder="Ex: Visita social, entrega, etc." />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-
-                <FormField
-                  control={form.control}
-                  name="notes"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Observações</FormLabel>
-                      <FormControl>
-                        <Textarea {...field} placeholder="Observações adicionais" rows={3} />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-
-                <div className="flex justify-end gap-2">
-                  <Button type="button" variant="outline" onClick={() => setDialogOpen(false)}>
-                    Cancelar
-                  </Button>
-                  <Button type="submit" disabled={uploading}>
-                    {uploading ? 'Enviando...' : 'Registrar'}
-                  </Button>
-                </div>
-              </form>
-            </Form>
+                </form>
+              </Form>
+            </div>
           </DialogContent>
         </Dialog>
       </div>

@@ -16,20 +16,11 @@ export class HikCentralService {
         headers: Record<string, string>,
         appSecret: string
     ): Promise<string> {
-        const lf = '\n';
-        let stringToSign = method.toUpperCase() + lf;
-
-        const accept = headers['Accept'] || headers['accept'];
-        if (accept) stringToSign += accept + lf;
-
-        const contentMD5 = headers['Content-MD5'] || headers['content-md5'];
-        if (contentMD5) stringToSign += contentMD5 + lf;
-
-        const contentType = headers['Content-Type'] || headers['content-type'];
-        if (contentType) stringToSign += contentType + lf;
-
-        const date = headers['Date'] || headers['date'];
-        if (date) stringToSign += date + lf;
+        let stringToSign = method.toUpperCase() + '\n';
+        stringToSign += (headers['Accept'] || headers['accept'] || '') + '\n';
+        stringToSign += (headers['Content-MD5'] || headers['content-md5'] || '') + '\n';
+        stringToSign += (headers['Content-Type'] || headers['content-type'] || '') + '\n';
+        stringToSign += (headers['Date'] || headers['date'] || '') + '\n';
 
         // CanonicalizedHeaders (x-ca- headers)
         const xCaHeadersKeys = Object.keys(headers)
@@ -38,15 +29,13 @@ export class HikCentralService {
                 key.toLowerCase() !== 'x-ca-signature-headers')
             .sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase()));
 
-        const xCaHeadersStr = xCaHeadersKeys.map(key => `${key.toLowerCase()}:${headers[key]}`).join(lf);
+        stringToSign += xCaHeadersKeys.map(key => `${key.toLowerCase()}:${headers[key]}`).join('\n');
 
-        if (xCaHeadersStr) {
-            stringToSign += xCaHeadersStr + lf;
+        if (xCaHeadersKeys.length > 0) {
+            stringToSign += '\n';
         }
 
         stringToSign += path;
-
-        // console.log('StringToSign:', stringToSign.replace(/\n/g, '\\n'));
 
         return crypto
             .createHmac('sha256', appSecret)
@@ -152,14 +141,18 @@ export class HikCentralService {
      * Tenta buscar via picUri do personPhoto ou via API dedicada
      */
     public static async getPersonPhoto(personId: string): Promise<{ buffer: Buffer; contentType: string } | null> {
+        console.log(`[HikCentral] getPersonPhoto(personId: ${personId}) iniciado`);
         try {
             // 1. Buscar dados detalhados da pessoa para obter picUri atualizada
+            console.log(`[HikCentral] Buscando dados da pessoa ${personId} para obter picUri...`);
             const personResult = await this.hikRequest('/artemis/api/resource/v1/person/personList', {
                 method: 'POST',
                 body: JSON.stringify({ personIds: personId, pageNo: 1, pageSize: 1 }),
             });
+            console.log(`[HikCentral] Resultado da busca (list): ${personResult?.data?.list?.length || 0} registros`);
 
             const person = personResult?.data?.list?.[0];
+            console.log(`[HikCentral] Dados da pessoa ${personId}:`, JSON.stringify(person));
             if (!person?.personPhoto) {
                 console.log(`[HikCentral] Pessoa ${personId} não possui personPhoto na API.`);
                 return null;
@@ -234,6 +227,8 @@ export class HikCentralService {
         orgIndexCode: string;
         phoneNo?: string;
         email?: string;
+        certificateNo?: string;
+        certificateType?: number;
         faces?: { faceData: string }[];
         personProperties?: { propertyName: string, propertyValue: string }[];
     }) {
@@ -253,6 +248,19 @@ export class HikCentralService {
     }
 
     /**
+     * Sincronização de foto do morador (addPersonFace)
+     */
+    public static async addPersonFace(personId: string, faceData: string) {
+        return this.hikRequest('/artemis/api/resource/v1/face/single/add', {
+            method: 'POST',
+            body: JSON.stringify({
+                personId,
+                faceData
+            }),
+        });
+    }
+
+    /**
      * Atualizar pessoa existente no HikCentral (updatePerson)
      */
     public static async updatePerson(person: {
@@ -262,6 +270,8 @@ export class HikCentralService {
         orgIndexCode?: string;
         phoneNo?: string;
         email?: string;
+        certificateNo?: string;
+        certificateType?: number;
         faces?: { faceData: string }[];
         personProperties?: { propertyName: string, propertyValue: string }[];
     }) {
@@ -429,5 +439,56 @@ export class HikCentralService {
         });
         console.log("Device List Response:", JSON.stringify(result, null, 2));
         return result;
+    }
+
+    /**
+     * Listar níveis de acesso (Access Levels)
+     */
+    public static async getAccessLevelList(pageNo = 1, pageSize = 100) {
+        return this.hikRequest('/artemis/api/resource/v1/accessLevel/accessLevelList', {
+            method: 'POST',
+            body: JSON.stringify({ pageNo, pageSize }),
+        });
+    }
+
+    /**
+     * Listar definições de campos customizados/adicionais
+     */
+    public static async getCustomFields() {
+        return this.hikRequest('/artemis/api/resource/v1/person/fieldList', {
+            method: 'POST',
+            body: JSON.stringify({}),
+        });
+    }
+
+    /**
+     * Aplicar/Autorizar níveis de acesso a uma pessoa
+     */
+    public static async authorizePerson(personId: string, accessLevelIndexCodes: string[], personType: string = '1') {
+        return this.hikRequest('/artemis/api/acs/v1/accessLevel/authorize', {
+            method: 'POST',
+            body: JSON.stringify({
+                personDatas: [{
+                    personId: personId,
+                    personType: personType,
+                    operatorType: 1, // Add/Modify
+                }],
+                accessLevelIndexCodes: accessLevelIndexCodes
+            }),
+        });
+    }
+
+    /**
+     * Consulta níveis de acesso já atribuídos a um Morador/Visitante
+     */
+    public static async getPersonAccessLevels(personId: string) {
+        return this.hikRequest('/artemis/api/acps/v1/accessLevel/person/accessLevelList', {
+            method: 'POST',
+            body: JSON.stringify({
+                personIds: [personId],
+                pageNo: 1,
+                pageSize: 200
+            })
+        });
     }
 }

@@ -99,12 +99,31 @@ export async function getAccessGroups() {
 }
 
 /**
+ * Buscar Access Levels
+ */
+export async function getAccessLevels() {
+    return request('/hikcentral/access-levels', {
+        method: 'GET',
+    });
+}
+
+/**
  * Re-aplicar Autorização
  */
 export async function reapplyAuthorization() {
     // Backend doesn't have this specific route exposed, maybe access-logs triggers it or we ignore
     console.log("Reapply Authorization requested");
     return { code: "0", msg: "Success" };
+}
+
+/**
+ * Autorizar Pessoa (Visitor)
+ */
+export async function authorizeHikPerson(personId: string, accessLevels: string[]) {
+    return request('/hikcentral/authorize', {
+        method: 'POST',
+        body: JSON.stringify({ personId, accessLevels, personType: '2' })
+    });
 }
 
 /**
