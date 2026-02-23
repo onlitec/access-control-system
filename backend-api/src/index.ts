@@ -9,6 +9,7 @@ import {
     listSecurityMetricsHistory,
     pruneSecurityMetricsSnapshots,
 } from './services/securityMetrics';
+import hikcentralVisitorsRouter from './routes/hikcentral-visitors';
 import bcrypt from 'bcryptjs';
 import helmet from 'helmet';
 import crypto from 'crypto';
@@ -244,6 +245,9 @@ app.use(helmet());
 app.use(cors(corsOptions));
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
+
+// ============ HikCentral Visitors/Prestadores Routes ============
+app.use('/api/hikcentral', hikcentralVisitorsRouter);
 
 const parseDurationToMs = (input: string): number => {
     const match = /^(\d+)([smhd])$/i.exec(input.trim());
