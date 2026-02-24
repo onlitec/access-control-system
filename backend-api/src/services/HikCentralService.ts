@@ -10,74 +10,35 @@ const prisma = new PrismaClient();
  */
 
 export class HikCentralService {
-    // ============ Cache Singleton para VisitorGroupIDs ============
-    private static cachedVisitorGroupIds: Map<string, { id: string; timestamp: number }> = new Map();
-    private static readonly CACHE_TTL_MS = 60 * 60 * 1000; // 1 hora
-
-    /**
-     * Limpa o cache de IDs de grupos (útil para testes ou refresh forçado).
-     */
-    public static clearVisitorGroupCache(): void {
-        this.cachedVisitorGroupIds.clear();
-    }
-
-    /**
-     * Obtém o ID de um grupo de visitantes com cache.
-     * Se o ID já estiver em cache e não expirou, retorna do cache.
-     * Caso contrário, busca na API e armazena em cache.
-     */
-    public static async getVisitorGroupIdCached(groupName: string): Promise<string> {
-        const normalized = groupName.trim().toLowerCase();
-        const cached = this.cachedVisitorGroupIds.get(normalized);
-        
-        if (cached && (Date.now() - cached.timestamp) < this.CACHE_TTL_MS) {
-            console.log(`[HikCentral] Cache hit para grupo "${groupName}": ID=${cached.id}`);
-            return cached.id;
-        }
-
-        console.log(`[HikCentral] Cache miss para grupo "${groupName}", buscando na API...`);
-        const id = await this.getVisitorGroupIdByName(groupName);
-        this.cachedVisitorGroupIds.set(normalized, { id, timestamp: Date.now() });
-        console.log(`[HikCentral] Grupo "${groupName}" cacheado com ID=${id}`);
-        return id;
-    }
-
     private static async generateSignature(
         method: string,
         path: string,
         headers: Record<string, string>,
         appSecret: string
     ): Promise<string> {
-        const lf = '\n';
-        const parts: string[] = [method.toUpperCase(), lf];
-
-        const accept = headers['accept'];
-        if (accept) { parts.push(accept); parts.push(lf); }
-
-        const contentMD5 = headers['content-md5'];
-        if (contentMD5) { parts.push(contentMD5); parts.push(lf); }
-
-        const contentType = headers['content-type'] || '';
-        if (contentType) { parts.push(contentType); parts.push(lf); }
-
-        const date = headers['date'];
-        if (date) { parts.push(date); parts.push(lf); }
+        let stringToSign = method.toUpperCase() + '\n';
+        stringToSign += (headers['Accept'] || headers['accept'] || '') + '\n';
+        stringToSign += (headers['Content-MD5'] || headers['content-md5'] || '') + '\n';
+        stringToSign += (headers['Content-Type'] || headers['content-type'] || '') + '\n';
+        stringToSign += (headers['Date'] || headers['date'] || '') + '\n';
 
         // CanonicalizedHeaders (x-ca- headers)
         const xCaHeadersKeys = Object.keys(headers)
-            .filter(key => key.startsWith('x-ca-') &&
-                key !== 'x-ca-signature' &&
-                key !== 'x-ca-signature-headers')
-            .sort();
+            .filter(key => key.toLowerCase().startsWith('x-ca-') &&
+                key.toLowerCase() !== 'x-ca-signature' &&
+                key.toLowerCase() !== 'x-ca-signature-headers')
+            .sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase()));
 
-        const signedHeadersStr = xCaHeadersKeys.map(key => `${key}:${headers[key]}`).join('\n');
-        if (signedHeadersStr) { parts.push(signedHeadersStr); parts.push(lf); }
+        stringToSign += xCaHeadersKeys.map(key => `${key.toLowerCase()}:${headers[key]}`).join('\n');
 
-        parts.push(path);
+        if (xCaHeadersKeys.length > 0) {
+            stringToSign += '\n';
+        }
 
-        const stringToSign = parts.join('');
+        stringToSign += path;
+
         return crypto
-            .createHmac('sha256', Buffer.from(appSecret, 'utf8'))
+            .createHmac('sha256', appSecret)
             .update(stringToSign, 'utf8')
             .digest('base64');
     }
@@ -85,45 +46,32 @@ export class HikCentralService {
     public static async hikRequest(path: string, options: any = {}) {
         const config = await prisma.hikcentralConfig.findFirst({ orderBy: { createdAt: 'desc' } });
         if (!config || !config.apiUrl || !config.appKey || !config.appSecret) {
-            console.error('[HikCentral] Credenciais não configuradas. Verifique HikcentralConfig no banco de dados.');
             throw new Error("HikCentral credentials not configured in Admin panel.");
         }
 
-        const method = options.method || 'POST';
+        const method = options.method || 'GET';
         const timestamp = Date.now().toString();
 
         const headers: Record<string, string> = {
-            'accept': '*/*',
-            'content-type': 'application/json',
-            'x-ca-key': config.appKey,
-            'x-ca-timestamp': timestamp,
+            'Accept': '*/*',
+            'Content-Type': 'application/json;charset=UTF-8',
+            'X-Ca-Key': config.appKey,
+            'X-Ca-Timestamp': timestamp,
+            'X-Ca-Signature-Headers': 'x-ca-key,x-ca-timestamp',
             ...options.headers,
         };
 
-        // Determine sign header keys (all x-ca-* except signature itself)
-        const signHeaderKeys = Object.keys(headers)
-            .filter(k => k.startsWith('x-ca-') && k !== 'x-ca-signature' && k !== 'x-ca-signature-headers')
-            .sort();
-        headers['x-ca-signature-headers'] = signHeaderKeys.join(',');
+        if (options.body) {
+            headers['Content-MD5'] = crypto.createHash('md5').update(options.body, 'utf8').digest('base64');
+        }
 
         const cleanPath = path.startsWith('/') ? path : `/${path}`;
         const signature = await this.generateSignature(method, cleanPath, headers, config.appSecret);
-        headers['x-ca-signature'] = signature;
+        headers['X-Ca-Signature'] = signature;
 
         // Ensure base URL does not end with /
         const baseUrl = config.apiUrl.endsWith('/') ? config.apiUrl.slice(0, -1) : config.apiUrl;
         const url = `${baseUrl}${cleanPath}`;
-
-        // Log de debug para requisições
-        console.log(`[HikCentral] === REQUISIÇÃO ===`);
-        console.log(`  URL: ${url}`);
-        console.log(`  Method: ${method}`);
-        console.log(`  Path: ${cleanPath}`);
-        console.log(`  X-Ca-Key: ${config.appKey.substring(0, 8)}...`);
-        console.log(`  X-Ca-Timestamp: ${timestamp}`);
-        console.log(`  X-Ca-Signature-Headers: ${headers['x-ca-signature-headers']}`);
-        console.log(`  X-Ca-Signature: ${signature.substring(0, 20)}...`);
-        console.log(`===========================`);
 
         // Desabilitar verificação SSL para IP local se necessário
         const response = await fetch(url, {
@@ -135,9 +83,7 @@ export class HikCentralService {
 
         if (!response.ok) {
             const errorData = await response.json().catch(() => ({}));
-            console.error(`[HikCentral] ERRO ${response.status}: ${response.statusText}`);
-            console.error(`[HikCentral] Resposta:`, JSON.stringify(errorData));
-            throw new Error(errorData.msg || `Erro na requisição Hikcentral (${response.status}): ${response.statusText}`);
+            throw new Error(errorData.msg || `Erro na requisição Hikcentral: ${response.statusText}`);
         }
 
         return response.json();
@@ -156,22 +102,21 @@ export class HikCentralService {
         const timestamp = Date.now().toString();
 
         const headers: Record<string, string> = {
-            'accept': '*/*',
-            'content-type': 'application/json',
-            'x-ca-key': config.appKey,
-            'x-ca-timestamp': timestamp,
+            'Accept': '*/*',
+            'Content-Type': 'application/json;charset=UTF-8',
+            'X-Ca-Key': config.appKey,
+            'X-Ca-Timestamp': timestamp,
+            'X-Ca-Signature-Headers': 'x-ca-key,x-ca-timestamp',
             ...options.headers,
         };
 
-        // Determine sign header keys (all x-ca-* except signature itself)
-        const signHeaderKeys = Object.keys(headers)
-            .filter(k => k.startsWith('x-ca-') && k !== 'x-ca-signature' && k !== 'x-ca-signature-headers')
-            .sort();
-        headers['x-ca-signature-headers'] = signHeaderKeys.join(',');
+        if (options.body) {
+            headers['Content-MD5'] = crypto.createHash('md5').update(options.body, 'utf8').digest('base64');
+        }
 
         const cleanPath = path.startsWith('/') ? path : `/${path}`;
         const signature = await this.generateSignature(method, cleanPath, headers, config.appSecret);
-        headers['x-ca-signature'] = signature;
+        headers['X-Ca-Signature'] = signature;
 
         const baseUrl = config.apiUrl.endsWith('/') ? config.apiUrl.slice(0, -1) : config.apiUrl;
         const url = `${baseUrl}${cleanPath}`;
@@ -377,98 +322,27 @@ export class HikCentralService {
     }
 
     /**
-     * Lista grupos de visitantes.
-     * Endpoint: POST /artemis/api/visitor/v1/visitorgroups
+     * Consulta de Visitantes (visitorInfo)
      */
-    public static async getVisitorGroups(params: {
-        pageNo?: number;
-        pageSize?: number;
-        visitorGroupName?: string;
-    } = {}) {
-        const body: any = {
-            pageNo: params.pageNo || 1,
-            pageSize: params.pageSize || 100,
-        };
-
-        if (params.visitorGroupName?.trim()) {
-            body.searchCriteria = {
-                visitorGroupName: params.visitorGroupName.trim(),
-            };
+    public static async getVisitorList(pageNo = 1, pageSize = 200, searchName?: string) {
+        const body: any = { pageNo, pageSize };
+        if (searchName) {
+            body.searchCriteria = { personName: searchName };
         }
-
-        return this.hikRequest('/artemis/api/visitor/v1/visitorgroups', {
+        return this.hikRequest('/artemis/api/visitor/v1/visitor/visitorInfo', {
             method: 'POST',
             body: JSON.stringify(body),
         });
     }
 
     /**
-     * Busca o indexCode (ID) de um grupo de visitantes pelo nome.
-     * Regras:
-     * - Busca TODOS os grupos primeiro (sem filtro de nome)
-     * - Faz match case-insensitive com normalização de acentos
-     * - Logs detalhados para debug
+     * Lista Extensões e Perfis GERAIS (Orgs, Faciais, Grupos de Visitantes etc)
      */
-    public static async getVisitorGroupIdByName(groupName: string): Promise<string> {
-        const normalize = (value: string): string =>
-            value
-                .trim()
-                .normalize('NFD')
-                .replace(/\p{Diacritic}/gu, '')
-                .toLowerCase();
-
-        const normalizedTarget = normalize(groupName);
-        if (!normalizedTarget) {
-            throw new Error('groupName é obrigatório para buscar grupo de visitantes.');
-        }
-
-        console.log(`[HikCentral] Buscando grupo de visitantes: "${groupName}" (normalizado: "${normalizedTarget}")`);
-
-        // SEMPRE busca todos os grupos para garantir que encontramos
-        const result = await this.getVisitorGroups({ pageNo: 1, pageSize: 500 });
-        // Estrutura real da API: data.VisitorGroupList.VisitorGroup com baseInfo.Name
-        let list = result?.data?.VisitorGroupList?.VisitorGroup || result?.data?.list || result?.data?.VisitorGroupInfo || result?.data?.rows || [];
-
-        if (!Array.isArray(list) || list.length === 0) {
-            console.error('[HikCentral] Nenhum grupo de visitantes retornado pela API. Resposta:', JSON.stringify(result?.data || result));
-            throw new Error(`Nenhum grupo de visitantes encontrado no HikCentral. Verifique a conexão e credenciais AK/SK.`);
-        }
-
-        // LOG CRÍTICO: Mostra TODOS os grupos encontrados para debug
-        console.log(`[HikCentral] === GRUPOS ENCONTRADOS NO HIKCENTRAL (${list.length} grupos) ===`);
-        const getName = (group: any): string =>
-            String(group?.baseInfo?.Name || group?.visitorGroupName || group?.groupName || group?.name || '').trim();
-        const getId = (group: any): string =>
-            String(group?.indexCode || group?.visitorGroupID || group?.visitorGroupId || group?.id || '').trim();
-
-        list.forEach((group: any, idx: number) => {
-            const name = getName(group);
-            const id = getId(group);
-            const normalized = normalize(name);
-            console.log(`  [${idx + 1}] Nome: "${name}" | ID: "${id}" | Normalizado: "${normalized}"`);
+    public static async getVisitorGroups(pageNo = 1, pageSize = 100) {
+        return this.hikRequest('/artemis/api/visitor/v1/visitorgroups', {
+            method: 'POST',
+            body: JSON.stringify({ pageNo, pageSize }),
         });
-        console.log('[HikCentral] ============================================================');
-
-        // Match case-insensitive com normalização
-        const exactMatch = list.find((group: any) => normalize(getName(group)) === normalizedTarget);
-        const partialMatch = list.find((group: any) => {
-            const candidate = normalize(getName(group));
-            return candidate.includes(normalizedTarget) || normalizedTarget.includes(candidate);
-        });
-        const match = exactMatch || partialMatch;
-
-        if (!match) {
-            console.error(`[HikCentral] Grupo "${groupName}" NÃO ENCONTRADO. Grupos disponíveis:`, list.map((g: any) => getName(g)));
-            throw new Error(`Grupo de visitantes "${groupName}" não encontrado no HikCentral. Verifique o nome exato no painel do HikCentral.`);
-        }
-
-        const groupId = getId(match);
-        if (!groupId) {
-            throw new Error(`Grupo de visitantes "${groupName}" encontrado sem indexCode válido.`);
-        }
-
-        console.log(`[HikCentral] Grupo "${groupName}" encontrado com sucesso! ID: ${groupId}`);
-        return groupId;
     }
 
     /**
@@ -513,7 +387,7 @@ export class HikCentralService {
             pageNo: params.pageNo || 1,
             pageSize: params.pageSize || 200,
         };
-        if (params.orgIndexCode && params.orgIndexCode !== 'ALL') {
+        if (params.orgIndexCode) {
             body.orgIndexCodes = [params.orgIndexCode];
         }
         return this.hikRequest('/artemis/api/resource/v1/person/personList', {
@@ -584,114 +458,6 @@ export class HikCentralService {
         return this.hikRequest('/artemis/api/resource/v1/person/fieldList', {
             method: 'POST',
             body: JSON.stringify({}),
-        });
-    }
-
-    /**
-     * Buscar visitantes cadastrados no módulo de Visitantes do HikCentral
-     * Endpoint: POST /artemis/api/visitor/v1/visitor/visitorInfo
-     */
-    public static async getVisitorsByGroupId(
-        visitorGroupId: number | string,
-        params: {
-            pageNo?: number;
-            pageSize?: number;
-            personName?: string;
-            phoneNum?: string;
-            identifiyCode?: string;
-        } = {}
-    ) {
-        const body: any = {
-            pageNo: params.pageNo || 1,
-            pageSize: params.pageSize || 500,
-            searchCriteria: {
-                visitorGroupID: visitorGroupId,
-            },
-        };
-
-        if (params.personName) body.searchCriteria.personName = params.personName;
-        if (params.phoneNum) body.searchCriteria.phoneNum = params.phoneNum;
-        if (params.identifiyCode) body.searchCriteria.identifiyCode = params.identifiyCode;
-
-        return this.hikRequest('/artemis/api/visitor/v1/visitor/visitorInfo', {
-            method: 'POST',
-            body: JSON.stringify(body),
-        });
-    }
-
-    /**
-     * Busca visitantes filtrando dinamicamente por nome do grupo.
-     * Utiliza cache para evitar lookup repetido do groupId.
-     */
-    public static async getVisitorsByGroupName(
-        groupName: string,
-        params: {
-            pageNo?: number;
-            pageSize?: number;
-            personName?: string;
-            phoneNum?: string;
-            identifiyCode?: string;
-        } = {}
-    ) {
-        const groupId = await this.getVisitorGroupIdCached(groupName);
-        const result = await this.getVisitorsByGroupId(groupId, params);
-        return { groupId, result };
-    }
-
-    /**
-     * Compatibilidade retroativa.
-     * Mantém assinatura anterior e redireciona para filtro correto via searchCriteria.visitorGroupID.
-     */
-    public static async getVisitorList(params: {
-        pageNo?: number;
-        pageSize?: number;
-        personName?: string;
-        phoneNum?: string;
-        identifiyCode?: string;
-        visitorGroupId?: number | string;
-    } = {}) {
-        if (params.visitorGroupId !== undefined) {
-            return this.getVisitorsByGroupId(params.visitorGroupId, params);
-        }
-
-        const body: any = {
-            pageNo: params.pageNo || 1,
-            pageSize: params.pageSize || 500,
-        };
-        if (params.personName || params.phoneNum || params.identifiyCode) {
-            body.searchCriteria = {};
-            if (params.personName) body.searchCriteria.personName = params.personName;
-            if (params.phoneNum) body.searchCriteria.phoneNum = params.phoneNum;
-            if (params.identifiyCode) body.searchCriteria.identifiyCode = params.identifiyCode;
-        }
-        return this.hikRequest('/artemis/api/visitor/v1/visitor/visitorInfo', {
-            method: 'POST',
-            body: JSON.stringify(body),
-        });
-    }
-
-    /**
-     * Buscar lista de agendamentos/reservas de visitantes
-     * Endpoint: POST /artemis/api/visitor/v1/appointment/appointmentlist
-     */
-    public static async getAppointmentList(params: {
-        pageNo?: number;
-        pageSize?: number;
-        appointStartTime: string;
-        appointEndTime: string;
-        visitorName?: string;
-        appointState?: string;
-    }) {
-        return this.hikRequest('/artemis/api/visitor/v1/appointment/appointmentlist', {
-            method: 'POST',
-            body: JSON.stringify({
-                pageNo: params.pageNo || 1,
-                pageSize: params.pageSize || 100,
-                appointStartTime: params.appointStartTime,
-                appointEndTime: params.appointEndTime,
-                visitorName: params.visitorName || '',
-                appointState: params.appointState || '',
-            }),
         });
     }
 
