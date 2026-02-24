@@ -360,16 +360,6 @@ export class HikCentralService {
     }
 
     /**
-     * Lista Extensões e Perfis GERAIS (Orgs, Faciais, Grupos de Visitantes etc)
-     */
-    public static async getVisitorGroups(pageNo = 1, pageSize = 100) {
-        return this.hikRequest('/artemis/api/visitor/v1/visitorgroups', {
-            method: 'POST',
-            body: JSON.stringify({ pageNo, pageSize }),
-        });
-    }
-
-    /**
      * Consulta de eventos (getAccessLogs)
      */
     public static async getAccessLogs(params: {
@@ -626,5 +616,147 @@ export class HikCentralService {
             }
         }
         return persons;
+    }
+
+    // ============ CMS Data-Driven: Entity Fetchers with Cache ============
+    
+    // Cache em memória com TTL por tipo de entidade
+    private static entityCache: Map<string, { data: any; timestamp: number; ttl: number }> = new Map();
+    private static readonly CACHE_TTL = {
+        ORGANIZATION: 5 * 60 * 1000,    // 5 min
+        AREA: 10 * 60 * 1000,          // 10 min
+        ACCESS_LEVEL: 15 * 60 * 1000,  // 15 min
+        CUSTOM_FIELD: 30 * 60 * 1000,  // 30 min
+        FLOOR: 60 * 60 * 1000,         // 1 hora
+        VISITOR_GROUP: 5 * 60 * 1000,  // 5 min
+    };
+
+    /**
+     * Obtém dados do cache ou busca do HikCentral
+     */
+    private static async getWithCache<T>(
+        cacheKey: string,
+        entityType: keyof typeof HikCentralService.CACHE_TTL,
+        fetcher: () => Promise<T>
+    ): Promise<T> {
+        const cached = this.entityCache.get(cacheKey);
+        const now = Date.now();
+        
+        if (cached && (now - cached.timestamp) < cached.ttl) {
+            console.log(`[HikCentral Cache] HIT: ${cacheKey}`);
+            return cached.data;
+        }
+        
+        console.log(`[HikCentral Cache] MISS: ${cacheKey}`);
+        const data = await fetcher();
+        
+        this.entityCache.set(cacheKey, {
+            data,
+            timestamp: now,
+            ttl: this.CACHE_TTL[entityType]
+        });
+        
+        return data;
+    }
+
+    /**
+     * Limpa cache por tipo ou completamente
+     */
+    public static clearCache(entityType?: keyof typeof HikCentralService.CACHE_TTL) {
+        if (entityType) {
+            // Limpa apenas entradas desse tipo
+            for (const key of this.entityCache.keys()) {
+                if (key.startsWith(entityType + ':')) {
+                    this.entityCache.delete(key);
+                }
+            }
+            console.log(`[HikCentral Cache] Cleared: ${entityType}`);
+        } else {
+            this.entityCache.clear();
+            console.log('[HikCentral Cache] Cleared all');
+        }
+    }
+
+    /**
+     * Áreas Físicas (Regions) - Tree view de áreas do condomínio
+     * Endpoint: POST /artemis/api/resource/v1/regions
+     */
+    public static async getRegionsList(pageNo = 1, pageSize = 100) {
+        return this.getWithCache(
+            `AREA:regions:${pageNo}`,
+            'AREA',
+            () => this.hikRequest('/artemis/api/resource/v1/regions', {
+                method: 'POST',
+                body: JSON.stringify({ pageNo, pageSize }),
+            })
+        );
+    }
+
+    /**
+     * Níveis de Acesso / Privilege Groups
+     * Endpoint: POST /artemis/api/acs/v1/privilege/group
+     * type: 1 = acesso geral, 2 = visitantes
+     */
+    public static async getPrivilegeGroups(type = 1, pageNo = 1, pageSize = 500) {
+        return this.getWithCache(
+            `ACCESS_LEVEL:privilege:${type}:${pageNo}`,
+            'ACCESS_LEVEL',
+            () => this.hikRequest('/artemis/api/acs/v1/privilege/group', {
+                method: 'POST',
+                body: JSON.stringify({ pageNo, pageSize, type }),
+            })
+        );
+    }
+
+    /**
+     * Pisos/Andares (Floors)
+     * Endpoint: POST /artemis/api/vehicle/v1/floor/list
+     */
+    public static async getFloorsList(pageNo = 1, pageSize = 100) {
+        return this.getWithCache(
+            `FLOOR:list:${pageNo}`,
+            'FLOOR',
+            () => this.hikRequest('/artemis/api/vehicle/v1/floor/list', {
+                method: 'POST',
+                body: JSON.stringify({ pageNo, pageSize }),
+            })
+        );
+    }
+
+    /**
+     * Grupos de Visitantes
+     * Endpoint: POST /artemis/api/visitor/v1/visitorgroups
+     */
+    public static async getVisitorGroups(pageNo = 1, pageSize = 100) {
+        return this.getWithCache(
+            `VISITOR_GROUP:list:${pageNo}`,
+            'VISITOR_GROUP',
+            () => this.hikRequest('/artemis/api/visitor/v1/visitorgroups', {
+                method: 'POST',
+                body: JSON.stringify({ pageNo, pageSize }),
+            })
+        );
+    }
+
+    /**
+     * Organizações com cache (wrapper do getOrgList)
+     */
+    public static async getOrgListCached(pageNo = 1, pageSize = 200) {
+        return this.getWithCache(
+            `ORGANIZATION:list:${pageNo}`,
+            'ORGANIZATION',
+            () => this.getOrgList(pageNo, pageSize)
+        );
+    }
+
+    /**
+     * Campos Customizados com cache (wrapper do getCustomFields)
+     */
+    public static async getCustomFieldsCached() {
+        return this.getWithCache(
+            'CUSTOM_FIELD:list',
+            'CUSTOM_FIELD',
+            () => this.getCustomFields()
+        );
     }
 }
