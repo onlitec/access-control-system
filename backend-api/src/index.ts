@@ -17,6 +17,7 @@ import jwt from 'jsonwebtoken';
 import type { SignOptions } from 'jsonwebtoken';
 import hikcentralVisitorsRouter from './routes/hikcentral-visitors';
 import painelRouter from './routes/painel';
+import adminRouter from './routes/admin';
 
 dotenv.config();
 
@@ -997,6 +998,9 @@ const adminMiddleware = (req: any, res: any, next: any) => {
     }
     next();
 };
+
+// ============ Admin Routes (Entity Mappings CMS) ============
+app.use('/api/admin', authMiddleware, adminRouter);
 
 // Validate current token
 app.get('/api/auth/me', authMiddleware, async (req, res) => {

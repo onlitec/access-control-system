@@ -195,3 +195,26 @@ model SecurityMetricSnapshot {
   @@index([windowHours, generatedAt])
   @@map("security_metric_snapshots")
 }
+
+// ============ CMS Data-Driven: Entity Mappings ============
+// Mapeamento universal entre entidades HikCentral e páginas do painel
+// Permite que o admin configure dinamicamente quais dados alimentam cada página
+
+model EntityMapping {
+  id            String   @id @default(uuid())
+  pageRoute     String   @map("page_route") // "/painel/staff", "/painel/prestadores", "/painel/ti"
+  entityType    String   @map("entity_type") // "ORGANIZATION", "AREA", "ACCESS_LEVEL", "CUSTOM_FIELD", "FLOOR", "VISITOR_GROUP"
+  hikEntityId   String   @map("hik_entity_id") // orgIndexCode, areaIndexCode, privilegeGroupId, fieldId, floorIndexCode, visitorGroupId
+  hikEntityName String   @map("hik_entity_name") // Nome legível para exibição rápida no admin
+  isActive      Boolean  @default(true) @map("is_active")
+  priority      Int      @default(0) // Ordem de aplicação (menor = maior prioridade)
+  filterConfig  Json?    @map("filter_config") // Configurações adicionais de filtro (ex: {"operator": "AND", "value": "x"})
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+  createdBy     String?  @map("created_by")
+
+  @@index([pageRoute])
+  @@index([entityType])
+  @@index([pageRoute, entityType, isActive])
+  @@map("entity_mappings")
+}
