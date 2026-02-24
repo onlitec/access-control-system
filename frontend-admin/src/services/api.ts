@@ -482,3 +482,95 @@ export const getFinishedProviders = async () => {
 export const getCalabasasProviders = async () => {
     return request<{ data: CalabasasPerson[]; total: number }>('/hikcentral/calabasas-providers');
 };
+
+// ============ CMS Data-Driven: Admin Entities ============
+export interface HikEntity {
+    id: string;
+    name: string;
+    parentOrgIndexCode?: string;
+    parentIndexCode?: string;
+    type?: number;
+    description?: string;
+}
+
+export const getAdminOrganizations = async () => {
+    return request<{ success: boolean; data: HikEntity[]; total: number }>('/admin/entities/organizations');
+};
+
+export const getAdminAreas = async () => {
+    return request<{ success: boolean; data: HikEntity[]; total: number }>('/admin/entities/areas');
+};
+
+export const getAdminAccessLevels = async (type = 1) => {
+    return request<{ success: boolean; data: HikEntity[]; total: number }>(`/admin/entities/access-levels?type=${type}`);
+};
+
+export const getAdminCustomFields = async () => {
+    return request<{ success: boolean; data: HikEntity[]; total: number }>('/admin/entities/custom-fields');
+};
+
+export const getAdminFloors = async () => {
+    return request<{ success: boolean; data: HikEntity[]; total: number }>('/admin/entities/floors');
+};
+
+export const getAdminVisitorGroups = async () => {
+    return request<{ success: boolean; data: HikEntity[]; total: number }>('/admin/entities/visitor-groups');
+};
+
+// ============ Entity Mappings CRUD ============
+export interface EntityMapping {
+    id: string;
+    pageRoute: string;
+    entityType: string;
+    hikEntityId: string;
+    hikEntityName: string;
+    isActive: boolean;
+    priority: number;
+    filterConfig: any;
+    createdAt: string;
+    updatedAt: string;
+    createdBy: string | null;
+}
+
+export const getEntityMappings = async (filters?: { pageRoute?: string; entityType?: string; isActive?: boolean }) => {
+    const params = new URLSearchParams();
+    if (filters?.pageRoute) params.set('pageRoute', filters.pageRoute);
+    if (filters?.entityType) params.set('entityType', filters.entityType);
+    if (filters?.isActive !== undefined) params.set('isActive', String(filters.isActive));
+    const query = params.toString() ? `?${params.toString()}` : '';
+    return request<{ success: boolean; data: EntityMapping[]; total: number }>(`/admin/mappings${query}`);
+};
+
+export const createEntityMapping = async (data: Partial<EntityMapping>) => {
+    return request<{ success: boolean; data: EntityMapping }>('/admin/mappings', {
+        method: 'POST',
+        body: JSON.stringify(data),
+    });
+};
+
+export const updateEntityMapping = async (id: string, data: Partial<EntityMapping>) => {
+    return request<{ success: boolean; data: EntityMapping }>(`/admin/mappings/${id}`, {
+        method: 'PUT',
+        body: JSON.stringify(data),
+    });
+};
+
+export const deleteEntityMapping = async (id: string) => {
+    return request<{ success: boolean; message: string }>(`/admin/mappings/${id}`, {
+        method: 'DELETE',
+    });
+};
+
+export const batchCreateEntityMappings = async (mappings: Partial<EntityMapping>[]) => {
+    return request<{ success: boolean; created: number }>('/admin/mappings/batch', {
+        method: 'POST',
+        body: JSON.stringify({ mappings }),
+    });
+};
+
+export const refreshAdminCache = async (entityType?: string) => {
+    return request<{ success: boolean; message: string }>('/admin/cache/refresh', {
+        method: 'POST',
+        body: JSON.stringify({ entityType }),
+    });
+};
