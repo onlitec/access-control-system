@@ -1,6 +1,22 @@
 import React, { useState, useEffect } from 'react';
-import { getHikConfig, getMySessions, logoutAllSessions, revokeMySession, updateHikConfig } from '@/services/api';
-import { Settings, Save, Loader2, AlertTriangle, CheckCircle, Wifi, Shield, LogOut, Trash2, RefreshCw } from 'lucide-react';
+import { getHikConfig, getMySessions, logoutAllSessions, revokeMySession, updateHikConfig, getAdminOrganizations, getEntityMappings, createEntityMapping, deleteEntityMapping, EntityMapping, HikEntity } from '@/services/api';
+import { Settings, Save, Loader2, AlertTriangle, CheckCircle, Wifi, Shield, LogOut, Trash2, RefreshCw, Database, Plus, X, Map } from 'lucide-react';
+
+const ENTITY_TYPES = [
+    { value: 'ORGANIZATION', label: 'Departamento/Organização' },
+    { value: 'AREA', label: 'Área Física' },
+    { value: 'ACCESS_LEVEL', label: 'Nível de Acesso' },
+    { value: 'CUSTOM_FIELD', label: 'Campo Customizado' },
+    { value: 'FLOOR', label: 'Piso/Andar' },
+    { value: 'VISITOR_GROUP', label: 'Grupo de Visitantes' },
+];
+
+const PAGE_ROUTES = [
+    { value: '/painel/residents', label: 'Moradores' },
+    { value: '/painel/staff', label: 'Staff/Portaria' },
+    { value: '/painel/service-providers', label: 'Prestadores' },
+    { value: '/painel/visitors', label: 'Visitantes' },
+];
 
 export default function SettingsPage() {
     const [config, setConfig] = useState({ apiUrl: '', appKey: '', appSecret: '', syncEnabled: true });
@@ -13,10 +29,46 @@ export default function SettingsPage() {
     const [error, setError] = useState('');
     const [success, setSuccess] = useState('');
 
+    // CMS Data-Driven: Mapeamentos
+    const [mappings, setMappings] = useState<EntityMapping[]>([]);
+    const [mappingsLoading, setMappingsLoading] = useState(false);
+    const [organizations, setOrganizations] = useState<HikEntity[]>([]);
+    const [showMappingForm, setShowMappingForm] = useState(false);
+    const [newMapping, setNewMapping] = useState({
+        pageRoute: '/painel/residents',
+        entityType: 'ORGANIZATION',
+        hikEntityId: '',
+        hikEntityName: '',
+        priority: 0,
+    });
+
     useEffect(() => {
         loadConfig();
         loadSessions();
+        loadMappings();
+        loadOrganizations();
     }, []);
+
+    const loadMappings = async () => {
+        setMappingsLoading(true);
+        try {
+            const result = await getEntityMappings();
+            setMappings(result.data || []);
+        } catch (err: any) {
+            console.error('Erro ao carregar mapeamentos:', err);
+        } finally {
+            setMappingsLoading(false);
+        }
+    };
+
+    const loadOrganizations = async () => {
+        try {
+            const result = await getAdminOrganizations();
+            setOrganizations(result.data || []);
+        } catch (err: any) {
+            console.error('Erro ao carregar organizações:', err);
+        }
+    };
 
     const loadConfig = async () => {
         setLoading(true);
@@ -92,6 +144,42 @@ export default function SettingsPage() {
         } finally {
             setSaving(false);
         }
+    };
+
+    const handleCreateMapping = async (e: React.FormEvent) => {
+        e.preventDefault();
+        setError('');
+        setSuccess('');
+        try {
+            await createEntityMapping(newMapping);
+            setSuccess('Mapeamento criado com sucesso!');
+            setShowMappingForm(false);
+            setNewMapping({ pageRoute: '/painel/residents', entityType: 'ORGANIZATION', hikEntityId: '', hikEntityName: '', priority: 0 });
+            loadMappings();
+        } catch (err: any) {
+            setError(err.message || 'Erro ao criar mapeamento');
+        }
+    };
+
+    const handleDeleteMapping = async (id: string) => {
+        if (!confirm('Tem certeza que deseja remover este mapeamento?')) return;
+        setError('');
+        try {
+            await deleteEntityMapping(id);
+            setSuccess('Mapeamento removido com sucesso!');
+            loadMappings();
+        } catch (err: any) {
+            setError(err.message || 'Erro ao remover mapeamento');
+        }
+    };
+
+    const handleEntitySelect = (entityId: string) => {
+        const entity = organizations.find(o => o.id === entityId);
+        setNewMapping({
+            ...newMapping,
+            hikEntityId: entityId,
+            hikEntityName: entity?.name || '',
+        });
     };
 
     if (loading) {
@@ -233,6 +321,120 @@ export default function SettingsPage() {
                                     onClick={() => handleRevokeSession(session.id)}
                                 >
                                     <Trash2 size={16} /> Revogar
+                                </button>
+                            </div>
+                        ))}
+                    </div>
+                )}
+            </div>
+
+            {/* CMS Data-Driven: Entity Mappings */}
+            <div className="settings-card">
+                <div className="settings-card-header">
+                    <Database size={20} />
+                    <h2>Mapeamentos de Entidades (CMS)</h2>
+                </div>
+                <p style={{ marginTop: 0, color: '#6b7280', marginBottom: '1rem' }}>
+                    Configure quais entidades do HikCentral alimentam cada página do painel.
+                </p>
+
+                <div className="settings-actions" style={{ marginBottom: '1rem' }}>
+                    <button type="button" className="btn" onClick={loadMappings} disabled={mappingsLoading}>
+                        <RefreshCw size={18} className={mappingsLoading ? 'spin' : ''} /> Atualizar
+                    </button>
+                    <button type="button" className="btn btn-primary" onClick={() => setShowMappingForm(!showMappingForm)}>
+                        {showMappingForm ? <><X size={18} /> Cancelar</> : <><Plus size={18} /> Novo Mapeamento</>}
+                    </button>
+                </div>
+
+                {showMappingForm && (
+                    <form onSubmit={handleCreateMapping} style={{ border: '1px solid #e5e7eb', borderRadius: 8, padding: '1rem', marginBottom: '1rem', background: '#f9fafb' }}>
+                        <div className="form-row">
+                            <div className="form-group">
+                                <label>Página do Painel</label>
+                                <select
+                                    value={newMapping.pageRoute}
+                                    onChange={(e) => setNewMapping({ ...newMapping, pageRoute: e.target.value })}
+                                >
+                                    {PAGE_ROUTES.map(route => (
+                                        <option key={route.value} value={route.value}>{route.label}</option>
+                                    ))}
+                                </select>
+                            </div>
+                            <div className="form-group">
+                                <label>Tipo de Entidade</label>
+                                <select
+                                    value={newMapping.entityType}
+                                    onChange={(e) => setNewMapping({ ...newMapping, entityType: e.target.value })}
+                                >
+                                    {ENTITY_TYPES.map(type => (
+                                        <option key={type.value} value={type.value}>{type.label}</option>
+                                    ))}
+                                </select>
+                            </div>
+                        </div>
+                        <div className="form-row">
+                            <div className="form-group">
+                                <label>Entidade HikCentral</label>
+                                <select
+                                    value={newMapping.hikEntityId}
+                                    onChange={(e) => handleEntitySelect(e.target.value)}
+                                >
+                                    <option value="">Selecione...</option>
+                                    {organizations.map(org => (
+                                        <option key={org.id} value={org.id}>{org.name} ({org.id})</option>
+                                    ))}
+                                </select>
+                            </div>
+                            <div className="form-group">
+                                <label>Prioridade</label>
+                                <input
+                                    type="number"
+                                    min="0"
+                                    value={newMapping.priority}
+                                    onChange={(e) => setNewMapping({ ...newMapping, priority: parseInt(e.target.value) || 0 })}
+                                    placeholder="0 = maior prioridade"
+                                />
+                            </div>
+                        </div>
+                        <div className="settings-actions">
+                            <button type="submit" className="btn btn-primary">
+                                <Map size={18} /> Criar Mapeamento
+                            </button>
+                        </div>
+                    </form>
+                )}
+
+                {mappingsLoading ? (
+                    <div className="page-loading" style={{ minHeight: 100 }}>
+                        <div className="spinner"></div>
+                        <p>Carregando mapeamentos...</p>
+                    </div>
+                ) : mappings.length === 0 ? (
+                    <p style={{ color: '#6b7280' }}>Nenhum mapeamento configurado. Clique em "Novo Mapeamento" para começar.</p>
+                ) : (
+                    <div style={{ display: 'grid', gap: '0.75rem' }}>
+                        {mappings.map((mapping) => (
+                            <div key={mapping.id} style={{ display: 'flex', justifyContent: 'space-between', gap: '1rem', alignItems: 'center', border: '1px solid #e5e7eb', borderRadius: 8, padding: '0.75rem' }}>
+                                <div>
+                                    <div style={{ fontWeight: 500 }}>
+                                        <span style={{ color: '#3b82f6' }}>{mapping.pageRoute}</span>
+                                        {' → '}
+                                        <span style={{ color: '#10b981' }}>{mapping.hikEntityName}</span>
+                                    </div>
+                                    <div style={{ fontSize: 12, color: '#6b7280' }}>
+                                        Tipo: <strong>{ENTITY_TYPES.find(t => t.value === mapping.entityType)?.label || mapping.entityType}</strong>
+                                        {' | '}ID: <code>{mapping.hikEntityId}</code>
+                                        {' | '}Prioridade: {mapping.priority}
+                                        {' | '}Status: {mapping.isActive ? '✅ Ativo' : '⛔ Inativo'}
+                                    </div>
+                                </div>
+                                <button
+                                    type="button"
+                                    className="btn btn-danger"
+                                    onClick={() => handleDeleteMapping(mapping.id)}
+                                >
+                                    <Trash2 size={16} />
                                 </button>
                             </div>
                         ))}
