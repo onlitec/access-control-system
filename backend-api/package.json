@@ -7,6 +7,7 @@
         "build": "tsc",
         "start": "node dist/index.js",
         "bootstrap:admin": "tsx src/scripts/bootstrap-admin.ts",
+        "create:protected-admin": "tsx src/scripts/create-protected-admin.ts",
         "prune:refresh-sessions": "tsx src/scripts/prune-refresh-sessions.ts",
         "prune:session-audit-events": "tsx src/scripts/prune-session-audit-events.ts",
         "collect:security-metrics-snapshot": "tsx src/scripts/collect-security-metrics-snapshot.ts",

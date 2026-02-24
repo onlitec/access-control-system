@@ -6,6 +6,27 @@ import { PrismaClient } from '@prisma/client';
 const prisma = new PrismaClient();
 
 /**
+ * interface para visitantes com status
+ */
+export interface VisitorWithStatus {
+    visitorId: string;
+    visitorName: string;
+    indexCode: string;
+    visitorGroupName: string;
+    certificateNo: string;
+    phoneNum: string;
+    plateNo: string;
+    visitStartTime: string;
+    visitEndTime: string;
+    appointmentId?: string;
+    appointStatus?: number;
+    appointStatusText?: string;
+    appointStartTime?: string;
+    appointEndTime?: string;
+    status: number; // 0=scheduled, 1=finished, 2=active, 3=expired
+}
+
+/**
  * HikCentral Professional OpenAPI Integration Service
  */
 
@@ -29,9 +50,8 @@ export class HikCentralService {
                 key.toLowerCase() !== 'x-ca-signature-headers')
             .sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase()));
 
-        stringToSign += xCaHeadersKeys.map(key => `${key.toLowerCase()}:${headers[key]}`).join('\n');
-
         if (xCaHeadersKeys.length > 0) {
+            stringToSign += xCaHeadersKeys.map(key => `${key.toLowerCase()}:${headers[key]}`).join('\n');
             stringToSign += '\n';
         }
 
@@ -51,10 +71,12 @@ export class HikCentralService {
 
         const method = options.method || 'GET';
         const timestamp = Date.now().toString();
+        const dateStr = new Date().toUTCString();
 
         const headers: Record<string, string> = {
             'Accept': '*/*',
-            'Content-Type': 'application/json;charset=UTF-8',
+            'Content-Type': 'application/json',
+            'Date': dateStr,
             'X-Ca-Key': config.appKey,
             'X-Ca-Timestamp': timestamp,
             'X-Ca-Signature-Headers': 'x-ca-key,x-ca-timestamp',
@@ -100,10 +122,12 @@ export class HikCentralService {
 
         const method = options.method || 'POST';
         const timestamp = Date.now().toString();
+        const dateStr = new Date().toUTCString();
 
         const headers: Record<string, string> = {
             'Accept': '*/*',
-            'Content-Type': 'application/json;charset=UTF-8',
+            'Content-Type': 'application/json',
+            'Date': dateStr,
             'X-Ca-Key': config.appKey,
             'X-Ca-Timestamp': timestamp,
             'X-Ca-Signature-Headers': 'x-ca-key,x-ca-timestamp',
@@ -147,7 +171,7 @@ export class HikCentralService {
             console.log(`[HikCentral] Buscando dados da pessoa ${personId} para obter picUri...`);
             const personResult = await this.hikRequest('/artemis/api/resource/v1/person/personList', {
                 method: 'POST',
-                body: JSON.stringify({ personIds: personId, pageNo: 1, pageSize: 1 }),
+                body: JSON.stringify({ personIds: [personId], pageNo: 1, pageSize: 1 }),
             });
             console.log(`[HikCentral] Resultado da busca (list): ${personResult?.data?.list?.length || 0} registros`);
 
@@ -490,5 +514,117 @@ export class HikCentralService {
                 pageSize: 200
             })
         });
+    }
+
+    /**
+     * Busca todos os visitantes de um grupo com status
+     */
+    public static async fetchVisitorsWithStatus(groupName: string): Promise<VisitorWithStatus[]> {
+        const visitors: VisitorWithStatus[] = [];
+        let pageNo = 1;
+        const pageSize = 500;
+        let hasMore = true;
+
+        while (hasMore) {
+            try {
+                const response = await this.hikRequest('/artemis/api/resource/v1/person/visitor/advance/list', {
+                    method: 'POST',
+                    body: JSON.stringify({
+                        pageNo,
+                        pageSize,
+                        searchCriteria: {
+                            visitorGroupName: groupName,
+                        },
+                    }),
+                });
+
+                const list = response?.data?.list || [];
+                const total = Number(response?.data?.total) || 0;
+
+                for (const v of list) {
+                    visitors.push({
+                        visitorId: v.visitorId,
+                        visitorName: v.visitorName,
+                        indexCode: v.indexCode,
+                        visitorGroupName: v.visitorGroupName || groupName,
+                        certificateNo: v.certificateNo,
+                        phoneNum: v.phoneNum,
+                        plateNo: v.plateNo,
+                        visitStartTime: v.visitStartTime,
+                        visitEndTime: v.visitEndTime,
+                        appointmentId: v.appointmentId,
+                        appointStatus: v.appointStatus ?? v.status,
+                        appointStatusText: v.appointStatusText,
+                        appointStartTime: v.appointStartTime,
+                        appointEndTime: v.appointEndTime,
+                        status: v.status ?? v.appointStatus
+                    });
+                }
+
+                if (list.length < pageSize || visitors.length >= total) {
+                    hasMore = false;
+                } else {
+                    pageNo++;
+                }
+            } catch (err: any) {
+                console.error(`[HikCentral] fetchVisitorsWithStatus erro:`, err.message);
+                hasMore = false;
+            }
+        }
+        return visitors;
+    }
+
+    /**
+     * Busca pessoas (ACS) cadastradas em um departamento específico.
+     */
+    public static async getPersonsByDepartment(orgIndexCode: string): Promise<any[]> {
+        const persons: any[] = [];
+        let pageNo = 1;
+        const pageSize = 500;
+        let hasMore = true;
+
+        while (hasMore) {
+            try {
+                const response = await this.hikRequest('/artemis/api/resource/v1/person/advance/personList', {
+                    method: 'POST',
+                    body: JSON.stringify({
+                        pageNo,
+                        pageSize,
+                        searchCriteria: {
+                            orgIndexCode,
+                        },
+                    }),
+                });
+
+                const list = response?.data?.list || [];
+                const total = Number(response?.data?.total) || 0;
+
+                for (const person of list) {
+                    persons.push({
+                        id: person.personId || person.indexCode,
+                        person_id: person.personId || person.indexCode,
+                        person_name: person.personName || `${person.firstName || ''} ${person.lastName || ''}`.trim(),
+                        gender: person.gender,
+                        phone_num: person.phoneNum || person.phone || '',
+                        certificate_no: person.certificateNo || '',
+                        certificate_type: person.certificateType,
+                        org_index_code: person.orgIndexCode || orgIndexCode,
+                        org_name: person.orgName || '',
+                        job_title: person.jobTitle || '',
+                        email: person.email || '',
+                    });
+                }
+
+                if (list.length < pageSize || persons.length >= total) {
+                    hasMore = false;
+                } else {
+                    pageNo++;
+                }
+            } catch (err: any) {
+                console.error(`[HikCentral] getPersonsByDepartment erro:`, err.message);
+                hasMore = false;
+            }
+        }
+        return persons;
     }
 }

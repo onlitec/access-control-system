@@ -38,7 +38,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { useToast } from '@/hooks/use-toast';
-import { getServiceProviders, createServiceProvider, updateServiceProvider, getAllResidentsForSelect, getActiveTowers } from '@/db/api';
+import { getHikcentralPrestadores, createServiceProvider, updateServiceProvider, getAllResidentsForSelect, getActiveTowers } from '@/db/api';
 import { urlToBase64 } from '@/lib/utils';
 import { addPerson, createAppointment, reapplyAuthorization, getOrganizations } from '@/services/hikcentral';
 import { useAuth } from '@/contexts/AuthContext';
@@ -132,13 +132,48 @@ export default function ServiceProvidersPage() {
   const loadProviders = async () => {
     try {
       setLoading(true);
-      const { data } = await getServiceProviders(1, 100, search);
-      setProviders(data);
+      const { data } = await getHikcentralPrestadores();
+      
+      // Mapear dados do HikCentral para o formato esperado pelo frontend
+      const mappedProviders = (data || []).map((p: any) => ({
+        id: p.id || p.visitor_id,
+        full_name: p.visitor_name || 'Sem nome',
+        company_name: null,
+        document: p.certificate_no || '-',
+        phone: p.phone_num || null,
+        email: null,
+        service_type: p.visitor_group_name || 'Prestação de Serviço',
+        provider_type: 'temporary' as const,
+        photo_url: null,
+        document_photo_url: null,
+        tower: null,
+        visiting_resident: null,
+        valid_from: p.appoint_start_time?.split('T')[0] || null,
+        valid_until: p.appoint_end_time?.split('T')[0] || null,
+        notes: null,
+        hikcentral_person_id: p.visitor_id || null,
+        // Campos adicionais do HikCentral
+        appoint_status: p.appoint_status,
+        appoint_status_text: p.appoint_status_text,
+        appoint_start_time: p.appoint_start_time,
+        appoint_end_time: p.appoint_end_time,
+        plate_no: p.plate_no,
+      }));
+      
+      // Filtrar por busca se necessário
+      const filtered = search 
+        ? mappedProviders.filter((p: any) => 
+            p.full_name?.toLowerCase().includes(search.toLowerCase()) ||
+            p.service_type?.toLowerCase().includes(search.toLowerCase())
+          )
+        : mappedProviders;
+      
+      setProviders(filtered);
     } catch (error) {
       console.error('Erro ao carregar prestadores:', error);
       toast({
         title: 'Erro',
-        description: 'Não foi possível carregar os prestadores',
+        description: 'Não foi possível carregar os prestadores do HikCentral',
         variant: 'destructive'
       });
     } finally {
@@ -694,12 +729,11 @@ export default function ServiceProvidersPage() {
               <TableRow>
                 <TableHead>Foto</TableHead>
                 <TableHead>Nome</TableHead>
-                <TableHead>Empresa</TableHead>
-                <TableHead>Tipo de Serviço</TableHead>
-                <TableHead>Torre</TableHead>
-                <TableHead>Tipo</TableHead>
+                <TableHead>Documento</TableHead>
                 <TableHead>Telefone</TableHead>
-                <TableHead>HikCentral</TableHead>
+                <TableHead>Placa</TableHead>
+                <TableHead>Status</TableHead>
+                <TableHead>Período</TableHead>
                 <TableHead className="text-right">Ações</TableHead>
               </TableRow>
             </TableHeader>
@@ -710,10 +744,10 @@ export default function ServiceProvidersPage() {
                     <TableCell><Skeleton className="h-10 w-10 rounded-full bg-muted" /></TableCell>
                     <TableCell><Skeleton className="h-4 w-32 bg-muted" /></TableCell>
                     <TableCell><Skeleton className="h-4 w-28 bg-muted" /></TableCell>
-                    <TableCell><Skeleton className="h-4 w-24 bg-muted" /></TableCell>
                     <TableCell><Skeleton className="h-4 w-20 bg-muted" /></TableCell>
-                    <TableCell><Skeleton className="h-4 w-20 bg-muted" /></TableCell>
+                    <TableCell><Skeleton className="h-4 w-16 bg-muted" /></TableCell>
                     <TableCell><Skeleton className="h-4 w-24 bg-muted" /></TableCell>
+                    <TableCell><Skeleton className="h-4 w-32 bg-muted" /></TableCell>
                     <TableCell><Skeleton className="h-8 w-20 bg-muted ml-auto" /></TableCell>
                   </TableRow>
                 ))
@@ -724,7 +758,7 @@ export default function ServiceProvidersPage() {
                   </TableCell>
                 </TableRow>
               ) : (
-                providers.map((provider) => (
+                providers.map((provider: any) => (
                   <TableRow key={provider.id}>
                     <TableCell>
                       <Avatar>
@@ -735,25 +769,26 @@ export default function ServiceProvidersPage() {
                       </Avatar>
                     </TableCell>
                     <TableCell className="font-medium">{provider.full_name}</TableCell>
-                    <TableCell>{provider.company_name || '-'}</TableCell>
-                    <TableCell>{provider.service_type}</TableCell>
-                    <TableCell>{provider.tower || '-'}</TableCell>
+                    <TableCell>{provider.document}</TableCell>
+                    <TableCell>{provider.phone || '-'}</TableCell>
+                    <TableCell>{provider.plate_no || '-'}</TableCell>
                     <TableCell>
-                      <Badge variant={provider.provider_type === 'fixed' ? 'default' : 'secondary'}>
-                        {provider.provider_type === 'fixed' ? 'Fixo' : 'Eventual'}
+                      <Badge 
+                        variant={provider.appoint_status === 2 ? 'default' : provider.appoint_status === 1 ? 'secondary' : 'outline'}
+                        className={provider.appoint_status === 2 ? 'bg-green-600 text-white' : provider.appoint_status === 1 ? 'bg-gray-200 text-gray-700' : 'text-blue-600 border-blue-200 bg-blue-50'}
+                      >
+                        {provider.appoint_status_text || 'Agendado'}
                       </Badge>
                     </TableCell>
-                    <TableCell>{provider.phone || '-'}</TableCell>
                     <TableCell>
-                      {provider.hikcentral_person_id ? (
-                        <Badge variant="outline" className="text-green-600 border-green-200 bg-green-50">
-                          Sincronizado
-                        </Badge>
-                      ) : (
-                        <Badge variant="outline" className="text-muted-foreground border-slate-200">
-                          Não Sincronizado
-                        </Badge>
-                      )}
+                      <div className="flex flex-col text-xs text-muted-foreground">
+                        {provider.appoint_start_time && (
+                          <span>De: {new Date(provider.appoint_start_time).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}</span>
+                        )}
+                        {provider.appoint_end_time && (
+                          <span>Até: {new Date(provider.appoint_end_time).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}</span>
+                        )}
+                      </div>
                     </TableCell>
                     <TableCell className="text-right">
                       <Button

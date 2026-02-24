@@ -8,49 +8,72 @@ datasource db {
 }
 
 model HikcentralConfig {
-  id          Int      @id @default(autoincrement())
-  apiUrl      String   @map("api_url")
-  appKey      String   @map("app_key")
-  appSecret   String   @map("app_secret")
-  syncEnabled Boolean  @default(true) @map("sync_enabled")
-  createdAt   DateTime @default(now()) @map("created_at")
-  updatedAt   DateTime @updatedAt @map("updated_at")
+  id                    Int       @id @default(autoincrement())
+  apiUrl                String    @map("api_url")
+  appKey                String    @map("app_key")
+  appSecret             String    @map("app_secret")
+  syncEnabled           Boolean   @default(true) @map("sync_enabled")
+  createdAt             DateTime  @default(now()) @map("created_at")
+  updatedAt             DateTime  @updatedAt @map("updated_at")
+  config_name           String?
+  created_by            String?
+  last_sync             DateTime?
+  notes                 String?
+  sync_interval_minutes Int       @default(60)
+  updated_by            String?
 
   @@map("hikcentral_configs")
 }
 
 model Person {
-  id           String   @id @default(uuid())
-  firstName    String   @map("first_name")
-  lastName     String   @map("last_name")
-  phone        String?
-  email        String?
-  orgIndexCode String   @map("org_index_code")
-  hikPersonId  String?  @unique @map("hik_person_id")
-  photoUrl     String?  @map("photo_url")
-  createdAt    DateTime @default(now()) @map("created_at")
-  updatedAt    DateTime @updatedAt @map("updated_at")
+  id                 String    @id @default(uuid())
+  firstName          String    @map("first_name")
+  lastName           String    @map("last_name")
+  phone              String?
+  email              String?
+  orgIndexCode       String    @map("org_index_code")
+  hikPersonId        String?   @unique @map("hik_person_id")
+  photoUrl           String?   @map("photo_url")
+  createdAt          DateTime  @default(now()) @map("created_at")
+  updatedAt          DateTime? @updatedAt @map("updated_at")
+  block              String?
+  cpf                String?
+  document_photo_url String?
+  is_owner           Boolean?  @default(true)
+  notes              String?
+  tower              String?
+  unit_number        String?
 
   @@map("persons")
 }
 
 model Visitor {
-  id              String   @id @default(uuid())
-  name            String
-  surname         String?
-  type            String?  @default("VISITOR")
-  certificateType String?  @map("certificate_type")
-  certificateNo   String?  @map("certificate_no")
-  email           String?
-  phone           String?
-  plateNo         String?  @map("plate_no")
-  visitStartTime  DateTime @map("visit_start_time")
-  visitEndTime    DateTime @map("visit_end_time")
-  hikVisitorId    String?  @map("hik_visitor_id")
-  status          String?  @default("ACTIVE")
-  inviteToken     String?  @map("invite_token")
-  accessLevelId   String?  @map("access_level_id")
-  createdAt       DateTime @default(now()) @map("created_at")
+  id                 String    @id @default(uuid())
+  name               String
+  surname            String?
+  type               String?   @default("VISITOR")
+  certificateType    String?   @map("certificate_type")
+  certificateNo      String?   @map("certificate_no")
+  email              String?
+  phone              String?
+  plateNo            String?   @map("plate_no")
+  visitStartTime     DateTime  @map("visit_start_time")
+  visitEndTime       DateTime  @map("visit_end_time")
+  hikVisitorId       String?   @map("hik_visitor_id")
+  status             String?   @default("ACTIVE")
+  inviteToken        String?   @map("invite_token")
+  accessLevelId      String?   @map("access_level_id")
+  createdAt          DateTime  @default(now()) @map("created_at")
+  document           String?
+  document_photo_url String?
+  full_name          String?
+  notes              String?
+  photo_url          String?
+  purpose            String?
+  tower              String?
+  updated_at         DateTime?
+  visiting_resident  String?
+  visiting_unit      String?
 
   @@map("visitors")
 }
@@ -74,6 +97,7 @@ model User {
   password           String
   name               String
   role               String              @default("ADMIN")
+  isProtected        Boolean             @default(false) @map("is_protected")
   createdAt          DateTime            @default(now()) @map("created_at")
   refreshSessions    RefreshSession[]
   sessionAuditEvents SessionAuditEvent[]
@@ -139,10 +163,6 @@ model ServiceProvider {
   createdAt          DateTime @default(now()) @map("created_at")
   updatedAt          DateTime @updatedAt @map("updated_at")
 
-  @@index([fullName])
-  @@index([serviceType])
-  @@index([providerType])
-  @@index([tower])
   @@map("service_providers")
 }
 
@@ -154,7 +174,6 @@ model Tower {
   createdAt   DateTime @default(now()) @map("created_at")
   updatedAt   DateTime @updatedAt @map("updated_at")
 
-  @@index([isActive])
   @@map("towers")
 }
 

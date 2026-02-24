@@ -48,7 +48,7 @@ import {
   syncResidents, getPersonProperties, generateRecoveryLink,
   getHikcentralAccessLevels
 } from '@/db/api';
-import { getOrganizations, addPerson } from '@/services/hikcentral';
+import { getOrganizations } from '@/services/hikcentral';
 import { useAuth } from '@/contexts/AuthContext';
 import { useForm } from 'react-hook-form';
 import { uploadImage } from '@/lib/upload';
@@ -275,9 +275,21 @@ export default function ResidentsPage() {
           description: 'Morador atualizado com sucesso'
         });
       } else {
+        // Converter photo_url para base64 antes de enviar ao backend
+        let photoBase64: string | undefined = undefined;
+        if (data.photo_url) {
+          try {
+            photoBase64 = await urlToBase64(data.photo_url);
+          } catch (e) {
+            console.warn('Não foi possível converter foto para base64:', e);
+          }
+        }
+
         const response: any = await createResident({
           ...data,
-          orgIndexCode: orgIndexCode || '7'
+          orgIndexCode: orgIndexCode || '1',
+          photoBase64: photoBase64 || undefined,
+          access_levels: data.access_levels?.length ? data.access_levels : undefined,
         });
         residentId = response.id;
         toast({
@@ -290,45 +302,6 @@ export default function ResidentsPage() {
         } else {
           setDialogOpen(false);
         }
-      }
-
-      // Sincronização com HikCentral
-      try {
-        const nameParts = data.full_name.trim().split(' ');
-        const givenName = nameParts[0];
-        const familyName = nameParts.length > 1 ? nameParts.slice(1).join(' ') : nameParts[0];
-
-        const syncData: any = {
-          personGivenName: givenName,
-          personFamilyName: familyName,
-          orgIndexCode: orgIndexCode || '7',
-          phoneNo: data.phone || undefined,
-          email: data.email || undefined,
-          personProperties: []
-        };
-
-        if (data.tower) {
-          syncData.personProperties.push({ propertyName: "Torre", propertyValue: data.tower });
-        }
-
-        if (data.photo_url) {
-          const base64Face = await urlToBase64(data.photo_url);
-          syncData.faces = [{ faceData: base64Face }];
-        }
-
-        const hikResponse: any = await addPerson(syncData);
-        if (hikResponse?.data?.personId) {
-          await updateResident(residentId, {
-            hikcentral_person_id: hikResponse.data.personId
-          });
-        }
-      } catch (syncError: any) {
-        console.error('Erro na sincronização Hikcentral:', syncError);
-        toast({
-          title: 'Erro de Sincronização',
-          description: 'Morador salvo localmente, mas erro ao enviar para o Hikcentral.',
-          variant: 'destructive'
-        } as any);
       }
 
       if (editingResident) {
@@ -454,58 +427,60 @@ export default function ResidentsPage() {
             <Form {...form}>
               <form onSubmit={form.handleSubmit(onSubmit)} className="flex flex-col flex-1 bg-white overflow-hidden">
                 {/* Header */}
-                <DialogHeader className="p-6 border-b bg-zinc-50 rounded-t-2xl flex-shrink-0">
-                  <DialogTitle className="text-2xl font-bold flex gap-3 items-center">
-                    <User className="h-6 w-6 text-red-600" />
+                <DialogHeader className="px-7 py-4 border-b bg-white rounded-t-2xl flex-shrink-0">
+                  <DialogTitle className="text-xl font-bold flex gap-2.5 items-center text-zinc-800">
+                    <div className="w-8 h-8 rounded-lg bg-red-50 flex items-center justify-center">
+                      <User className="h-4 w-4 text-red-600" />
+                    </div>
                     {editingResident ? 'Editar Morador' : 'Cadastrar Novo Morador'}
                   </DialogTitle>
                 </DialogHeader>
 
                 <div className="flex flex-col md:flex-row flex-1 overflow-hidden min-h-0">
                   {/* Left Column (Photo & Document) - Sidebar Style */}
-                  <div className="w-full md:w-[320px] flex-shrink-0 bg-white border-r border-zinc-100 p-8 overflow-y-auto space-y-6">
-                    <div className="aspect-[4/5] w-full relative group border-2 border-zinc-200 rounded-2xl bg-zinc-50/50 overflow-hidden flex flex-col items-center justify-center transition-all hover:border-red-200 shadow-sm">
-                      {form.watch('photo_url') ? (
-                        <>
-                          <img
-                            src={getProxiedPhotoUrl(form.watch('photo_url'))}
-                            className="w-full h-full object-cover"
-                            alt="Face capture"
-                          />
-                          <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 flex items-center justify-center gap-2 transition-all">
-                            <Button type="button" size="sm" variant="secondary" onClick={() => { setCameraType('facial'); setCameraDialogOpen(true); }} className="h-9 font-bold px-4 rounded-xl">
-                              Trocar Foto
-                            </Button>
+                  <div className="w-full md:w-[260px] flex-shrink-0 bg-zinc-50/60 border-r border-zinc-100 px-5 py-6 overflow-y-auto flex flex-col gap-4">
+                    {/* Foto facial */}
+                    <div className="flex flex-col items-center gap-1">
+                      <span className="text-[10px] uppercase font-bold text-zinc-400 tracking-widest mb-1">Foto Facial</span>
+                      <div className="w-full aspect-square relative group border-2 border-zinc-200 rounded-2xl bg-white overflow-hidden flex flex-col items-center justify-center transition-all hover:border-red-300 shadow-sm">
+                        {form.watch('photo_url') ? (
+                          <>
+                            <img
+                              src={getProxiedPhotoUrl(form.watch('photo_url'))}
+                              className="w-full h-full object-cover"
+                              alt="Face capture"
+                            />
+                            <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-all">
+                              <Button type="button" size="sm" variant="secondary" onClick={() => { setCameraType('facial'); setCameraDialogOpen(true); }} className="h-8 text-xs font-bold px-3 rounded-lg">
+                                Trocar
+                              </Button>
+                            </div>
+                          </>
+                        ) : (
+                          <div className="flex flex-col items-center gap-2 text-zinc-300">
+                            <Camera className="h-10 w-10" />
+                            <span className="text-[10px] uppercase font-bold tracking-widest text-zinc-400">Sem foto</span>
                           </div>
-                        </>
-                      ) : (
-                        <div className="flex flex-col items-center gap-3 text-zinc-400 p-4">
-                          <Camera className="h-14 w-14 opacity-20" />
-                          <span className="text-[11px] uppercase font-black tracking-[0.2em] opacity-50">SEM FOTO</span>
-                        </div>
-                      )}
+                        )}
+                      </div>
                     </div>
 
-                    <div className="flex flex-col gap-3">
+                    {/* Botões de captura */}
+                    <div className="flex flex-col gap-2">
                       <Button
                         type="button"
                         onClick={() => { setCameraType('facial'); setCameraDialogOpen(true); }}
-                        className="w-full bg-red-50 text-red-600 hover:bg-red-100 border border-red-200 h-11 shadow-sm text-[11px] font-bold uppercase tracking-wider rounded-xl transition-all"
+                        className="w-full bg-red-600 hover:bg-red-700 text-white h-9 text-xs font-bold rounded-xl transition-all shadow-sm"
                       >
-                        <Camera className="mr-2 h-4 w-4" />
+                        <Camera className="mr-1.5 h-3.5 w-3.5" />
                         Cap. via Facial
                       </Button>
-
-                      <div className="relative flex items-center justify-center py-2">
-                        <span className="text-[10px] uppercase font-bold text-zinc-400 bg-white px-3 z-10 italic">ou</span>
-                        <div className="absolute w-full h-[1px] bg-zinc-100 top-1/2 -translate-y-1/2"></div>
-                      </div>
 
                       <Button
                         type="button"
                         variant="outline"
                         onClick={() => document.getElementById('res-photo-upload')?.click()}
-                        className="w-full text-[10px] h-10 border-dashed border-zinc-300 font-bold uppercase tracking-wider text-zinc-500 hover:bg-zinc-50 hover:text-zinc-900 rounded-xl transition-all"
+                        className="w-full text-xs h-9 border-zinc-200 font-semibold text-zinc-500 hover:bg-white hover:text-zinc-800 rounded-xl transition-all"
                       >
                         Enviar em Arquivo
                       </Button>
@@ -531,66 +506,71 @@ export default function ResidentsPage() {
                       />
                     </div>
 
-                    <div className="pt-8 border-t border-zinc-100 mt-4">
-                      <Label className="text-[10px] uppercase font-black text-zinc-400 mb-4 block text-center tracking-[0.2em]">DOCUMENTO (OPC.)</Label>
+                    {/* Divisor */}
+                    <div className="border-t border-zinc-200 pt-4">
+                      <span className="text-[10px] uppercase font-bold text-zinc-400 tracking-widest block text-center mb-3">Documento (Opc.)</span>
                       <Button
                         type="button"
                         variant="outline"
                         onClick={() => { setCameraType('document'); setCameraDialogOpen(true); }}
-                        className={`w-full h-12 text-[11px] gap-3 rounded-xl border-zinc-200 shadow-sm font-bold uppercase tracking-wider transition-all ${form.watch('document_photo_url') ? 'bg-green-50 border-green-200 text-green-700' : 'text-zinc-600 hover:bg-zinc-50'}`}
+                        className={`w-full h-9 text-xs gap-2 rounded-xl font-semibold uppercase tracking-wide transition-all ${
+                          form.watch('document_photo_url')
+                            ? 'bg-green-50 border-green-200 text-green-700 hover:bg-green-100'
+                            : 'border-zinc-200 text-zinc-500 hover:bg-white'
+                        }`}
                       >
-                        <FileText className="h-4 w-4 opacity-70" />
-                        {form.watch('document_photo_url') ? 'Doc. Salvo' : 'Foto Documento'}
+                        <FileText className="h-3.5 w-3.5" />
+                        {form.watch('document_photo_url') ? 'Doc. Salvo ✓' : 'Foto Documento'}
                       </Button>
                     </div>
                   </div>
 
                   {/* Right Column (Tabs & Settings) - Form Fields */}
-                  <div className="flex-1 overflow-hidden flex flex-col bg-zinc-50/30">
+                  <div className="flex-1 overflow-hidden flex flex-col bg-white">
                     <Tabs defaultValue="dados" className="h-full flex flex-col">
-                      <TabsList className="flex w-full justify-start h-16 bg-white rounded-none px-8 gap-8 border-b border-zinc-100 shrink-0 overflow-x-auto">
-                        <TabsTrigger value="dados" className="data-[state=active]:bg-transparent data-[state=active]:shadow-none data-[state=active]:border-b-2 data-[state=active]:border-red-600 data-[state=active]:text-red-600 rounded-none px-2 h-16 font-bold text-sm text-zinc-500">
+                      <TabsList className="flex w-full justify-start h-12 bg-zinc-50 rounded-none px-6 gap-1 border-b border-zinc-200 shrink-0 overflow-x-auto">
+                        <TabsTrigger value="dados" className="data-[state=active]:bg-white data-[state=active]:shadow-sm data-[state=active]:text-red-600 data-[state=active]:border data-[state=active]:border-zinc-200 rounded-lg px-4 h-8 font-semibold text-xs text-zinc-500 transition-all">
                           Dados Básicos
                         </TabsTrigger>
-                        <TabsTrigger value="local" className="data-[state=active]:bg-transparent data-[state=active]:shadow-none data-[state=active]:border-b-2 data-[state=active]:border-red-600 data-[state=active]:text-red-600 rounded-none px-2 h-16 font-bold text-sm text-zinc-500">
+                        <TabsTrigger value="local" className="data-[state=active]:bg-white data-[state=active]:shadow-sm data-[state=active]:text-red-600 data-[state=active]:border data-[state=active]:border-zinc-200 rounded-lg px-4 h-8 font-semibold text-xs text-zinc-500 transition-all">
                           Local / Bloco
                         </TabsTrigger>
-                        <TabsTrigger value="acesso" className="data-[state=active]:bg-transparent data-[state=active]:shadow-none data-[state=active]:border-b-2 data-[state=active]:border-red-600 data-[state=active]:text-red-600 rounded-none px-2 h-16 font-bold text-sm text-zinc-500">
+                        <TabsTrigger value="acesso" className="data-[state=active]:bg-white data-[state=active]:shadow-sm data-[state=active]:text-red-600 data-[state=active]:border data-[state=active]:border-zinc-200 rounded-lg px-4 h-8 font-semibold text-xs text-zinc-500 transition-all">
                           Níveis de Acesso
                         </TabsTrigger>
-                        <TabsTrigger value="outros" className="data-[state=active]:bg-transparent data-[state=active]:shadow-none data-[state=active]:border-b-2 data-[state=active]:border-red-600 data-[state=active]:text-red-600 rounded-none px-2 h-16 font-bold text-sm text-zinc-500">
+                        <TabsTrigger value="outros" className="data-[state=active]:bg-white data-[state=active]:shadow-sm data-[state=active]:text-red-600 data-[state=active]:border data-[state=active]:border-zinc-200 rounded-lg px-4 h-8 font-semibold text-xs text-zinc-500 transition-all">
                           Outros / Atributos
                         </TabsTrigger>
                       </TabsList>
 
-                      <div className="flex-1 overflow-y-auto p-8 relative">
+                      <div className="flex-1 overflow-y-auto px-7 py-5 relative">
                         {/* 1. DADOS BÁSICOS */}
-                        <TabsContent value="dados" className="mt-0 space-y-6 animate-in slide-in-from-right-4 duration-500 fade-in">
+                        <TabsContent value="dados" className="mt-0 space-y-4 animate-in fade-in duration-200">
                           <FormField
                             control={form.control}
                             name="full_name"
                             rules={{ required: 'Nome completo é obrigatório' }}
                             render={({ field }) => (
                               <FormItem>
-                                <FormLabel className="text-zinc-800 font-bold text-sm">Nome Completo *</FormLabel>
+                                <FormLabel className="text-zinc-600 font-semibold text-xs uppercase tracking-wide">Nome Completo *</FormLabel>
                                 <FormControl>
-                                  <Input {...field} placeholder="Ex: João Silva" className="h-12 bg-white border-zinc-200 rounded-xl focus:ring-red-500 transition-all text-base px-4" />
+                                  <Input {...field} placeholder="Ex: João Silva" className="h-10 bg-white border-zinc-200 rounded-lg focus:ring-red-500 focus:border-red-400 transition-all text-sm px-3" />
                                 </FormControl>
                                 <FormMessage />
                               </FormItem>
                             )}
                           />
 
-                          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                          <div className="grid grid-cols-2 gap-4">
                             <FormField
                               control={form.control}
                               name="cpf"
                               rules={{ required: 'Documento é obrigatório' }}
                               render={({ field }) => (
                                 <FormItem>
-                                  <FormLabel className="text-zinc-800 font-bold text-sm">Documento (RG/CPF) *</FormLabel>
+                                  <FormLabel className="text-zinc-600 font-semibold text-xs uppercase tracking-wide">Documento (RG/CPF) *</FormLabel>
                                   <FormControl>
-                                    <Input {...field} placeholder="Número do documento" className="h-12 bg-white border-zinc-200 rounded-xl text-base px-4" />
+                                    <Input {...field} placeholder="Número do documento" className="h-10 bg-white border-zinc-200 rounded-lg text-sm px-3" />
                                   </FormControl>
                                   <FormMessage />
                                 </FormItem>
@@ -602,9 +582,9 @@ export default function ResidentsPage() {
                               name="phone"
                               render={({ field }) => (
                                 <FormItem>
-                                  <FormLabel className="text-zinc-800 font-bold text-sm">Telefone Celular</FormLabel>
+                                  <FormLabel className="text-zinc-600 font-semibold text-xs uppercase tracking-wide">Telefone Celular</FormLabel>
                                   <FormControl>
-                                    <Input {...field} placeholder="(00) 00000-0000" className="h-12 bg-white border-zinc-200 rounded-xl text-base px-4" />
+                                    <Input {...field} placeholder="(00) 00000-0000" className="h-10 bg-white border-zinc-200 rounded-lg text-sm px-3" />
                                   </FormControl>
                                   <FormMessage />
                                 </FormItem>
@@ -617,9 +597,9 @@ export default function ResidentsPage() {
                             name="email"
                             render={({ field }) => (
                               <FormItem>
-                                <FormLabel className="text-zinc-800 font-bold text-sm">E-mail</FormLabel>
+                                <FormLabel className="text-zinc-600 font-semibold text-xs uppercase tracking-wide">E-mail</FormLabel>
                                 <FormControl>
-                                  <Input {...field} type="email" placeholder="email@exemplo.com" className="h-12 bg-white border-zinc-200 rounded-xl text-base px-4" />
+                                  <Input {...field} type="email" placeholder="email@exemplo.com" className="h-10 bg-white border-zinc-200 rounded-lg text-sm px-3" />
                                 </FormControl>
                                 <FormMessage />
                               </FormItem>
@@ -787,19 +767,19 @@ export default function ResidentsPage() {
                 </div>
 
                 {/* Footer Action Bar */}
-                <div className="flex justify-end gap-4 p-6 border-t border-zinc-200 bg-white shrink-0 rounded-b-2xl shadow-[0_-4px_24px_-12px_rgba(0,0,0,0.1)]">
+                <div className="flex justify-end gap-3 px-7 py-4 border-t border-zinc-200 bg-zinc-50 shrink-0 rounded-b-2xl">
                   <Button
                     type="button"
                     variant="outline"
                     onClick={() => setDialogOpen(false)}
-                    className="h-12 px-10 rounded-xl font-bold text-zinc-500 hover:bg-zinc-100 border-zinc-200 shadow-sm"
+                    className="h-10 px-8 rounded-xl font-semibold text-zinc-500 hover:bg-zinc-100 border-zinc-200"
                   >
                     Cancelar
                   </Button>
                   <Button
                     type="submit"
                     disabled={uploading}
-                    className="h-12 px-12 rounded-xl bg-red-600 hover:bg-red-700 text-white font-black shadow-lg shadow-red-600/30 min-w-[220px] transition-all active:scale-[0.98]"
+                    className="h-10 px-8 rounded-xl bg-red-600 hover:bg-red-700 text-white font-bold shadow-md shadow-red-600/20 min-w-[180px] transition-all"
                   >
                     {uploading ? (
                       <span className="flex items-center gap-2">

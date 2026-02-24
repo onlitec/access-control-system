@@ -32,22 +32,36 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    // Check for existing token
+    // Check for existing token and validate it
     const token = localStorage.getItem('auth_token');
     const storedUser = localStorage.getItem('auth_user');
 
     if (token && storedUser) {
       try {
         const parsedUser = JSON.parse(storedUser);
-        setUser(parsedUser);
-        // Fetch profile if needed
-        fetchProfile(parsedUser.id);
+        
+        // Validate token by making a test request
+        authRequest<{ id: string }>('/auth/me')
+          .then(() => {
+            setUser(parsedUser);
+            fetchProfile(parsedUser.id);
+          })
+          .catch(() => {
+            // Token invalid, clear session
+            console.warn("Token validation failed, clearing session");
+            clearAuthSession();
+          })
+          .finally(() => {
+            setLoading(false);
+          });
       } catch (e) {
         console.error("Failed to parse stored user", e);
         clearAuthSession();
+        setLoading(false);
       }
+    } else {
+      setLoading(false);
     }
-    setLoading(false);
   }, []);
 
   const fetchProfile = async (userId: string) => {
