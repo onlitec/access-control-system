@@ -419,3 +419,66 @@ export const getSecurityMetricsHistory = async (params?: {
         }>;
     }>(`/security/metrics/history?${query.toString()}`);
 };
+
+// ============ HikCentral Visitors ============
+export interface HikCentralVisitor {
+    id: string;
+    visitor_id: string;
+    visitor_name: string;
+    visitor_group_name: string;
+    plate_no: string;
+    certificate_no: string;
+    phone_num: string;
+    appoint_status: number;
+    appoint_status_text: string;
+    appoint_start_time: string;
+    appoint_end_time: string;
+    visit_start_time: string | null;
+    visit_end_time: string | null;
+}
+
+// Pessoa do módulo ACS/departamento (não módulo visitantes)
+export interface CalabasasPerson {
+    id: string;
+    person_id: string;
+    person_name: string;
+    gender?: number;
+    phone_num: string;
+    certificate_no: string;
+    certificate_type?: number;
+    org_index_code: string;
+    org_name: string;
+    job_title: string;
+    email: string;
+}
+
+// Todos os visitantes do grupo VISITANTES (qualquer status)
+export const getAllVisitors = async () => {
+    return request<{ data: HikCentralVisitor[]; total: number }>('/hikcentral/visitantes');
+};
+
+export const getActiveVisitors = async () => {
+    return request<{ data: HikCentralVisitor[]; total: number }>('/hikcentral/visitantes-atividade');
+};
+
+export const getFinishedVisitors = async () => {
+    return request<{ data: HikCentralVisitor[]; total: number }>('/hikcentral/visitantes-finalizados');
+};
+
+// Todos os prestadores do grupo PRESTADORES (qualquer status - cadastrados pelos moradores como visitantes)
+export const getAllProviders = async () => {
+    return request<{ data: HikCentralVisitor[]; total: number }>('/hikcentral/prestadores');
+};
+
+export const getActiveProviders = async () => {
+    return request<{ data: HikCentralVisitor[]; total: number }>('/hikcentral/prestadores-atividade');
+};
+
+export const getFinishedProviders = async () => {
+    return request<{ data: HikCentralVisitor[]; total: number }>('/hikcentral/prestadores-finalizados');
+};
+
+// Prestadores Calabasas - cadastrados no departamento PRESTADORES (org 3), módulo de pessoas
+export const getCalabasasProviders = async () => {
+    return request<{ data: CalabasasPerson[]; total: number }>('/hikcentral/calabasas-providers');
+};

@@ -170,7 +170,8 @@ export const createOrUpdateHikcentralConfig = async (data: Partial<HikcentralCon
 
 // ============ Dashboard Stats ============
 export const getDashboardStats = async (): Promise<DashboardStats> => {
-  return request<DashboardStats>(`/dashboard/stats`);
+  const response = await request<{ success: boolean; message: string; data: DashboardStats }>(`/dashboard/stats`);
+  return response.data || response as any;
 };
 
 // ============ Visit Logs ============
@@ -224,4 +225,35 @@ export const syncResidents = async () => {
 
 export const getPersonProperties = async (): Promise<{ options: string[] }> => {
   return request<{ options: string[] }>(`/hikcentral/person-properties`);
+};
+
+// ============ HikCentral Visitors (Grupo VISITANTES) ============
+export const getHikcentralVisitantes = async () => {
+  return request<{ data: any[], total: number }>(`/hikcentral/visitantes`);
+};
+
+export const getHikcentralVisitantesAtividade = async () => {
+  return request<{ data: any[], total: number }>(`/hikcentral/visitantes-atividade`);
+};
+
+export const getHikcentralVisitantesFinalizados = async () => {
+  return request<{ data: any[], total: number }>(`/hikcentral/visitantes-finalizados`);
+};
+
+// ============ HikCentral Providers (Grupo PRESTADORES - Módulo Visitante) ============
+export const getHikcentralPrestadores = async () => {
+  return request<{ data: any[], total: number }>(`/hikcentral/prestadores`);
+};
+
+export const getHikcentralPrestadoresAtividade = async () => {
+  return request<{ data: any[], total: number }>(`/hikcentral/prestadores-atividade`);
+};
+
+export const getHikcentralPrestadoresFinalizados = async () => {
+  return request<{ data: any[], total: number }>(`/hikcentral/prestadores-finalizados`);
+};
+
+// ============ HikCentral Calabasas Providers (Departamento PRESTADORES - Módulo Pessoas) ============
+export const getHikcentralCalabasasProviders = async () => {
+  return request<{ data: any[], total: number }>(`/hikcentral/calabasas-providers`);
 };

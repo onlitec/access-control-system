@@ -19,8 +19,10 @@ const forceLogout = () => {
   localStorage.removeItem(ACCESS_KEY);
   localStorage.removeItem(REFRESH_KEY);
   localStorage.removeItem(USER_KEY);
-  if (window.location.pathname !== '/login') {
-    window.location.href = '/login';
+  // Redirect to login page (app is under /painel)
+  const loginPath = '/painel/login';
+  if (!window.location.pathname.endsWith('/login')) {
+    window.location.href = loginPath;
   }
 };
 

@@ -38,7 +38,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { useToast } from '@/hooks/use-toast';
-import { getVisitors, createVisitor, createVisitLog, getAllResidentsForSelect, getActiveTowers } from '@/db/api';
+import { getHikcentralVisitantes, createVisitor, createVisitLog, getAllResidentsForSelect, getActiveTowers } from '@/db/api';
 import { urlToBase64 } from '@/lib/utils';
 import { createAppointment, reapplyAuthorization, getAccessLevels, authorizeHikPerson } from '@/services/hikcentral';
 import { useAuth } from '@/contexts/AuthContext';
@@ -128,13 +128,42 @@ export default function VisitorsPage() {
   const loadVisitors = async () => {
     try {
       setLoading(true);
-      const { data } = await getVisitors(1, 100, search);
-      setVisitors(data);
+      const { data } = await getHikcentralVisitantes();
+      
+      // Mapear dados do HikCentral para o formato esperado pelo frontend
+      const mappedVisitors = (data || []).map((v: any) => ({
+        id: v.id || v.visitor_id,
+        full_name: v.visitor_name || 'Sem nome',
+        document: v.certificate_no || '-',
+        phone: v.phone_num || null,
+        photo_url: null, // HikCentral não retorna foto na lista
+        visiting_unit: '-',
+        tower: '-',
+        purpose: v.visitor_group_name || 'Visita',
+        notes: null,
+        created_at: v.appoint_start_time || new Date().toISOString(),
+        // Campos adicionais do HikCentral
+        appoint_status: v.appoint_status,
+        appoint_status_text: v.appoint_status_text,
+        appoint_start_time: v.appoint_start_time,
+        appoint_end_time: v.appoint_end_time,
+        plate_no: v.plate_no,
+      }));
+      
+      // Filtrar por busca se necessário
+      const filtered = search 
+        ? mappedVisitors.filter((v: any) => 
+            v.full_name?.toLowerCase().includes(search.toLowerCase()) ||
+            v.document?.includes(search)
+          )
+        : mappedVisitors;
+      
+      setVisitors(filtered);
     } catch (error) {
       console.error('Erro ao carregar visitantes:', error);
       toast({
         title: 'Erro',
-        description: 'Não foi possível carregar os visitantes',
+        description: 'Não foi possível carregar os visitantes do HikCentral',
         variant: 'destructive'
       });
     } finally {
@@ -572,11 +601,10 @@ export default function VisitorsPage() {
                 <TableHead>Foto</TableHead>
                 <TableHead>Nome</TableHead>
                 <TableHead>Documento</TableHead>
-                <TableHead>Unidade Visitada</TableHead>
-                <TableHead>Torre</TableHead>
-                <TableHead>Motivo</TableHead>
-                <TableHead>HikCentral</TableHead>
-                <TableHead>Data de Registro</TableHead>
+                <TableHead>Telefone</TableHead>
+                <TableHead>Placa</TableHead>
+                <TableHead>Status</TableHead>
+                <TableHead>Período</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -586,8 +614,8 @@ export default function VisitorsPage() {
                     <TableCell><Skeleton className="h-10 w-10 rounded-full bg-muted" /></TableCell>
                     <TableCell><Skeleton className="h-4 w-32 bg-muted" /></TableCell>
                     <TableCell><Skeleton className="h-4 w-28 bg-muted" /></TableCell>
-                    <TableCell><Skeleton className="h-4 w-16 bg-muted" /></TableCell>
                     <TableCell><Skeleton className="h-4 w-20 bg-muted" /></TableCell>
+                    <TableCell><Skeleton className="h-4 w-16 bg-muted" /></TableCell>
                     <TableCell><Skeleton className="h-4 w-24 bg-muted" /></TableCell>
                     <TableCell><Skeleton className="h-4 w-32 bg-muted" /></TableCell>
                   </TableRow>
@@ -599,7 +627,7 @@ export default function VisitorsPage() {
                   </TableCell>
                 </TableRow>
               ) : (
-                visitors.map((visitor) => (
+                visitors.map((visitor: any) => (
                   <TableRow key={visitor.id}>
                     <TableCell>
                       <Avatar>
@@ -611,18 +639,24 @@ export default function VisitorsPage() {
                     </TableCell>
                     <TableCell className="font-medium">{visitor.full_name}</TableCell>
                     <TableCell>{visitor.document}</TableCell>
-                    <TableCell>{visitor.visiting_unit}</TableCell>
-                    <TableCell>{visitor.tower || '-'}</TableCell>
-                    <TableCell>{visitor.purpose || '-'}</TableCell>
+                    <TableCell>{visitor.phone || '-'}</TableCell>
+                    <TableCell>{visitor.plate_no || '-'}</TableCell>
                     <TableCell>
-                      <Badge variant="outline" className="text-green-600 border-green-200 bg-green-50">
-                        Agendado
+                      <Badge 
+                        variant={visitor.appoint_status === 2 ? 'default' : visitor.appoint_status === 1 ? 'secondary' : 'outline'}
+                        className={visitor.appoint_status === 2 ? 'bg-green-600 text-white' : visitor.appoint_status === 1 ? 'bg-gray-200 text-gray-700' : 'text-blue-600 border-blue-200 bg-blue-50'}
+                      >
+                        {visitor.appoint_status_text || 'Agendado'}
                       </Badge>
                     </TableCell>
                     <TableCell>
-                      <div className="flex items-center gap-1 text-sm text-muted-foreground">
-                        <Clock className="h-3 w-3" />
-                        {new Date(visitor.created_at).toLocaleDateString('pt-BR')}
+                      <div className="flex flex-col text-xs text-muted-foreground">
+                        {visitor.appoint_start_time && (
+                          <span>De: {new Date(visitor.appoint_start_time).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}</span>
+                        )}
+                        {visitor.appoint_end_time && (
+                          <span>Até: {new Date(visitor.appoint_end_time).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}</span>
+                        )}
                       </div>
                     </TableCell>
                   </TableRow>
