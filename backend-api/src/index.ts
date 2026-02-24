@@ -3,6 +3,7 @@ import cors from 'cors';
 import dotenv from 'dotenv';
 import { Prisma, PrismaClient } from '@prisma/client';
 import { HikCentralService } from './services/HikCentralService';
+import { EntityMappingService } from './services/EntityMappingService';
 import {
     calculateSecurityMetrics,
     createSecurityMetricsSnapshot,
@@ -1757,8 +1758,8 @@ app.get('/api/residents', authMiddleware, async (req, res) => {
         const pageNum = parseInt(page);
         const limitNum = parseInt(limit);
 
-        // Resolver orgIndexCodes do departamento MORADORES dinamicamente
-        const residentOrgCodes = await getOrgCodesForType(['MORADOR'], RESIDENT_ORG_CODES_FALLBACK);
+        // Resolver orgIndexCodes do departamento MORADORES via EntityMappings (data-driven)
+        const residentOrgCodes = await EntityMappingService.resolveOrgCodesWithFallback('/painel/residents');
         console.log(`[HikCentral] MORADORES orgCodes resolvidos: ${residentOrgCodes.join(',')}`);
 
         // Buscar pessoas do HikCentral com timeout de 10s
@@ -2332,8 +2333,8 @@ app.get('/api/staff', authMiddleware, async (req, res) => {
     try {
         const { search = '' } = req.query as any;
 
-        // Resolver orgIndexCodes de staff dinamicamente
-        const staffOrgCodes = await getOrgCodesForType(['PORTARIA', 'ADMIN', 'CONDOMINIO'], STAFF_ORG_CODES_FALLBACK);
+        // Resolver orgIndexCodes de staff via EntityMappings (data-driven)
+        const staffOrgCodes = await EntityMappingService.resolveOrgCodesWithFallback('/painel/staff');
         console.log(`[HikCentral] STAFF orgCodes resolvidos: ${staffOrgCodes.join(',')}`);
 
         // Buscar do HikCentral com timeout de 10s
@@ -2790,8 +2791,8 @@ app.get('/api/service-providers', authMiddleware, async (req, res) => {
         const limitNum = Math.min(200, Math.max(1, Number.parseInt(limit, 10) || 20));
         const normalizedSearch = (search || '').trim();
 
-        // Resolver orgIndexCodes do departamento PRESTADORES dinamicamente
-        const prestadoresOrgCodes = await getOrgCodesForType(['PRESTADOR'], PRESTADORES_ORG_CODES_FALLBACK);
+        // Resolver orgIndexCodes do departamento PRESTADORES via EntityMappings (data-driven)
+        const prestadoresOrgCodes = await EntityMappingService.resolveOrgCodesWithFallback('/painel/service-providers');
         console.log(`[HikCentral] PRESTADORES orgCodes resolvidos: ${prestadoresOrgCodes.join(',')}`);
 
         // Tentar sincronizar com HikCentral
@@ -3013,11 +3014,11 @@ app.get('/api/dashboard/stats', authMiddleware, async (req, res) => {
         const now = new Date();
         const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate());
 
-        // Resolver códigos de departamento dinamicamente
+        // Resolver códigos de departamento via EntityMappings (data-driven)
         const [residentCodes, prestadoresCodes, staffCodes] = await Promise.all([
-            getOrgCodesForType(['MORADOR'], RESIDENT_ORG_CODES_FALLBACK),
-            getOrgCodesForType(['PRESTADOR'], PRESTADORES_ORG_CODES_FALLBACK),
-            getOrgCodesForType(['PORTARIA', 'ADMIN', 'CONDOMINIO'], STAFF_ORG_CODES_FALLBACK),
+            EntityMappingService.resolveOrgCodesWithFallback('/painel/residents'),
+            EntityMappingService.resolveOrgCodesWithFallback('/painel/service-providers'),
+            EntityMappingService.resolveOrgCodesWithFallback('/painel/staff'),
         ]);
 
         // Tentar buscar contagens do HikCentral (fonte de verdade)
