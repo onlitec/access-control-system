@@ -14,32 +14,42 @@ import {
     ShieldAlert,
     Briefcase,
     HardHat,
+    Database,
+    Building,
+    Map,
 } from 'lucide-react';
 
-/**
- * Menus principais do painel administrativo.
- * Os 5 menus primários correspondem às seções operacionais:
- *  1. Dashboard      — visão geral e métricas do sistema
- *  2. Moradores      — pessoas no departamento MORADORES (org 7) do HikCentral
- *  3. Visitantes     — visitantes do grupo VISITANTES no módulo visitor do HikCentral
- *  4. Prestadores    — prestadores do grupo PRESTADORES no módulo visitor do HikCentral
- *  5. P. Calabasas   — prestadores permanentes do departamento PRESTADORES (org 3) do HikCentral
- *  6. Histórico      — histórico de eventos de acesso
- */
-const navItems = [
-    { to: '/admin', icon: LayoutDashboard, label: 'Dashboard', end: true },
-    { to: '/admin/residents', icon: Users, label: 'Moradores' },
-    { to: '/admin/visitors', icon: UserCheck, label: 'Visitantes' },
-    { to: '/admin/providers', icon: Briefcase, label: 'Prestadores' },
-    { to: '/admin/calabasas-providers', icon: HardHat, label: 'P. Calabasas' },
-    { to: '/admin/access-logs', icon: ClipboardList, label: 'Histórico de Acesso' },
-];
-
-// Menus administrativos (separados visualmente)
-const adminNavItems = [
-    { to: '/admin/users', icon: UserCog, label: 'Usuários' },
-    { to: '/admin/session-audit', icon: ShieldAlert, label: 'Auditoria Sessão' },
-    { to: '/admin/settings', icon: Settings, label: 'Configurações' },
+// Seções do menu com títulos e divisórias
+const menuSections = [
+    {
+        title: 'Visão Geral',
+        items: [
+            { to: '/admin', icon: LayoutDashboard, label: 'Dashboard', end: true },
+        ],
+    },
+    {
+        title: 'Gestão de Pessoas',
+        items: [
+            { to: '/admin/residents', icon: Users, label: 'Moradores', end: false },
+            { to: '/admin/visitors', icon: UserCheck, label: 'Visitantes', end: false },
+            { to: '/admin/providers', icon: Briefcase, label: 'Prestadores', end: false },
+            { to: '/admin/calabasas-providers', icon: HardHat, label: 'P. Calabasas', end: false },
+        ],
+    },
+    {
+        title: 'Segurança',
+        items: [
+            { to: '/admin/access-logs', icon: ClipboardList, label: 'Histórico de Acesso', end: false },
+            { to: '/admin/session-audit', icon: ShieldAlert, label: 'Auditoria Sessão', end: false },
+        ],
+    },
+    {
+        title: 'Administração',
+        items: [
+            { to: '/admin/users', icon: UserCog, label: 'Usuários', end: false },
+            { to: '/admin/settings', icon: Settings, label: 'Configurações', end: false },
+        ],
+    },
 ];
 
 interface AdminLayoutProps {
@@ -69,35 +79,29 @@ export default function AdminLayout({ children }: AdminLayoutProps) {
                 </div>
 
                 <nav className="sidebar-nav">
-                    {navItems.map((item) => (
-                        <NavLink
-                            key={item.to}
-                            to={item.to}
-                            end={item.end}
-                            className={({ isActive }) =>
-                                `nav-item ${isActive ? 'active' : ''}`
-                            }
-                        >
-                            <item.icon size={20} />
-                            <span>{item.label}</span>
-                            <ChevronRight size={16} className="nav-arrow" />
-                        </NavLink>
-                    ))}
-
-                    <div className="nav-divider" style={{ margin: '8px 12px', borderBottom: '1px solid var(--border)', opacity: 0.5 }} />
-
-                    {adminNavItems.map((item) => (
-                        <NavLink
-                            key={item.to}
-                            to={item.to}
-                            className={({ isActive }) =>
-                                `nav-item nav-item-sm ${isActive ? 'active' : ''}`
-                            }
-                        >
-                            <item.icon size={18} />
-                            <span>{item.label}</span>
-                            <ChevronRight size={14} className="nav-arrow" />
-                        </NavLink>
+                    {menuSections.map((section, sectionIndex) => (
+                        <div key={section.title} className="menu-section">
+                            {sectionIndex > 0 && (
+                                <div className="section-divider" />
+                            )}
+                            <div className="section-title">
+                                {section.title}
+                            </div>
+                            {section.items.map((item) => (
+                                <NavLink
+                                    key={item.to}
+                                    to={item.to}
+                                    end={item.end}
+                                    className={({ isActive }) =>
+                                        `nav-item ${isActive ? 'active' : ''}`
+                                    }
+                                >
+                                    <item.icon size={20} />
+                                    <span>{item.label}</span>
+                                    <ChevronRight size={16} className="nav-arrow" />
+                                </NavLink>
+                            ))}
+                        </div>
                     ))}
                 </nav>
 
