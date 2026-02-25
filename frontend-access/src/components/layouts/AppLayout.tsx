@@ -41,36 +41,27 @@ interface AppLayoutProps {
   children: React.ReactNode;
 }
 
-const menuItems = [
+const menuSections = [
   {
-    title: 'Dashboard',
-    icon: LayoutDashboard,
-    path: '/dashboard'
+    title: 'Visão Geral',
+    items: [
+      { title: 'Dashboard', icon: LayoutDashboard, path: '/dashboard' }
+    ]
   },
   {
-    title: 'Moradores',
-    icon: Users,
-    path: '/residents'
+    title: 'Gestão de Pessoas',
+    items: [
+      { title: 'Moradores', icon: Users, path: '/residents' },
+      { title: 'Visitantes', icon: UserCheck, path: '/visitors' },
+      { title: 'Prestadores', icon: Briefcase, path: '/providers' },
+      { title: 'P. Calabasas', icon: ShieldCheck, path: '/staff' }
+    ]
   },
   {
-    title: 'Visitantes',
-    icon: UserCheck,
-    path: '/visitors'
-  },
-  {
-    title: 'Prestadores',
-    icon: Briefcase,
-    path: '/providers'
-  },
-  {
-    title: 'P. Calabasas',
-    icon: ShieldCheck,
-    path: '/staff'
-  },
-  {
-    title: 'Histórico de Acesso',
-    icon: History,
-    path: '/access-logs'
+    title: 'Segurança',
+    items: [
+      { title: 'Histórico de Acesso', icon: History, path: '/access-logs' }
+    ]
   }
 ];
 
@@ -121,26 +112,28 @@ export default function AppLayout({ children }: AppLayoutProps) {
           </SidebarHeader>
 
           <SidebarContent>
-            <SidebarGroup>
-              <SidebarGroupLabel>Menu Principal</SidebarGroupLabel>
-              <SidebarGroupContent>
-                <SidebarMenu>
-                  {menuItems.map((item) => (
-                    <SidebarMenuItem key={item.path}>
-                      <SidebarMenuButton
-                        asChild
-                        isActive={location.pathname === item.path}
-                      >
-                        <Link to={item.path}>
-                          <item.icon className="h-4 w-4" />
-                          <span>{item.title}</span>
-                        </Link>
-                      </SidebarMenuButton>
-                    </SidebarMenuItem>
-                  ))}
-                </SidebarMenu>
-              </SidebarGroupContent>
-            </SidebarGroup>
+            {menuSections.map((section) => (
+              <SidebarGroup key={section.title}>
+                <SidebarGroupLabel>{section.title}</SidebarGroupLabel>
+                <SidebarGroupContent>
+                  <SidebarMenu>
+                    {section.items.map((item) => (
+                      <SidebarMenuItem key={item.path}>
+                        <SidebarMenuButton
+                          asChild
+                          isActive={location.pathname === item.path}
+                        >
+                          <Link to={item.path}>
+                            <item.icon className="h-4 w-4" />
+                            <span>{item.title}</span>
+                          </Link>
+                        </SidebarMenuButton>
+                      </SidebarMenuItem>
+                    ))}
+                  </SidebarMenu>
+                </SidebarGroupContent>
+              </SidebarGroup>
+            ))}
 
             {isAdmin && (
               <SidebarGroup>
