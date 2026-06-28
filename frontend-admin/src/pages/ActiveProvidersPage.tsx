@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { getActiveProviders, HikCentralVisitor } from '@/services/api';
 import { UserCheck, Clock, Phone, Building, RefreshCw } from 'lucide-react';
+import { avatarGradient } from '@/utils/avatarColor';
 
 export default function ActiveProvidersPage() {
     const [providers, setProviders] = useState<HikCentralVisitor[]>([]);
@@ -93,7 +94,7 @@ export default function ActiveProvidersPage() {
                     {providers.map((provider) => (
                         <div key={provider.id} className="provider-card active">
                             <div className="provider-header">
-                                <div className="provider-avatar">
+                                <div className="provider-avatar" style={{ background: avatarGradient(provider.visitor_name) }}>
                                     {provider.visitor_name.charAt(0).toUpperCase()}
                                 </div>
                                 <div className="provider-info">

@@ -149,6 +149,7 @@ export default function StaffPage() {
                     <DialogContent
                         className="w-[95vw] max-h-[95vh] overflow-y-auto p-0 gap-0 border-primary/20 shadow-2xl"
                         style={{ maxWidth: '1200px' }}
+                        aria-describedby="staff-dialog-description"
                     >
                         <DialogHeader className="p-6 pb-2 border-b bg-muted/20">
                             <DialogTitle className="text-xl flex items-center gap-2">
@@ -157,7 +158,7 @@ export default function StaffPage() {
                                 </span>
                                 Cadastrar Novo Colaborador
                             </DialogTitle>
-                            <DialogDescription className="ml-11 text-xs text-muted-foreground mt-1">
+                            <DialogDescription id="staff-dialog-description" className="ml-11 text-xs text-muted-foreground mt-1">
                                 Adicione as informações do novo colaborador para sincronização com o HikCentral.
                             </DialogDescription>
                         </DialogHeader>

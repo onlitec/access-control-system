@@ -5,6 +5,8 @@ import { PrismaClient } from '@prisma/client';
 
 const prisma = new PrismaClient();
 
+const HIKCENTRAL_IP_BASE = process.env.HIKCENTRAL_IP_BASE || '';
+
 /**
  * interface para visitantes com status
  */
@@ -31,6 +33,33 @@ export interface VisitorWithStatus {
  */
 
 export class HikCentralService {
+    /**
+     * Valida se o buffer contém o Magic Byte do JPEG (/9j/4 em base64 -> FF D8 FF in HEX)
+     */
+    private static validateJpeg(buffer: Buffer): boolean {
+        if (!buffer || buffer.length < 3) return false;
+        // FF D8 FF
+        return buffer[0] === 0xFF && buffer[1] === 0xD8 && buffer[2] === 0xFF;
+    }
+
+    /**
+     * Sanitiza a URL garantindo o uso do HIKCENTRAL_IP_BASE
+     */
+    private static sanitizeUrl(url: string): string {
+        if (!HIKCENTRAL_IP_BASE) return url;
+        try {
+            const parsedUrl = new URL(url);
+            if (parsedUrl.hostname !== HIKCENTRAL_IP_BASE) {
+                console.log(`[HikCentral] Sanitizing URL: Replacing ${parsedUrl.hostname} with ${HIKCENTRAL_IP_BASE}`);
+                parsedUrl.hostname = HIKCENTRAL_IP_BASE;
+            }
+            return parsedUrl.toString();
+        } catch (e) {
+            // Se falhar o parse (ex: path relativo), retorna como está
+            return url;
+        }
+    }
+
     private static async generateSignature(
         method: string,
         path: string,
@@ -93,7 +122,7 @@ export class HikCentralService {
 
         // Ensure base URL does not end with /
         const baseUrl = config.apiUrl.endsWith('/') ? config.apiUrl.slice(0, -1) : config.apiUrl;
-        const url = `${baseUrl}${cleanPath}`;
+        const url = this.sanitizeUrl(`${baseUrl}${cleanPath}`);
 
         // Desabilitar verificação SSL para IP local se necessário
         const response = await fetch(url, {
@@ -105,10 +134,25 @@ export class HikCentralService {
 
         if (!response.ok) {
             const errorData = await response.json().catch(() => ({}));
-            throw new Error(errorData.msg || `Erro na requisição Hikcentral: ${response.statusText}`);
+            const errorMsg = errorData.msg || errorData.message || response.statusText;
+            const errorCode = errorData.code;
+            
+            // Tratamento especial para erro de versão não suportada (code 8)
+            if (errorCode === '8' || errorCode === 8) {
+                throw new Error(`HikCentral: Versão do produto não suporta este recurso (${path}).`);
+            }
+            
+            throw new Error(errorMsg || `Erro na requisição Hikcentral: ${response.statusText}`);
         }
 
-        return response.json();
+        const result = await response.json();
+        
+        // Algumas APIs retornam 200 OK mas com erro no corpo JSON
+        if (result && (result.code === '8' || result.code === 8)) {
+             throw new Error(`HikCentral: Versão do produto não suporta este recurso (${path}).`);
+        }
+        
+        return result;
     }
 
     /**
@@ -142,8 +186,8 @@ export class HikCentralService {
         const signature = await this.generateSignature(method, cleanPath, headers, config.appSecret);
         headers['X-Ca-Signature'] = signature;
 
-        const baseUrl = config.apiUrl.endsWith('/') ? config.apiUrl.slice(0, -1) : config.apiUrl;
-        const url = `${baseUrl}${cleanPath}`;
+        const rawBaseUrl = config.apiUrl.endsWith('/') ? config.apiUrl.slice(0, -1) : config.apiUrl;
+        const url = this.sanitizeUrl(`${rawBaseUrl}${cleanPath}`);
 
         const response = await fetch(url, {
             ...options,
@@ -157,7 +201,15 @@ export class HikCentralService {
         }
 
         const arrayBuffer = await response.arrayBuffer();
-        return Buffer.from(arrayBuffer);
+        const buffer = Buffer.from(arrayBuffer);
+
+        // Validação estrita do JPEG (Rule 4.d)
+        if (!this.validateJpeg(buffer)) {
+            console.error(`[HikCentral] Falha na validação de Magic Byte JPEG para ${path}`);
+            throw new Error('Formato de imagem inválido (Magic Byte mismatch)');
+        }
+
+        return buffer;
     }
 
     /**
@@ -758,5 +810,111 @@ export class HikCentralService {
             'CUSTOM_FIELD',
             () => this.getCustomFields()
         );
+    }
+
+    /**
+     * Tenta resolver o indexCode de uma câmera baseada no deviceId (id do terminal de face)
+     * No HikCentral, um terminal (ACS) pode ter uma câmera vinculada ou ser tratado como uma
+     */
+    public static async resolveCameraIndexCodeByDeviceId(deviceId: string): Promise<string | null> {
+        console.log(`[HikCentral] Resolvendo câmera para dispositivo: ${deviceId}`);
+        try {
+            // 1. Tenta buscar câmeras vinculadas ao dispositivo
+            const cameraResult = await this.hikRequest('/artemis/api/resource/v1/cameras', {
+                method: 'POST',
+                body: JSON.stringify({ pageNo: 1, pageSize: 1000 })
+            });
+            
+            const cameras = cameraResult?.data?.list || [];
+            // Busca uma câmera que tenha o deviceId no parentIndexCode ou nome similar
+            const targetCamera = cameras.find((c: any) => 
+                c.parentIndexCode === deviceId || 
+                c.cameraName?.includes(deviceId) ||
+                c.indexCode === deviceId
+            );
+
+            if (targetCamera) {
+                console.log(`[HikCentral] Câmera encontrada: ${targetCamera.indexCode}`);
+                return targetCamera.indexCode;
+            }
+
+            console.log(`[HikCentral] Nenhuma câmera específica encontrada para ${deviceId}, retornando o próprio ID.`);
+            return deviceId; 
+        } catch (e: any) {
+            console.error(`[HikCentral] Erro ao resolver câmera (fallback para deviceId):`, e.message);
+            return deviceId;
+        }
+    }
+
+    /**
+     * Captura uma foto em tempo real de uma câmera ou terminal
+     * Suporta fallback entre Video Capture e ACS Capture
+     */
+    public static async captureCameraPicture(indexCode: string): Promise<Buffer> {
+        console.log(`[HikCentral] Iniciando captura para: ${indexCode}`);
+        
+        // Tentativa 1: Manual Capture (Video Module)
+        try {
+            console.log(`[HikCentral] Tentando captura via Vídeo (/artemis/api/video/v1/manualCapture)...`);
+            const response = await this.hikRequest('/artemis/api/video/v1/manualCapture', {
+                method: 'POST',
+                body: JSON.stringify({ cameraIndexCode: indexCode })
+            });
+            
+            if (response?.data?.picUrl || response?.data?.picUri) {
+                const picUrl = response.data.picUrl || response.data.picUri;
+                console.log(`[HikCentral] Sucesso via Vídeo. URL: ${picUrl}`);
+                return await this.hikRequestRaw(picUrl, { method: 'GET' });
+            }
+            
+            console.warn("[HikCentral] API de Vídeo retornou sucesso mas sem picUrl. Resposta:", JSON.stringify(response));
+        } catch (e: any) {
+            const status = e.response?.status;
+            const data = e.response?.data;
+            console.warn(`[HikCentral] Captura via Vídeo falhou (Status: ${status}): ${e.message}. Detalhes: ${JSON.stringify(data || {})}. Tentando via ACS...`);
+        }
+            
+        // Tentativa 2: ACS Capture (Access Control Module)
+        try {
+            console.log(`[HikCentral] Tentando captura via ACS (/artemis/api/acs/v1/device/capture)...`);
+            // Algumas versões usam /api/acs/v1/device/capture
+            const response = await this.hikRequest('/artemis/api/acs/v1/device/capture', {
+                method: 'POST',
+                body: JSON.stringify({ deviceIndexCode: indexCode })
+            });
+
+            if (response?.data?.picUrl || response?.data?.picUri) {
+                const picUrl = response.data.picUrl || response.data.picUri;
+                console.log(`[HikCentral] Sucesso via ACS. URL: ${picUrl}`);
+                return await this.hikRequestRaw(picUrl, { method: 'GET' });
+            }
+            
+            console.warn("[HikCentral] API de ACS retornou sucesso mas sem picUrl. Resposta:", JSON.stringify(response));
+        } catch (e2: any) {
+            const status = e2.response?.status;
+            const data = e2.response?.data;
+            console.error(`[HikCentral] Captura via ACS também falhou (Status: ${status}): ${e2.message}. Detalhes: ${JSON.stringify(data || {})}`);
+        }
+
+        // Tentativa 3: Face Capture (Face Module) - Fallback extra
+        try {
+             console.log(`[HikCentral] Tentando captura via Face (/artemis/api/resource/v1/face/capture)...`);
+             const response = await this.hikRequest('/artemis/api/resource/v1/face/capture', {
+                 method: 'POST',
+                 body: JSON.stringify({ cameraIndexCode: indexCode })
+             });
+
+             if (response?.data?.picUrl || response?.data?.picUri) {
+                 const picUrl = response.data.picUrl || response.data.picUri;
+                 console.log(`[HikCentral] Sucesso via Face. URL: ${picUrl}`);
+                 return await this.hikRequestRaw(picUrl, { method: 'GET' });
+             }
+        } catch (e3: any) {
+             const status = e3.response?.status;
+             const data = e3.response?.data;
+             console.error(`[HikCentral] Captura via Face também falhou (Status: ${status}): ${e3.message}. Detalhes: ${JSON.stringify(data || {})}`);
+        }
+
+        throw new Error(`Falha total na captura para o dispositivo ${indexCode}. Nenhuma das APIs (Video, ACS, Face) retornou uma URL válida.`);
     }
 }

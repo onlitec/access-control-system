@@ -136,12 +136,12 @@ export function CameraCapture({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-[500px]">
+      <DialogContent className="sm:max-w-[500px]" aria-describedby="camera-capture-description">
         <DialogHeader>
           <DialogTitle>
             {title || `Capturar ${cameraType === 'facial' ? 'Foto Facial' : 'Foto do Documento'}`}
           </DialogTitle>
-          <DialogDescription>
+          <DialogDescription id="camera-capture-description">
             {description || `Selecione a câmera e capture a ${cameraType === 'facial' ? 'foto do rosto' : 'foto do documento'}`}
           </DialogDescription>
         </DialogHeader>

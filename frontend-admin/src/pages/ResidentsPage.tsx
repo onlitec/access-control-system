@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { getResidents, createResident, deleteResident, syncResidentsFromHikCentral } from '@/services/api';
-import { Users, Plus, Search, Trash2, X, Loader2, AlertTriangle, RefreshCw } from 'lucide-react';
+import { getResidents, createResident, deleteResident, syncResidentsFromHikCentral, getTerminals, captureTerminalPhoto } from '@/services/api';
+import { Users, Plus, Search, Trash2, X, Loader2, AlertTriangle, RefreshCw, Camera } from 'lucide-react';
 
 export default function ResidentsPage() {
     const [residents, setResidents] = useState<any[]>([]);
@@ -13,6 +13,9 @@ export default function ResidentsPage() {
     const [formLoading, setFormLoading] = useState(false);
     const [syncing, setSyncing] = useState(false);
     const [error, setError] = useState('');
+    const [terminals, setTerminals] = useState<any[]>([]);
+    const [selectedTerminal, setSelectedTerminal] = useState('');
+    const [capturing, setCapturing] = useState(false);
 
     useEffect(() => {
         loadResidents();
@@ -104,6 +107,40 @@ export default function ResidentsPage() {
         }
     };
 
+    const loadTerminals = async () => {
+        try {
+            const res = await getTerminals();
+            if (res.success) {
+                setTerminals(res.data);
+                if (res.data.length > 0) setSelectedTerminal(res.data[0].id);
+            }
+        } catch (err: any) {
+            console.error('Failed to load terminals:', err);
+        }
+    };
+
+    const handleCapture = async () => {
+        if (!selectedTerminal) return;
+        setCapturing(true);
+        setError('');
+        try {
+            const res = await captureTerminalPhoto(selectedTerminal);
+            if (res.success) {
+                setFormData({ ...formData, photoBase64: res.data });
+            }
+        } catch (err: any) {
+            setError('Falha ao capturar foto do terminal: ' + err.message);
+        } finally {
+            setCapturing(false);
+        }
+    };
+
+    useEffect(() => {
+        if (showForm) {
+            loadTerminals();
+        }
+    }, [showForm]);
+
     const totalPages = Math.ceil(count / 20);
 
     return (
@@ -147,9 +184,12 @@ export default function ResidentsPage() {
                     <div className="modal" onClick={(e) => e.stopPropagation()}>
                         <div className="modal-header">
                             <h2>Novo Morador</h2>
-                            <button className="modal-close" onClick={() => setShowForm(false)}><X size={20} /></button>
+                            <button className="modal-close" onClick={() => setShowForm(false)} aria-label="Fechar"><X size={20} /></button>
                         </div>
-                        <form onSubmit={handleCreate} className="modal-form">
+                        <div id="modal-description" className="sr-only">
+                            Formulário para cadastro de um novo morador. Preencha os campos obrigatórios e adicione uma foto.
+                        </div>
+                        <form onSubmit={handleCreate} className="modal-form" aria-describedby="modal-description">
                             <div className="form-row">
                                 <div className="form-group">
                                     <label>Nome</label>
@@ -176,9 +216,57 @@ export default function ResidentsPage() {
                             </div>
                             <div className="form-group">
                                 <label>Foto para Reconh. Facial</label>
-                                <input type="file" accept="image/*" onChange={handlePhotoUpload} />
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                                    <div className="form-row" style={{ alignItems: 'flex-end' }}>
+                                        <div className="form-group" style={{ flex: 2 }}>
+                                            <label style={{ fontSize: '11px', opacity: 0.8 }}>Capturar do Terminal</label>
+                                            <select 
+                                                className="form-control" 
+                                                value={selectedTerminal} 
+                                                onChange={(e) => setSelectedTerminal(e.target.value)}
+                                            >
+                                                <option value="">Selecione um terminal...</option>
+                                                {terminals.map(t => (
+                                                    <option key={t.id} value={t.id}>{t.name} ({t.isOnline ? 'Online' : 'Offline'})</option>
+                                                ))}
+                                            </select>
+                                        </div>
+                                        <button 
+                                            type="button" 
+                                            className="btn btn-secondary" 
+                                            style={{ height: '42px', marginBottom: '4px' }}
+                                            onClick={handleCapture}
+                                            disabled={capturing || !selectedTerminal}
+                                        >
+                                            {capturing ? <Loader2 size={16} className="spin" /> : <Camera size={16} />}
+                                            {capturing ? ' Capturando...' : ' Capturar Agora'}
+                                        </button>
+                                    </div>
+
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                                        <div style={{ height: '1px', flex: 1, background: 'rgba(255,255,255,0.1)' }}></div>
+                                        <span style={{ fontSize: '12px', opacity: 0.5 }}>OU</span>
+                                        <div style={{ height: '1px', flex: 1, background: 'rgba(255,255,255,0.1)' }}></div>
+                                    </div>
+
+                                    <div className="form-group">
+                                        <label style={{ fontSize: '11px', opacity: 0.8 }}>Upload de arquivo</label>
+                                        <input type="file" accept="image/*" onChange={handlePhotoUpload} />
+                                    </div>
+                                </div>
+                                
                                 {formData.photoBase64 && (
-                                    <img src={formData.photoBase64} alt="Preview" style={{ marginTop: 10, width: '100px', borderRadius: '8px' }} />
+                                    <div style={{ marginTop: 15, position: 'relative', width: 'fit-content' }}>
+                                        <img src={formData.photoBase64} alt="Preview" style={{ width: '150px', borderRadius: '12px', border: '2px solid var(--accent)' }} />
+                                        <button 
+                                            type="button" 
+                                            className="btn-icon btn-danger" 
+                                            style={{ position: 'absolute', top: -10, right: -10, width: 24, height: 24 }}
+                                            onClick={() => setFormData({ ...formData, photoBase64: '' })}
+                                        >
+                                            <X size={14} />
+                                        </button>
+                                    </div>
                                 )}
                             </div>
                             <div className="modal-actions">

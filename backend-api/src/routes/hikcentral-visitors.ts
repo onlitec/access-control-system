@@ -1,7 +1,11 @@
 import { Router, Request, Response } from 'express';
 import { HikCentralService, VisitorWithStatus } from '../services/HikCentralService';
+import { authMiddleware } from '../middleware/auth';
 
 const router = Router();
+
+// Aplicar authMiddleware a todas as rotas do HikCentral
+router.use(authMiddleware);
 
 // ============ CONSTANTES ============
 
@@ -152,18 +156,152 @@ router.get('/prestadores-finalizados', async (req: Request, res: Response) => {
  * Estes são prestadores permanentes do condomínio, cadastrados no módulo de pessoas
  * (não no módulo de visitantes). Têm acesso recorrente, não por agendamento.
  */
-router.get('/calabasas-providers', async (req: Request, res: Response) => {
+router.get('/internal-providers', async (req: Request, res: Response) => {
     try {
         // orgIndexCode 3 = PRESTADORES (departamento permanente do condomínio)
         const prestadoresOrgCode = process.env.HIK_PRESTADORES_ORG_CODE || '3';
 
         const result = await HikCentralService.getPersonsByDepartment(prestadoresOrgCode);
-        console.log(`[HikCentral] /calabasas-providers: ${result.length} prestadores Calabasas`);
+        console.log(`[HikCentral] /internal-providers: ${result.length} prestadores internos`);
 
         res.json({ data: result, total: result.length });
     } catch (error: any) {
-        console.error('Erro /calabasas-providers:', error);
+        console.error('Erro /internal-providers:', error);
         res.status(500).json({ error: error.message, data: [] });
+    }
+});
+
+/**
+ * GET /api/hikcentral/terminals
+ * Retorna lista de terminais (dispositivos ACS) do HikCentral.
+ */
+router.get('/terminals', async (req: Request, res: Response) => {
+    try {
+        const { type = 'acs' } = req.query;
+        console.log(`[HikCentral] Buscando terminais (tipo: ${type})...`);
+        
+        let result;
+        if (type === 'acs') {
+            result = await HikCentralService.getAcsDeviceList(1, 100);
+        } else {
+            // Fallback para câmeras se solicitado vídeo
+            result = await HikCentralService.hikRequest('/artemis/api/resource/v1/cameras', {
+                method: 'POST',
+                body: JSON.stringify({ pageNo: 1, pageSize: 100 })
+            });
+        }
+
+        const list = result?.data?.list || [];
+        const formatted = list.map((d: any) => ({
+            id: d.acsDevIndexCode || d.cameraIndexCode || d.indexCode,
+            name: d.acsDevName || d.cameraName || d.name,
+            status: d.status === 1 ? 'online' : 'offline',
+            type: type
+        }));
+
+        res.json({ data: formatted, total: formatted.length });
+    } catch (error: any) {
+        console.error('[HikCentral] Erro em /terminals:', error.message);
+        res.status(500).json({ error: 'Falha ao buscar terminais', details: error.message });
+    }
+});
+
+// ============ REMOTE CAPTURE ============
+
+/**
+ * GET /api/hikcentral/person-properties
+ * Retorna as opções de campos customizados (ex: Torres) para o frontend.
+ */
+router.get('/person-properties', async (req: Request, res: Response) => {
+    try {
+        // Fallback rígido garantido conforme requisito
+        const defaultOptions = ['TORRE - PERFECTO', 'TORRE - NOBILE', 'TORRE - DESEO', 'TORRE - PARAÍSO'];
+
+        try {
+            // Tentativa de buscar os campos customizados do HikCentral (Artemis OpenAPI)
+            console.log('[HikCentral] Buscando campos customizados (/artemis/api/resource/v1/person/customData/list)...');
+            const result = await HikCentralService.hikRequest('/artemis/api/resource/v1/person/customData/list', {
+                method: 'POST', 
+                body: JSON.stringify({})
+            });
+
+            // Se o HikCentral retornar sucesso, processamos a lista
+            if (result && result.data && Array.isArray(result.data)) {
+                const customFields = result.data;
+                const torreField = customFields.find((f: any) => 
+                    (f.name || '').toUpperCase() === 'TORRE' || 
+                    (f.customFieldName || '').toUpperCase() === 'TORRE' || 
+                    (f.title || '').toUpperCase() === 'TORRE'
+                );
+
+                if (torreField && (torreField.options || torreField.selectOptions)) {
+                    const options = torreField.options || torreField.selectOptions;
+                    if (Array.isArray(options) && options.length > 0) {
+                        console.log(`[HikCentral] Opções de 'Torre' carregadas dinamicamente: ${options.length}`);
+                        return res.json({ options });
+                    }
+                }
+            }
+            console.log('[HikCentral] Campo "Torre" não encontrado ou sem opções na API, usando fallback.');
+        } catch (apiErr: any) {
+            console.warn('[HikCentral] Falha ao buscar person-properties dinamicamente:', apiErr.message);
+        }
+
+        // Retorna fallback se a API falhar ou não tiver os dados
+        res.json({ options: defaultOptions });
+
+    } catch (error: any) {
+        console.error('[HikCentral] Erro crítico em /person-properties:', error.message);
+        // Mesmo em erro crítico, tentamos retornar o fallback para não quebrar o frontend
+        res.json({ options: ['TORRE - PERFECTO', 'TORRE - NOBILE', 'TORRE - DESEO', 'TORRE - PARAÍSO'] });
+    }
+});
+
+// ============ REMOTE CAPTURE ============
+
+/**
+ * POST /api/hikcentral/remote-capture
+ * Aciona a captura remota de imagem em um dispositivo/câmera.
+ */
+router.post('/remote-capture', async (req: Request, res: Response) => {
+    try {
+        const { deviceIndexCode } = req.body;
+
+        if (!deviceIndexCode) {
+            return res.status(400).json({ error: 'deviceIndexCode é obrigatório' });
+        }
+
+        console.log(`[Remote Capture] Requisição recebida para dispositivo: ${deviceIndexCode}`);
+
+        // 1. Tentar resolver o código da câmera associada (se houver)
+        // Muitas vezes o terminal de acesso tem uma câmera vinculada com outro ID
+        let targetIndexCode = deviceIndexCode;
+        try {
+            const resolved = await HikCentralService.resolveCameraIndexCodeByDeviceId(deviceIndexCode);
+            if (resolved) {
+                targetIndexCode = resolved;
+                console.log(`[Remote Capture] Dispositivo ${deviceIndexCode} resolvido para câmera ${targetIndexCode}`);
+            }
+        } catch (resolveErr) {
+            console.warn(`[Remote Capture] Falha na resolução de câmera (usando original):`, resolveErr);
+        }
+
+        // 2. Realizar a captura
+        const imageBuffer = await HikCentralService.captureCameraPicture(targetIndexCode);
+
+        // 3. Retornar a imagem
+        res.set('Content-Type', 'image/jpeg');
+        res.set('Content-Length', imageBuffer.length.toString());
+        res.send(imageBuffer);
+
+    } catch (error: any) {
+        console.error('[Remote Capture] Erro:', error.message);
+        // Retornar 500 com detalhes JSON para o frontend tratar
+        res.status(500).json({ 
+            error: 'Falha ao capturar imagem do dispositivo', 
+            details: error.message,
+            deviceIndexCode: req.body.deviceIndexCode
+        });
     }
 });
 

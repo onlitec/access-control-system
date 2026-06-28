@@ -1,7 +1,7 @@
 services:
   postgres:
     image: postgres:15-alpine
-    container_name: calabasas-db
+    container_name: access-db
     environment:
       POSTGRES_USER: ${DB_USER:?DB_USER is required}
       POSTGRES_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD is required}
@@ -22,7 +22,7 @@ services:
     build:
       context: ./backend-api
       dockerfile: Dockerfile
-    container_name: calabasas-api
+    container_name: access-api
     environment:
       DATABASE_URL: postgresql://${DB_USER:?DB_USER is required}:${DB_PASSWORD:?DB_PASSWORD is required}@postgres:5432/${DB_NAME:?DB_NAME is required}?schema=public
       PORT: 3001
@@ -55,7 +55,7 @@ services:
     build:
       context: ./frontend-access
       dockerfile: Dockerfile
-    container_name: calabasas-painel
+    container_name: access-painel
     healthcheck:
       test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1:80/ || exit 1"]
       interval: 15s
@@ -68,11 +68,11 @@ services:
     build:
       context: ./frontend-visitor
       dockerfile: Dockerfile
-    container_name: calabasas-login
+    container_name: access-login
     environment:
       NODE_ENV: production
     healthcheck:
-      test: ["CMD-SHELL", "node -e \"const http=require('http');const req=http.get('http://127.0.0.1:3000/login',res=>process.exit((res.statusCode>=200&&res.statusCode<400)?0:1));req.on('error',()=>process.exit(1));\""]
+      test: ["CMD-SHELL", "node -e \"const http=require('http');const req=http.get('http://127.0.0.1:3000/',res=>process.exit((res.statusCode>=200&&res.statusCode<400)?0:1));req.on('error',()=>process.exit(1));\""]
       interval: 15s
       timeout: 5s
       retries: 5
@@ -83,7 +83,7 @@ services:
     build:
       context: ./frontend-admin
       dockerfile: Dockerfile
-    container_name: calabasas-admin
+    container_name: access-admin
     healthcheck:
       test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1:80/ || exit 1"]
       interval: 15s
@@ -94,7 +94,7 @@ services:
 
   nginx:
     image: nginx:alpine
-    container_name: calabasas-proxy
+    container_name: access-proxy
     ports:
       - "8080:8080"
       - "8443:8443"

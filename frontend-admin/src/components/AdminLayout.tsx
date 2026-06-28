@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import {
@@ -14,12 +14,12 @@ import {
     ShieldAlert,
     Briefcase,
     HardHat,
-    Database,
-    Building,
-    Map,
+    Menu,
+    X,
+    Plug,
 } from 'lucide-react';
+import { avatarGradient } from '@/utils/avatarColor';
 
-// Seções do menu com títulos e divisórias
 const menuSections = [
     {
         title: 'Visão Geral',
@@ -33,7 +33,7 @@ const menuSections = [
             { to: '/admin/residents', icon: Users, label: 'Moradores', end: false },
             { to: '/admin/visitors', icon: UserCheck, label: 'Visitantes', end: false },
             { to: '/admin/providers', icon: Briefcase, label: 'Prestadores', end: false },
-            { to: '/admin/calabasas-providers', icon: HardHat, label: 'P. Calabasas', end: false },
+            { to: '/admin/internal-providers', icon: HardHat, label: 'Prestadores Internos', end: false },
         ],
     },
     {
@@ -47,6 +47,7 @@ const menuSections = [
         title: 'Administração',
         items: [
             { to: '/admin/users', icon: UserCog, label: 'Usuários', end: false },
+            { to: '/admin/integrations', icon: Plug, label: 'Integrações', end: false },
             { to: '/admin/settings', icon: Settings, label: 'Configurações', end: false },
         ],
     },
@@ -59,23 +60,37 @@ interface AdminLayoutProps {
 export default function AdminLayout({ children }: AdminLayoutProps) {
     const { user, logout } = useAuth();
     const navigate = useNavigate();
+    const [sidebarOpen, setSidebarOpen] = useState(false);
 
     const handleLogout = () => {
         logout();
         navigate('/admin/login');
     };
 
+    const closeSidebar = () => setSidebarOpen(false);
+
+    const userInitial = user?.name?.charAt(0)?.toUpperCase() || 'A';
+    const userGradient = avatarGradient(user?.name || 'Admin');
+
     return (
         <div className="admin-layout">
-            <aside className="sidebar">
+            {/* Mobile overlay */}
+            {sidebarOpen && (
+                <div className="sidebar-overlay" onClick={closeSidebar} />
+            )}
+
+            <aside className={`sidebar ${sidebarOpen ? 'open' : ''}`}>
                 <div className="sidebar-header">
                     <div className="logo-area">
                         <Shield size={28} />
                         <div>
-                            <h1>Calabasas</h1>
+                            <h1>Acesso</h1>
                             <span>Admin Panel</span>
                         </div>
                     </div>
+                    <button className="sidebar-close-btn" onClick={closeSidebar} aria-label="Fechar menu">
+                        <X size={20} />
+                    </button>
                 </div>
 
                 <nav className="sidebar-nav">
@@ -95,6 +110,7 @@ export default function AdminLayout({ children }: AdminLayoutProps) {
                                     className={({ isActive }) =>
                                         `nav-item ${isActive ? 'active' : ''}`
                                     }
+                                    onClick={closeSidebar}
                                 >
                                     <item.icon size={20} />
                                     <span>{item.label}</span>
@@ -107,8 +123,8 @@ export default function AdminLayout({ children }: AdminLayoutProps) {
 
                 <div className="sidebar-footer">
                     <div className="user-info">
-                        <div className="user-avatar">
-                            {user?.name?.charAt(0)?.toUpperCase() || 'A'}
+                        <div className="user-avatar" style={{ background: userGradient }}>
+                            {userInitial}
                         </div>
                         <div className="user-details">
                             <span className="user-name">{user?.name || 'Admin'}</span>
@@ -122,6 +138,19 @@ export default function AdminLayout({ children }: AdminLayoutProps) {
             </aside>
 
             <main className="main-content">
+                <div className="mobile-topbar">
+                    <button
+                        className="mobile-menu-btn"
+                        onClick={() => setSidebarOpen(true)}
+                        aria-label="Abrir menu"
+                    >
+                        <Menu size={22} />
+                    </button>
+                    <div className="mobile-logo">
+                        <Shield size={20} />
+                        <span>Acesso Admin</span>
+                    </div>
+                </div>
                 {children}
             </main>
         </div>

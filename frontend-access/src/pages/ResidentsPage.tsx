@@ -380,6 +380,7 @@ export default function ResidentsPage() {
         <DialogContent
           className="w-[95vw] max-h-[90vh] overflow-hidden p-0 gap-0 border-none shadow-2xl rounded-2xl flex flex-col bg-zinc-50"
           style={{ maxWidth: '1200px' }}
+          aria-describedby="resident-dialog-description"
         >
           {showSuccessState ? (
             <div className="flex-1 flex flex-col justify-center items-center bg-white p-12 overflow-y-auto">
@@ -434,6 +435,9 @@ export default function ResidentsPage() {
                     </div>
                     {editingResident ? 'Editar Morador' : 'Cadastrar Novo Morador'}
                   </DialogTitle>
+                  <DialogDescription id="resident-dialog-description" className="sr-only">
+                    Formulário para cadastro ou edição de dados de moradores.
+                  </DialogDescription>
                 </DialogHeader>
 
                 <div className="flex flex-col md:flex-row flex-1 overflow-hidden min-h-0">
