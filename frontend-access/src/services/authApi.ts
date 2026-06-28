@@ -5,7 +5,7 @@ export interface AuthUser {
   role: string;
 }
 
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'https://172.20.120.41:8443/api';
+const API_BASE_URL = import.meta.env.VITE_API_URL || (window.location.origin + '/api');
 const ACCESS_KEY = 'auth_token';
 const REFRESH_KEY = 'auth_refresh_token';
 const USER_KEY = 'auth_user';
@@ -46,6 +46,7 @@ async function refreshAccessToken(): Promise<string | null> {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ refreshToken }),
+    credentials: 'include',
   });
   if (!response.ok) return null;
 
@@ -77,7 +78,7 @@ export async function authRequest<T>(path: string, options: RequestInit = {}): P
   const token = getAccessToken();
   if (token) headers.Authorization = `Bearer ${token}`;
 
-  let response = await fetch(`${API_BASE_URL}${path}`, { ...options, headers });
+  let response = await fetch(`${API_BASE_URL}${path}`, { ...options, headers, credentials: 'include' });
   if (response.status === 401) {
     const nextToken = await ensureAccessToken();
     if (!nextToken) {
@@ -90,7 +91,7 @@ export async function authRequest<T>(path: string, options: RequestInit = {}): P
       ...(options.headers as Record<string, string>),
       Authorization: `Bearer ${nextToken}`,
     };
-    response = await fetch(`${API_BASE_URL}${path}`, { ...options, headers: retryHeaders });
+    response = await fetch(`${API_BASE_URL}${path}`, { ...options, headers: retryHeaders, credentials: 'include' });
   }
 
   if (!response.ok) {
@@ -107,6 +108,7 @@ export async function loginWithEmail(email: string, password: string) {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ email, password }),
+    credentials: 'include',
   });
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
@@ -126,5 +128,6 @@ export async function logoutCurrentSession() {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ refreshToken }),
+    credentials: 'include',
   }).catch(() => undefined);
 }

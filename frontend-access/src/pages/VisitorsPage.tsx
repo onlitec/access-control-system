@@ -50,6 +50,7 @@ import { uploadImage } from '@/lib/upload';
 import { Dropzone } from '@/components/dropzone';
 import { useFileUpload } from '@/hooks/use-file-upload';
 import { CameraCapture } from '@/components/CameraCapture';
+import { DoorbellCapture } from '@/components/DoorbellCapture';
 import { ResidentCombobox } from '@/components/ResidentCombobox';
 
 export default function VisitorsPage() {
@@ -321,6 +322,7 @@ export default function VisitorsPage() {
           <DialogContent
             className="w-[95vw] max-h-[95vh] overflow-y-auto p-0 gap-0 border-primary/20 shadow-2xl"
             style={{ maxWidth: '1200px' }}
+            aria-describedby="visitor-dialog-description"
           >
             <DialogHeader className="p-6 pb-2 border-b bg-muted/20">
               <DialogTitle className="text-xl flex items-center gap-2">
@@ -329,6 +331,9 @@ export default function VisitorsPage() {
                 </span>
                 Registrar Novo Visitante
               </DialogTitle>
+              <DialogDescription id="visitor-dialog-description" className="sr-only">
+                Preencha o formulário abaixo para registrar um novo visitante no sistema.
+              </DialogDescription>
             </DialogHeader>
             <div className="p-6">
               <Form {...form}>
@@ -386,6 +391,10 @@ export default function VisitorsPage() {
                               form.setValue('photo_url', url);
                             }
                           }}
+                        />
+                        <DoorbellCapture
+                          onCapture={(dataUrl) => form.setValue('photo_url', dataUrl)}
+                          className="pt-1"
                         />
                       </div>
 

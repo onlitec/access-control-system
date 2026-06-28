@@ -1,5 +1,5 @@
 // Centralized API service for Admin Panel
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'https://172.20.120.41:8443/api';
+const API_BASE_URL = import.meta.env.VITE_API_URL || (window.location.origin + '/api');
 const ACCESS_KEY = 'auth_token';
 const REFRESH_KEY = 'auth_refresh_token';
 const USER_KEY = 'auth_user';
@@ -29,6 +29,7 @@ async function refreshAccessToken(): Promise<string | null> {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ refreshToken }),
+        credentials: 'include',
     });
     if (!response.ok) return null;
 
@@ -65,6 +66,7 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
     let response = await fetch(`${API_BASE_URL}${path}`, {
         ...options,
         headers,
+        credentials: 'include',
     });
 
     if (response.status === 401) {
@@ -83,6 +85,7 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
         response = await fetch(`${API_BASE_URL}${path}`, {
             ...options,
             headers: retryHeaders,
+            credentials: 'include',
         });
         if (response.status === 401) {
             clearStoredAuth();
@@ -93,7 +96,15 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
 
     if (!response.ok) {
         const error = await response.json().catch(() => ({ message: 'Unknown error' }));
-        throw new Error(error.message || error.error || `Request failed: ${response.statusText}`);
+        const errorMessage = error.message || error.error || `Request failed: ${response.statusText}`;
+        const errorDetails = error.details ? ` (${error.details})` : '';
+        throw new Error(`${errorMessage}${errorDetails}`);
+    }
+
+    // Tratamento especial para imagens (blob)
+    const contentType = response.headers.get('content-type');
+    if (contentType && contentType.includes('image/')) {
+        return response.blob() as Promise<T>;
     }
 
     if (response.status === 204) return undefined as T;
@@ -105,6 +116,7 @@ export const login = async (email: string, password: string) => {
     const result = await request<{ token: string; refreshToken: string; user: any }>('/auth/login', {
         method: 'POST',
         body: JSON.stringify({ email, password }),
+        credentials: 'include',
     });
     localStorage.setItem(ACCESS_KEY, result.token);
     localStorage.setItem(REFRESH_KEY, result.refreshToken);
@@ -438,7 +450,7 @@ export interface HikCentralVisitor {
 }
 
 // Pessoa do módulo ACS/departamento (não módulo visitantes)
-export interface CalabasasPerson {
+export interface InternalPerson {
     id: string;
     person_id: string;
     person_name: string;
@@ -478,9 +490,9 @@ export const getFinishedProviders = async () => {
     return request<{ data: HikCentralVisitor[]; total: number }>('/hikcentral/prestadores-finalizados');
 };
 
-// Prestadores Calabasas - cadastrados no departamento PRESTADORES (org 3), módulo de pessoas
-export const getCalabasasProviders = async () => {
-    return request<{ data: CalabasasPerson[]; total: number }>('/hikcentral/calabasas-providers');
+// Prestadores Internos - cadastrados no departamento PRESTADORES (org 3), módulo de pessoas
+export const getInternalProviders = async () => {
+    return request<{ data: InternalPerson[]; total: number }>('/hikcentral/internal-providers');
 };
 
 // ============ CMS Data-Driven: Admin Entities ============
@@ -574,3 +586,30 @@ export const refreshAdminCache = async (entityType?: string) => {
         body: JSON.stringify({ entityType }),
     });
 };
+
+// ============ Terminals & Photo Capture ============
+export const getTerminals = async () => {
+    return request<{ success: boolean; data: any[]; total: number }>('/admin/terminals');
+};
+
+export const captureTerminalPhoto = async (id: string) => {
+    // A API agora espera deviceIndexCode no corpo
+    return request<{ success: boolean; data: string }>('/hikcentral/remote-capture', {
+        method: 'POST',
+        body: JSON.stringify({ deviceIndexCode: id }),
+    }).then(async (blob: any) => {
+        // O backend retorna um blob de imagem (buffer), precisamos converter para base64
+        if (blob instanceof Blob) {
+             return new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onloadend = () => resolve({ success: true, data: reader.result as string });
+                reader.onerror = reject;
+                reader.readAsDataURL(blob);
+            });
+        }
+        // Se já vier como JSON (erro ou formato antigo)
+        return blob;
+    });
+};
+
+export const apiFetch = request;

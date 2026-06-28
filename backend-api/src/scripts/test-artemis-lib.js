@@ -1,12 +1,17 @@
+require('dotenv').config();
 const Artemis = require('artemis-http-client');
 
 async function run() {
     process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
     try {
-        const client = new Artemis.Client('26269542', 'wVkq6TjwrEP3BTL5iPi1');
+        const client = new Artemis.Client(
+            process.env.HIKCENTRAL_APP_KEY || '26269542', 
+            process.env.HIKCENTRAL_APP_SECRET || 'wVkq6TjwrEP3BTL5iPi1'
+        );
 
         console.log("Calling...");
-        const result = await client.post('https://100.77.145.39/artemis/api/resource/v1/acsDevice/acsDeviceList', {
+        const hikIp = process.env.HIKCENTRAL_IP_BASE || '172.20.120.20';
+        const result = await client.post(`https://${hikIp}/artemis/api/resource/v1/acsDevice/acsDeviceList`, {
             data: JSON.stringify({ pageNo: 1, pageSize: 1 }),
             headers: {
                 'content-type': 'application/json;charset=UTF-8',

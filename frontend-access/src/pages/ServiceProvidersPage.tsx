@@ -404,6 +404,7 @@ export default function ServiceProvidersPage() {
           <DialogContent
             className="w-[95vw] max-h-[95vh] overflow-y-auto p-0 gap-0 border-primary/20 shadow-2xl"
             style={{ maxWidth: '1200px' }}
+            aria-describedby="provider-dialog-description"
           >
             <DialogHeader className="p-6 pb-2 border-b bg-muted/20">
               <DialogTitle className="text-xl flex items-center gap-2">
@@ -412,6 +413,9 @@ export default function ServiceProvidersPage() {
                 </span>
                 {editingProvider ? 'Editar Prestador' : 'Novo Prestador'}
               </DialogTitle>
+              <DialogDescription id="provider-dialog-description" className="sr-only">
+                Formulário para registro e gerenciamento de prestadores de serviço.
+              </DialogDescription>
             </DialogHeader>
             <div className="p-6">
               <Form {...form}>

@@ -11,6 +11,7 @@ import {
     Clock,
     TrendingUp,
     AlertTriangle,
+    Briefcase,
 } from 'lucide-react';
 
 interface Stats {
@@ -36,6 +37,7 @@ export default function DashboardPage() {
     const [system, setSystem] = useState<SystemStatus | null>(null);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState('');
+    const [loadedAt] = useState(new Date());
 
     useEffect(() => {
         loadData();
@@ -82,8 +84,10 @@ export default function DashboardPage() {
     return (
         <div className="page">
             <div className="page-header">
-                <h1>Dashboard</h1>
-                <p>Visão geral do sistema Calabasas</p>
+                <div>
+                    <h1>Dashboard</h1>
+                    <p>Visão geral do sistema de controle de acesso</p>
+                </div>
             </div>
 
             {error && (
@@ -93,39 +97,53 @@ export default function DashboardPage() {
                 </div>
             )}
 
+            {/* Métricas operacionais — o que está acontecendo agora */}
+            <div className="dashboard-section-label">Tempo real</div>
+            <div className="stats-grid stats-grid-hero">
+                <div className="stat-card stat-card-hero stat-amber">
+                    <div className="stat-icon"><TrendingUp size={28} /></div>
+                    <div className="stat-info">
+                        <span className="stat-value stat-value-hero">{stats?.todayAccess ?? '—'}</span>
+                        <span className="stat-label">Acessos hoje</span>
+                    </div>
+                </div>
+                <div className="stat-card stat-card-hero stat-purple">
+                    <div className="stat-icon"><Activity size={28} /></div>
+                    <div className="stat-info">
+                        <span className="stat-value stat-value-hero">{stats?.activeVisits ?? '—'}</span>
+                        <span className="stat-label">Visitas ativas</span>
+                    </div>
+                </div>
+            </div>
+
+            {/* Métricas cadastrais — totais que mudam devagar */}
+            <div className="dashboard-section-label" style={{ marginTop: 24 }}>Cadastros</div>
             <div className="stats-grid">
                 <div className="stat-card stat-blue">
-                    <div className="stat-icon"><Users size={24} /></div>
+                    <div className="stat-icon"><Users size={22} /></div>
                     <div className="stat-info">
                         <span className="stat-value">{stats?.totalResidents ?? '—'}</span>
                         <span className="stat-label">Moradores</span>
                     </div>
                 </div>
                 <div className="stat-card stat-green">
-                    <div className="stat-icon"><UserCheck size={24} /></div>
+                    <div className="stat-icon"><UserCheck size={22} /></div>
                     <div className="stat-info">
                         <span className="stat-value">{stats?.totalVisitors ?? '—'}</span>
                         <span className="stat-label">Visitantes</span>
                     </div>
                 </div>
-                <div className="stat-card stat-purple">
-                    <div className="stat-icon"><Activity size={24} /></div>
+                <div className="stat-card stat-blue">
+                    <div className="stat-icon"><Briefcase size={22} /></div>
                     <div className="stat-info">
-                        <span className="stat-value">{stats?.activeVisits ?? '—'}</span>
-                        <span className="stat-label">Visitas Ativas</span>
-                    </div>
-                </div>
-                <div className="stat-card stat-amber">
-                    <div className="stat-icon"><TrendingUp size={24} /></div>
-                    <div className="stat-info">
-                        <span className="stat-value">{stats?.todayAccess ?? '—'}</span>
-                        <span className="stat-label">Acessos Hoje</span>
+                        <span className="stat-value">{stats?.totalProviders ?? '—'}</span>
+                        <span className="stat-label">Prestadores</span>
                     </div>
                 </div>
             </div>
 
             {system && (
-                <div className="system-status-section">
+                <div className="system-status-section" style={{ marginTop: 28 }}>
                     <h2><ShieldCheck size={20} /> Status do Sistema</h2>
                     <div className="status-grid">
                         <div className="status-card">
@@ -154,8 +172,14 @@ export default function DashboardPage() {
                             <div>
                                 <span className="status-label">Uptime</span>
                                 <span className="status-value">{formatUptime(system.uptime)}</span>
+                                <span className="status-uptime-since">
+                                    desde {new Date(Date.now() - system.uptime * 1000).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}
+                                </span>
                             </div>
                         </div>
+                    </div>
+                    <div className="status-footer">
+                        Verificado às {loadedAt.toLocaleTimeString('pt-BR')}
                     </div>
                 </div>
             )}

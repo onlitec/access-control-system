@@ -7,11 +7,12 @@ import DashboardPage from '@/pages/DashboardPage';
 import ResidentsPage from '@/pages/ResidentsPage';
 import VisitorsPage from '@/pages/VisitorsPage';
 import ProvidersPage from '@/pages/ProvidersPage';
-import CalabasasProvidersPage from '@/pages/CalabasasProvidersPage';
+import InternalProvidersPage from '@/pages/InternalProvidersPage';
 import AccessLogsPage from '@/pages/AccessLogsPage';
 import UsersPage from '@/pages/UsersPage';
 import SettingsPage from '@/pages/SettingsPage';
 import SessionAuditPage from '@/pages/SessionAuditPage';
+import IntegrationsPage from '@/pages/IntegrationsPage';
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
     const { isAuthenticated, isLoading } = useAuth();
@@ -61,8 +62,8 @@ function AppRoutes() {
             {/* 3. Prestadores — grupo PRESTADORES no módulo visitor do HikCentral (cadastrados pelos moradores) */}
             <Route path="/admin/providers" element={<ProtectedRoute><ProvidersPage /></ProtectedRoute>} />
 
-            {/* 4. P. Calabasas — departamento PRESTADORES (org 3), são prestadores permanentes do condomínio */}
-            <Route path="/admin/calabasas-providers" element={<ProtectedRoute><CalabasasProvidersPage /></ProtectedRoute>} />
+            {/* 4. Prestadores Internos — departamento PRESTADORES (org 3), são prestadores permanentes do condomínio */}
+            <Route path="/admin/internal-providers" element={<ProtectedRoute><InternalProvidersPage /></ProtectedRoute>} />
 
             {/* 5. Histórico de Acesso */}
             <Route path="/admin/access-logs" element={<ProtectedRoute><AccessLogsPage /></ProtectedRoute>} />
@@ -71,6 +72,7 @@ function AppRoutes() {
             <Route path="/admin/users" element={<ProtectedRoute><UsersPage /></ProtectedRoute>} />
             <Route path="/admin/session-audit" element={<ProtectedRoute><SessionAuditPage /></ProtectedRoute>} />
             <Route path="/admin/settings" element={<ProtectedRoute><SettingsPage /></ProtectedRoute>} />
+            <Route path="/admin/integrations" element={<ProtectedRoute><IntegrationsPage /></ProtectedRoute>} />
 
             {/* Fallback */}
             <Route path="*" element={<Navigate to="/admin" replace />} />

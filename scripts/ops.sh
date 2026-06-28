@@ -4,6 +4,12 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
+if [ ! -f "package.json" ]; then
+  echo "Erro: Não foi possível localizar o arquivo package.json no diretório raiz ($ROOT_DIR)."
+  echo "Certifique-se de que o projeto foi clonado e está sendo executado a partir do diretório correto."
+  exit 1
+fi
+
 cmd="${1:-help}"
 
 case "$cmd" in

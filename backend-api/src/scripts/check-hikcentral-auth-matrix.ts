@@ -1,10 +1,13 @@
 import crypto from 'crypto';
 import fetch from 'node-fetch';
 
-const HIK_IP = '100.77.145.39';
+import dotenv from 'dotenv';
+dotenv.config();
+
+const HIK_IP = process.env.HIKCENTRAL_IP_BASE || '172.20.120.20';
 const BASE_URL = `https://${HIK_IP}`;
-const APP_KEY = '26269542';
-const APP_SECRET = 'wVkq6TjwrEP3BTL5iPi1';
+const APP_KEY = process.env.HIKCENTRAL_APP_KEY || '26269542';
+const APP_SECRET = process.env.HIKCENTRAL_APP_SECRET || 'wVkq6TjwrEP3BTL5iPi1';
 
 async function testAuth(includeSigHeaders: boolean, sortAllXCa: boolean, lowercaseKeysInString: boolean) {
     const path = '/artemis/api/resource/v1/acsDevice/acsDeviceList';

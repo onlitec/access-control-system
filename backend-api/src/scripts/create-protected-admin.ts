@@ -11,9 +11,9 @@ const prisma = new PrismaClient();
  * This user cannot be deleted or modified through the API.
  */
 async function main() {
-  const email = 'alfreire@onlitec.com.br';
-  const password = '*M3a74g20M';
-  const name = 'Admin Onlitec';
+  const email = process.env.INITIAL_ADMIN_EMAIL || 'admin@example.com';
+  const password = process.env.INITIAL_ADMIN_PASSWORD || 'change-me-immediately';
+  const name = process.env.INITIAL_ADMIN_NAME || 'System Admin';
   const role = 'ADMIN';
 
   if (password.length < 8) {

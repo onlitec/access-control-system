@@ -26,23 +26,25 @@ model HikcentralConfig {
 }
 
 model Person {
-  id                 String    @id @default(uuid())
-  firstName          String    @map("first_name")
-  lastName           String    @map("last_name")
+  id                 String            @id @default(uuid())
+  firstName          String            @map("first_name")
+  lastName           String            @map("last_name")
   phone              String?
   email              String?
-  orgIndexCode       String    @map("org_index_code")
-  hikPersonId        String?   @unique @map("hik_person_id")
-  photoUrl           String?   @map("photo_url")
-  createdAt          DateTime  @default(now()) @map("created_at")
-  updatedAt          DateTime? @updatedAt @map("updated_at")
+  orgIndexCode       String            @map("org_index_code")
+  hikPersonId        String?           @unique @map("hik_person_id")
+  externalId         String?           @map("external_id")
+  photoUrl           String?           @map("photo_url")
+  createdAt          DateTime          @default(now()) @map("created_at")
+  updatedAt          DateTime?         @updatedAt @map("updated_at")
   block              String?
   cpf                String?
   document_photo_url String?
-  is_owner           Boolean?  @default(true)
+  is_owner           Boolean?          @default(true)
   notes              String?
   tower              String?
   unit_number        String?
+  residentSessions   ResidentSession[]
 
   @@map("persons")
 }
@@ -60,6 +62,7 @@ model Visitor {
   visitStartTime     DateTime  @map("visit_start_time")
   visitEndTime       DateTime  @map("visit_end_time")
   hikVisitorId       String?   @map("hik_visitor_id")
+  externalId         String?   @map("external_id")
   status             String?   @default("ACTIVE")
   inviteToken        String?   @map("invite_token")
   accessLevelId      String?   @map("access_level_id")
@@ -74,6 +77,8 @@ model Visitor {
   updated_at         DateTime?
   visiting_resident  String?
   visiting_unit      String?
+  lgpdConsent        Boolean   @default(false) @map("lgpd_consent")
+  consentTimestamp   DateTime? @map("consent_timestamp")
 
   @@map("visitors")
 }
@@ -194,6 +199,68 @@ model SecurityMetricSnapshot {
   @@index([generatedAt])
   @@index([windowHours, generatedAt])
   @@map("security_metric_snapshots")
+}
+
+// ============ Multi-Provider Integration Config ============
+
+model IntegrationConfig {
+  id           String   @id @default(cuid())
+  providerType String   @map("provider_type") // "hikcentral" | "local" | "nice_guarita"
+  enabled      Boolean  @default(false)
+  config       Json     @default("{}")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  @@unique([providerType])
+  @@map("integration_configs")
+}
+
+// ============ Resident Portal Sessions ============
+
+model ResidentSession {
+  id        String   @id @default(cuid())
+  personId  String   @map("person_id")
+  person    Person   @relation(fields: [personId], references: [id], onDelete: Cascade)
+  token     String   @unique
+  expiresAt DateTime @map("expires_at")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([personId])
+  @@index([expiresAt])
+  @@map("resident_sessions")
+}
+
+// ============ Hikvision Video Doorbell Devices ============
+
+model DoorbellDevice {
+  id        String   @id @default(cuid())
+  name      String
+  ip        String
+  port      Int      @default(80)
+  username  String
+  password  String
+  location  String?
+  enabled   Boolean  @default(true)
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("doorbell_devices")
+}
+
+// ============ Nice Guarita IP Devices ============
+
+model GuaritaDevice {
+  id        String   @id @default(cuid())
+  name      String
+  ip        String
+  port      Int      @default(80)
+  location  String?
+  enabled   Boolean  @default(true)
+  sdkConfig Json?    @map("sdk_config")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("guarita_devices")
 }
 
 // ============ CMS Data-Driven: Entity Mappings ============

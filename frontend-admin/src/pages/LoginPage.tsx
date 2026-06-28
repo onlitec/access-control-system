@@ -1,10 +1,10 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
-import { Shield, Loader2, AlertCircle } from 'lucide-react';
+import { Loader2, AlertCircle } from 'lucide-react';
 
 export default function LoginPage() {
-    const [email, setEmail] = useState('admin@calabasas.com');
+    const [email, setEmail] = useState('admin@condominio.com');
     const [password, setPassword] = useState('admin123');
     const [error, setError] = useState('');
     const [loading, setLoading] = useState(false);
@@ -27,58 +27,72 @@ export default function LoginPage() {
 
     return (
         <div className="login-page">
-            <div className="login-card">
-                <div className="login-header">
-                    <div className="login-logo">
-                        <Shield size={40} />
+            <div className="login-split">
+                <div className="login-brand">
+                    <div className="login-brand-content">
+                        <div className="login-brand-eyebrow">Condomínio Calabasas</div>
+                        <h1 className="login-brand-title">Controle<br />de Acesso</h1>
+                        <p className="login-brand-sub">Painel administrativo seguro para gestão de moradores, visitantes e prestadores.</p>
                     </div>
-                    <h1>Calabasas Admin</h1>
-                    <p>Acesse o painel administrativo</p>
+                    <div className="login-brand-footer">
+                        Sistema integrado com HikCentral
+                    </div>
                 </div>
 
-                {error && (
-                    <div className="login-error">
-                        <AlertCircle size={16} />
-                        <span>{error}</span>
-                    </div>
-                )}
+                <div className="login-form-side">
+                    <div className="login-card">
+                        <div className="login-header">
+                            <h2>Entrar</h2>
+                            <p>Acesse com suas credenciais de administrador</p>
+                        </div>
 
-                <form onSubmit={handleSubmit} className="login-form">
-                    <div className="form-group">
-                        <label htmlFor="email">Email</label>
-                        <input
-                            id="email"
-                            type="email"
-                            value={email}
-                            onChange={(e) => setEmail(e.target.value)}
-                            placeholder="admin@calabasas.com"
-                            required
-                        />
-                    </div>
-
-                    <div className="form-group">
-                        <label htmlFor="password">Senha</label>
-                        <input
-                            id="password"
-                            type="password"
-                            value={password}
-                            onChange={(e) => setPassword(e.target.value)}
-                            placeholder="••••••••"
-                            required
-                        />
-                    </div>
-
-                    <button type="submit" className="login-button" disabled={loading}>
-                        {loading ? (
-                            <>
-                                <Loader2 size={18} className="spin" />
-                                Entrando...
-                            </>
-                        ) : (
-                            'Entrar'
+                        {error && (
+                            <div className="login-error">
+                                <AlertCircle size={16} />
+                                <span>{error}</span>
+                            </div>
                         )}
-                    </button>
-                </form>
+
+                        <form onSubmit={handleSubmit} className="login-form">
+                            <div className="form-group">
+                                <label htmlFor="email">Email</label>
+                                <input
+                                    id="email"
+                                    type="email"
+                                    value={email}
+                                    onChange={(e) => setEmail(e.target.value)}
+                                    placeholder="admin@condominio.com"
+                                    required
+                                    autoComplete="email"
+                                />
+                            </div>
+
+                            <div className="form-group">
+                                <label htmlFor="password">Senha</label>
+                                <input
+                                    id="password"
+                                    type="password"
+                                    value={password}
+                                    onChange={(e) => setPassword(e.target.value)}
+                                    placeholder="••••••••"
+                                    required
+                                    autoComplete="current-password"
+                                />
+                            </div>
+
+                            <button type="submit" className="login-button" disabled={loading}>
+                                {loading ? (
+                                    <>
+                                        <Loader2 size={18} className="spin" />
+                                        Entrando...
+                                    </>
+                                ) : (
+                                    'Entrar no painel'
+                                )}
+                            </button>
+                        </form>
+                    </div>
+                </div>
             </div>
         </div>
     );

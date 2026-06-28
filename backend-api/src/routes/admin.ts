@@ -1,11 +1,13 @@
 import { Router } from 'express';
 import { AdminEntitiesController } from '../controllers/AdminEntitiesController';
 import { EntityMappingsController } from '../controllers/EntityMappingsController';
+import { TerminalController } from '../controllers/TerminalController';
 
 const router = Router();
 
 const adminEntitiesController = new AdminEntitiesController();
 const entityMappingsController = new EntityMappingsController();
+const terminalController = new TerminalController();
 
 // ============ Entidades HikCentral (read-only, com cache) ============
 
@@ -52,5 +54,9 @@ router.put('/mappings/:id', entityMappingsController.update);
 
 // Remover mapeamento
 router.delete('/mappings/:id', entityMappingsController.delete);
+
+// ============ Terminais & Captura ============
+router.get('/terminals', terminalController.listTerminals);
+router.get('/terminals/capture/:id', terminalController.capturePhoto);
 
 export default router;
