@@ -40,6 +40,15 @@ services:
       SECURITY_METRICS_SNAPSHOT_RETENTION_DAYS: ${SECURITY_METRICS_SNAPSHOT_RETENTION_DAYS:-30}
       SECURITY_METRICS_HISTORY_DEFAULT_POINTS: ${SECURITY_METRICS_HISTORY_DEFAULT_POINTS:-96}
       CORS_ORIGIN: ${CORS_ORIGIN:-*}
+      APP_URL: ${APP_URL:-https://172.20.120.41:8443}
+      DB_USER: ${DB_USER:?DB_USER is required}
+      DB_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD is required}
+      DB_NAME: ${DB_NAME:?DB_NAME is required}
+      DB_CONTAINER: access-db
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./scripts:/app/scripts:ro
+      - ./backups:/app/backups
     depends_on:
       postgres:
         condition: service_healthy
