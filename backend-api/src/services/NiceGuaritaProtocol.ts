@@ -232,16 +232,33 @@ async function tcpSendReceive(
       if (!settled) { settled = true; fn(); }
     }
 
+    let quietTimer: NodeJS.Timeout | null = null;
+
     const timer = setTimeout(() => {
       socket.destroy();
       settle(() => reject(new Error(`NiceGuarita TCP timeout (${ip}:${port})`)));
     }, timeoutMs);
 
+    const finish = () => {
+      clearTimeout(timer);
+      if (quietTimer) clearTimeout(quietTimer);
+      socket.destroy();
+      settle(() => resolve(response));
+    };
+
     socket.connect(port, ip, () => socket.write(frame));
-    socket.on('data', (chunk: Buffer) => { response = Buffer.concat([response, chunk]); });
-    socket.on('end', () => { clearTimeout(timer); socket.destroy(); settle(() => resolve(response)); });
-    socket.on('close', () => { clearTimeout(timer); settle(() => resolve(response)); });
-    socket.on('error', (err: Error) => { clearTimeout(timer); socket.destroy(); settle(() => reject(err)); });
+    socket.on('data', (chunk: Buffer) => {
+      response = Buffer.concat([response, chunk]);
+      // O MG3000 em modo servidor TCP NÃO fecha a conexão depois de
+      // responder (o mesmo canal transporta eventos) - esperar 'close'
+      // estourava o timeout mesmo com a resposta já recebida. Considera a
+      // resposta completa após um breve silêncio depois do último byte.
+      if (quietTimer) clearTimeout(quietTimer);
+      quietTimer = setTimeout(finish, 200);
+    });
+    socket.on('end', finish);
+    socket.on('close', () => { clearTimeout(timer); if (quietTimer) clearTimeout(quietTimer); settle(() => resolve(response)); });
+    socket.on('error', (err: Error) => { clearTimeout(timer); if (quietTimer) clearTimeout(quietTimer); socket.destroy(); settle(() => reject(err)); });
   });
 }
 
