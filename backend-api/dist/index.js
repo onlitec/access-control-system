@@ -1,22 +1,191 @@
 "use strict";
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
 var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.prisma = exports.app = void 0;
 const express_1 = __importDefault(require("express"));
 const cors_1 = __importDefault(require("cors"));
 const dotenv_1 = __importDefault(require("dotenv"));
 const client_1 = require("@prisma/client");
 const HikCentralService_1 = require("./services/HikCentralService");
-const securityMetrics_1 = require("./services/securityMetrics");
+const NiceGuaritaService_1 = require("./services/NiceGuaritaService");
+const EntityMappingService_1 = require("./services/EntityMappingService");
+const HikCentralSyncService_1 = require("./services/HikCentralSyncService");
 const bcryptjs_1 = __importDefault(require("bcryptjs"));
 const helmet_1 = __importDefault(require("helmet"));
 const crypto_1 = __importDefault(require("crypto"));
+const cookie_parser_1 = __importDefault(require("cookie-parser"));
 const jsonwebtoken_1 = __importDefault(require("jsonwebtoken"));
+const hikcentral_visitors_1 = __importDefault(require("./routes/hikcentral-visitors"));
+const painel_1 = __importDefault(require("./routes/painel"));
+const routes_1 = __importDefault(require("./routes"));
+const setup_routes_1 = __importDefault(require("./routes/setup.routes"));
+const systemSettings_routes_1 = __importDefault(require("./routes/systemSettings.routes"));
+const auth_1 = require("./middleware/auth");
+const auth_routes_1 = __importDefault(require("./routes/auth.routes"));
+const audit_routes_1 = __importDefault(require("./routes/audit.routes"));
+const security_routes_1 = __importDefault(require("./routes/security.routes"));
+const residents_routes_1 = __importDefault(require("./routes/residents.routes"));
+const staff_routes_1 = __importDefault(require("./routes/staff.routes"));
+const service_providers_routes_1 = __importDefault(require("./routes/service-providers.routes"));
+const resident_auth_routes_1 = __importDefault(require("./routes/resident-auth.routes"));
+const doorbell_routes_1 = __importDefault(require("./routes/doorbell.routes"));
+const guarita_routes_1 = __importDefault(require("./routes/guarita.routes"));
+const deliveries_routes_1 = __importDefault(require("./routes/deliveries.routes"));
+const EventBusService_1 = require("./services/EventBusService");
+const ops_routes_1 = __importStar(require("./routes/ops.routes"));
+const system_users_routes_1 = __importDefault(require("./routes/system-users.routes"));
+const condominium_routes_1 = __importDefault(require("./routes/condominium.routes"));
+const access_areas_routes_1 = __importDefault(require("./routes/access-areas.routes"));
+const guarita_passback_routes_1 = __importDefault(require("./routes/guarita-passback.routes"));
+const events_routes_1 = require("./routes/events.routes");
 dotenv_1.default.config();
-const app = (0, express_1.default)();
-const prisma = new client_1.PrismaClient();
+// ============ HikCentral Department → Platform Role Mapping ============
+/**
+ * Mapeamento dinâmico: orgIndexCode (HikCentral) → Role da plataforma.
+ * Baseado nos departamentos reais do condomínio Calabasas:
+ *   1  = CALABASAS (raiz - ignorado)
+ *   3  = PRESTADORES
+ *   4  = ADMINISTRADORES
+ *   5  = PORTARIA
+ *   6  = CONDOMINIO
+ *   7  = MORADORES
+ *   8  = VISITANTES
+ */
+const HIK_ORG_ROLE_MAP = {
+    '1': 'SISTEMA', // Raiz - All Departments
+    '2': 'MORADOR', // Moradores / Condôminos
+    '3': 'PRESTADOR', // Prestadores de serviço
+    '4': 'PORTARIA', // Equipe da Portaria
+    '5': 'PORTARIA', // Equipe da Portaria (alias)
+    '6': 'ADMIN', // Condomínio
+    '7': 'MORADOR', // Moradores (alias)
+    '8': 'VISITANTE', // Visitantes cadastrados
+};
+/**
+ * Cache de mapeamento nome → orgIndexCode resolvido do HikCentral.
+ * Atualizado a cada chamada a resolveOrgCodesByName().
+ */
+let orgNameCache = {};
+let orgCacheTimestamp = 0;
+const ORG_CACHE_TTL_MS = 5 * 60 * 1000; // 5 min
+/**
+ * Busca os orgIndexCodes do HikCentral pelo nome do departamento.
+ * Usa cache TTL de 5 minutos para evitar chamadas excessivas.
+ * Fallback para mapa estático se HikCentral não responder.
+ */
+async function resolveOrgCodesByName() {
+    const now = Date.now();
+    if (Object.keys(orgNameCache).length > 0 && (now - orgCacheTimestamp) < ORG_CACHE_TTL_MS) {
+        return orgNameCache;
+    }
+    try {
+        const result = await Promise.race([
+            HikCentralService_1.HikCentralService.getOrgList(1, 200),
+            new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 5000))
+        ]);
+        const list = result?.data?.list || [];
+        if (list.length > 0) {
+            const map = {};
+            list.forEach((org) => {
+                const name = (org.orgName || '').toUpperCase().trim();
+                const code = String(org.orgIndexCode);
+                map[name] = code;
+                // Atualizar HIK_ORG_NAMES dinamicamente
+                HIK_ORG_NAMES[code] = org.orgName;
+            });
+            orgNameCache = map;
+            orgCacheTimestamp = now;
+            console.log('[HikCentral] Departamentos resolvidos:', JSON.stringify(map));
+            return map;
+        }
+    }
+    catch (e) {
+        console.warn('[HikCentral] Falha ao buscar orgs, usando mapa estático:', e.message);
+    }
+    // Fallback: mapa estático invertido
+    const staticMap = {};
+    Object.entries(HIK_ORG_NAMES).forEach(([code, name]) => { staticMap[name.toUpperCase()] = code; });
+    return staticMap;
+}
+/**
+ * Retorna os orgIndexCodes para um tipo de departamento.
+ * keywords: array de nomes (uppercase) a buscar no HikCentral.
+ * staticFallback: codes a usar se HikCentral não retornar match.
+ */
+async function getOrgCodesForType(keywords, staticFallback) {
+    const nameMap = await resolveOrgCodesByName();
+    const codes = new Set();
+    keywords.forEach(kw => {
+        Object.entries(nameMap).forEach(([name, code]) => {
+            if (name.includes(kw))
+                codes.add(code);
+        });
+    });
+    return codes.size > 0 ? Array.from(codes) : staticFallback;
+}
+/**
+ * Nomes legíveis dos departamentos HikCentral.
+ */
+const HIK_ORG_NAMES = {
+    '1': 'ALL DEPARTMENTS',
+    '2': 'MORADORES',
+    '3': 'PRESTADORES',
+    '4': 'PORTARIA',
+    '5': 'PORTARIA',
+    '6': 'CONDOMINIO',
+    '7': 'MORADORES',
+    '8': 'VISITANTES',
+};
+/**
+ * Retorna o role da plataforma baseado no orgIndexCode do HikCentral.
+ */
+function resolveRoleFromOrg(orgIndexCode) {
+    return HIK_ORG_ROLE_MAP[orgIndexCode] || 'DESCONHECIDO';
+}
+// Filtros estáticos de fallback (usados quando HikCentral não responde)
+const RESIDENT_ORG_CODES_FALLBACK = ['2', '7'];
+const PRESTADORES_ORG_CODES_FALLBACK = ['3'];
+const STAFF_ORG_CODES_FALLBACK = ['4', '5', '6'];
+const SYSTEM_ORG_CODES = ['1'];
+exports.app = (0, express_1.default)();
+exports.prisma = new client_1.PrismaClient();
 const port = process.env.PORT || 3001;
+const APP_URL = process.env.APP_URL || 'https://127.0.0.1:8443';
 const JWT_SECRET = process.env.JWT_SECRET;
 const JWT_EXPIRES_IN = (process.env.JWT_EXPIRES_IN || '1d');
 const REFRESH_TOKEN_EXPIRES_IN = process.env.REFRESH_TOKEN_EXPIRES_IN || '7d';
@@ -61,10 +230,40 @@ if (!JWT_SECRET) {
     throw new Error('JWT_SECRET must be set');
 }
 const allowedOrigins = CORS_ORIGIN.split(',').map((origin) => origin.trim()).filter(Boolean);
-const corsOptions = CORS_ORIGIN === '*' ? {} : { origin: allowedOrigins, credentials: true };
-app.use((0, helmet_1.default)());
-app.use((0, cors_1.default)(corsOptions));
-app.use(express_1.default.json());
+const corsOptions = {
+    origin: CORS_ORIGIN === '*' ? true : allowedOrigins,
+    credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept'],
+};
+exports.app.use((0, helmet_1.default)());
+exports.app.use((0, cookie_parser_1.default)());
+exports.app.use(express_1.default.json({ limit: '50mb' }));
+exports.app.use(express_1.default.urlencoded({ limit: '50mb', extended: true }));
+exports.app.use((0, cors_1.default)(corsOptions));
+exports.app.use(ops_routes_1.healthMetricsMiddleware);
+// Global API Routes
+// setup (cadastro do primeiro admin) é público e precisa vir antes do
+// middleware de autenticação que cobre /api
+exports.app.use('/api/setup', setup_routes_1.default);
+exports.app.use('/api', routes_1.default);
+exports.app.use('/api/residents', residents_routes_1.default);
+exports.app.use('/api/staff', staff_routes_1.default);
+exports.app.use('/api/service-providers', service_providers_routes_1.default);
+exports.app.use('/api/events', events_routes_1.eventsRoutes);
+// ============ Platform Routes (Integrated with HikCentral) ============
+exports.app.use('/api/hikcentral', hikcentral_visitors_1.default);
+exports.app.use('/api', (req, res, next) => {
+    // Basic health check and AUTH bypass
+    if (req.path === '/health' || req.path.startsWith('/auth/') || req.path.startsWith('/onboarding/') || req.path.startsWith('/resident/'))
+        return next();
+    // Injetar token do query param no header para endpoints de foto
+    const queryToken = req.query.token;
+    if (queryToken && !req.headers.authorization) {
+        req.headers.authorization = `Bearer ${queryToken}`;
+    }
+    return (0, auth_1.authMiddleware)(req, res, next);
+}, painel_1.default);
 const parseDurationToMs = (input) => {
     const match = /^(\d+)([smhd])$/i.exec(input.trim());
     if (!match)
@@ -97,98 +296,6 @@ const getClientIp = (req) => {
 const getUserAgent = (req) => {
     const ua = req.headers['user-agent'];
     return typeof ua === 'string' ? ua.slice(0, 500) : undefined;
-};
-const logSessionAuditEvent = async (params) => {
-    try {
-        await prisma.sessionAuditEvent.create({
-            data: {
-                eventType: params.eventType,
-                success: params.success,
-                userId: params.userId ?? null,
-                userEmail: params.userEmail ?? null,
-                sessionId: params.sessionId ?? null,
-                ipAddress: getClientIp(params.req),
-                userAgent: getUserAgent(params.req),
-                details: params.details?.slice(0, 1000),
-            },
-        });
-    }
-    catch (error) {
-        console.error('Session audit log error:', error);
-    }
-};
-const SESSION_AUDIT_SORTABLE_COLUMNS = ['createdAt', 'eventType', 'success', 'userEmail', 'ipAddress'];
-const parseSessionAuditWhere = (query) => {
-    const { userEmail, eventType, success, startTime, endTime, ipAddress, sessionId } = query;
-    const where = {};
-    if (userEmail) {
-        where.userEmail = { contains: userEmail, mode: 'insensitive' };
-    }
-    if (eventType) {
-        where.eventType = eventType;
-    }
-    if (ipAddress) {
-        where.ipAddress = { contains: ipAddress, mode: 'insensitive' };
-    }
-    if (sessionId) {
-        where.sessionId = { contains: sessionId };
-    }
-    if (success === 'true' || success === 'false') {
-        where.success = success === 'true';
-    }
-    if (startTime || endTime) {
-        where.createdAt = {};
-        if (startTime) {
-            const startDate = new Date(startTime);
-            if (Number.isNaN(startDate.getTime())) {
-                throw new Error('startTime inválido');
-            }
-            where.createdAt.gte = startDate;
-        }
-        if (endTime) {
-            const endDate = new Date(endTime);
-            if (Number.isNaN(endDate.getTime())) {
-                throw new Error('endTime inválido');
-            }
-            where.createdAt.lte = endDate;
-        }
-    }
-    return where;
-};
-const parseSessionAuditSort = (query) => {
-    const sortByRaw = query.sortBy || 'createdAt';
-    const sortOrderRaw = (query.sortOrder || 'desc').toLowerCase();
-    if (!SESSION_AUDIT_SORTABLE_COLUMNS.includes(sortByRaw)) {
-        throw new Error(`sortBy inválido. Valores aceitos: ${SESSION_AUDIT_SORTABLE_COLUMNS.join(', ')}`);
-    }
-    if (sortOrderRaw !== 'asc' && sortOrderRaw !== 'desc') {
-        throw new Error('sortOrder inválido. Valores aceitos: asc, desc');
-    }
-    const sortBy = sortByRaw;
-    const sortOrder = sortOrderRaw;
-    return { sortBy, sortOrder, orderBy: { [sortBy]: sortOrder } };
-};
-const pruneSessionAuditEvents = async () => {
-    const now = new Date();
-    const cutoff = new Date(now.getTime() - SESSION_AUDIT_RETENTION_DAYS * 24 * 60 * 60 * 1000);
-    const deleted = await prisma.sessionAuditEvent.deleteMany({
-        where: {
-            createdAt: {
-                lt: cutoff,
-            },
-        },
-    });
-    console.log(JSON.stringify({
-        action: 'prune_session_audit_events',
-        retentionDays: SESSION_AUDIT_RETENTION_DAYS,
-        cutoff: cutoff.toISOString(),
-        deleted: deleted.count,
-        timestamp: now.toISOString(),
-    }));
-};
-const escapeCsv = (value) => {
-    const str = value == null ? '' : String(value);
-    return `"${str.replace(/"/g, '""')}"`;
 };
 const SERVICE_PROVIDER_TYPES = ['fixed', 'temporary'];
 const hasOwn = (obj, key) => Object.prototype.hasOwnProperty.call(obj, key);
@@ -359,7 +466,7 @@ const serializeTower = (tower) => ({
 });
 const ensureServiceProviderRelations = async (data) => {
     if (data.tower) {
-        const tower = await prisma.tower.findFirst({
+        const tower = await exports.prisma.tower.findFirst({
             where: {
                 name: data.tower,
                 isActive: true,
@@ -371,7 +478,7 @@ const ensureServiceProviderRelations = async (data) => {
         }
     }
     if (data.visitingResident) {
-        const resident = await prisma.person.findUnique({
+        const resident = await exports.prisma.person.findUnique({
             where: { id: data.visitingResident },
             select: { id: true },
         });
@@ -381,7 +488,7 @@ const ensureServiceProviderRelations = async (data) => {
     }
 };
 const revokeExcessActiveSessions = async (userId) => {
-    const sessions = await prisma.refreshSession.findMany({
+    const sessions = await exports.prisma.refreshSession.findMany({
         where: {
             userId,
             revokedAt: null,
@@ -394,948 +501,785 @@ const revokeExcessActiveSessions = async (userId) => {
         return 0;
     }
     const toRevoke = sessions.slice(MAX_ACTIVE_REFRESH_SESSIONS).map((session) => session.id);
-    const result = await prisma.refreshSession.updateMany({
+    const result = await exports.prisma.refreshSession.updateMany({
         where: { id: { in: toRevoke } },
         data: { revokedAt: new Date() },
     });
     return result.count;
 };
-// ============ Auth Routes ============
-app.post('/api/auth/login', async (req, res) => {
-    const { email, password } = req.body;
-    try {
-        if (!email || !password) {
-            await logSessionAuditEvent({
-                eventType: 'login',
-                success: false,
-                req,
-                userEmail: typeof email === 'string' ? email : null,
-                details: 'missing_credentials',
-            });
-            return res.status(400).json({ error: 'Email e senha são obrigatórios' });
-        }
-        const user = await prisma.user.findUnique({ where: { email } });
-        if (!user) {
-            await logSessionAuditEvent({
-                eventType: 'login',
-                success: false,
-                req,
-                userEmail: email,
-                details: 'user_not_found',
-            });
-            return res.status(401).json({ error: 'Credenciais inválidas' });
-        }
-        // Legacy migration path: if plaintext password exists, validate once and upgrade to bcrypt hash.
-        let isValidPassword = false;
-        if (user.password.startsWith('$2a$') || user.password.startsWith('$2b$') || user.password.startsWith('$2y$')) {
-            isValidPassword = await bcryptjs_1.default.compare(password, user.password);
-        }
-        else if (user.password === password) {
-            isValidPassword = true;
-            const hashedPassword = await bcryptjs_1.default.hash(password, 12);
-            await prisma.user.update({
-                where: { id: user.id },
-                data: { password: hashedPassword },
-            });
-        }
-        if (!isValidPassword) {
-            await logSessionAuditEvent({
-                eventType: 'login',
-                success: false,
-                req,
-                userId: user.id,
-                userEmail: user.email,
-                details: 'invalid_password',
-            });
-            return res.status(401).json({ error: 'Credenciais inválidas' });
-        }
-        const token = signAccessToken(user);
-        const refreshToken = generateRefreshToken();
-        const refreshTokenHash = hashRefreshToken(refreshToken);
-        const createdSession = await prisma.refreshSession.create({
-            data: {
-                userId: user.id,
-                tokenHash: refreshTokenHash,
-                expiresAt: getRefreshExpiry(),
-            },
-        });
-        await revokeExcessActiveSessions(user.id);
-        await logSessionAuditEvent({
-            eventType: 'login',
-            success: true,
-            req,
-            userId: user.id,
-            userEmail: user.email,
-            sessionId: createdSession.id,
-        });
-        return res.json({
-            token,
-            refreshToken,
-            user: { id: user.id, email: user.email, name: user.name, role: user.role },
-        });
-    }
-    catch (error) {
-        await logSessionAuditEvent({
-            eventType: 'login',
-            success: false,
-            req,
-            userEmail: typeof email === 'string' ? email : null,
-            details: 'internal_error',
-        });
-        console.error('Login error:', error);
-        res.status(500).json({ error: 'Erro interno no login' });
-    }
-});
-app.post('/api/auth/refresh', async (req, res) => {
-    const { refreshToken } = req.body;
-    try {
-        if (!refreshToken) {
-            await logSessionAuditEvent({
-                eventType: 'refresh',
-                success: false,
-                req,
-                details: 'missing_refresh_token',
-            });
-            return res.status(400).json({ error: 'Refresh token é obrigatório' });
-        }
-        const currentHash = hashRefreshToken(refreshToken);
-        const currentSession = await prisma.refreshSession.findUnique({
-            where: { tokenHash: currentHash },
-        });
-        if (!currentSession || currentSession.revokedAt || currentSession.expiresAt <= new Date()) {
-            await logSessionAuditEvent({
-                eventType: 'refresh',
-                success: false,
-                req,
-                sessionId: currentSession?.id ?? null,
-                userId: currentSession?.userId ?? null,
-                details: 'invalid_refresh_token',
-            });
-            return res.status(401).json({ error: 'Refresh token inválido' });
-        }
-        const user = await prisma.user.findUnique({ where: { id: currentSession.userId } });
-        if (!user) {
-            await logSessionAuditEvent({
-                eventType: 'refresh',
-                success: false,
-                req,
-                userId: currentSession.userId,
-                sessionId: currentSession.id,
-                details: 'user_not_found',
-            });
-            return res.status(401).json({ error: 'Usuário não encontrado' });
-        }
-        const nextRefreshToken = generateRefreshToken();
-        const nextHash = hashRefreshToken(nextRefreshToken);
-        const createdSession = await prisma.$transaction(async (tx) => {
-            await tx.refreshSession.update({
-                where: { id: currentSession.id },
-                data: {
-                    revokedAt: new Date(),
-                    replacedByTokenHash: nextHash,
-                },
-            });
-            return tx.refreshSession.create({
-                data: {
-                    userId: user.id,
-                    tokenHash: nextHash,
-                    expiresAt: getRefreshExpiry(),
-                },
-            });
-        });
-        await revokeExcessActiveSessions(user.id);
-        await logSessionAuditEvent({
-            eventType: 'refresh',
-            success: true,
-            req,
-            userId: user.id,
-            userEmail: user.email,
-            sessionId: createdSession.id,
-            details: `replaced_session=${currentSession.id}`,
-        });
-        const token = signAccessToken(user);
-        return res.json({ token, refreshToken: nextRefreshToken });
-    }
-    catch (error) {
-        await logSessionAuditEvent({
-            eventType: 'refresh',
-            success: false,
-            req,
-            details: 'internal_error',
-        });
-        console.error('Refresh error:', error);
-        res.status(500).json({ error: 'Erro interno no refresh' });
-    }
-});
-app.post('/api/auth/logout', async (req, res) => {
-    const { refreshToken } = req.body;
-    try {
-        if (!refreshToken) {
-            await logSessionAuditEvent({
-                eventType: 'logout',
-                success: false,
-                req,
-                details: 'missing_refresh_token',
-            });
-            return res.status(400).json({ error: 'Refresh token é obrigatório' });
-        }
-        const tokenHash = hashRefreshToken(refreshToken);
-        const existingSession = await prisma.refreshSession.findUnique({
-            where: { tokenHash },
-            select: { id: true, userId: true },
-        });
-        const result = await prisma.refreshSession.updateMany({
-            where: {
-                tokenHash,
-                revokedAt: null,
-            },
-            data: {
-                revokedAt: new Date(),
-            },
-        });
-        await logSessionAuditEvent({
-            eventType: 'logout',
-            success: result.count > 0,
-            req,
-            userId: existingSession?.userId ?? null,
-            sessionId: existingSession?.id ?? null,
-            details: result.count > 0 ? 'revoked' : 'already_revoked_or_not_found',
-        });
-        return res.status(204).send();
-    }
-    catch (error) {
-        await logSessionAuditEvent({
-            eventType: 'logout',
-            success: false,
-            req,
-            details: 'internal_error',
-        });
-        console.error('Logout error:', error);
-        res.status(500).json({ error: 'Erro interno no logout' });
-    }
-});
-// ============ Auth Middleware ============
-const authMiddleware = (req, res, next) => {
-    const authHeader = req.headers.authorization;
-    if (!authHeader)
-        return res.status(401).json({ error: 'No token provided' });
-    const token = authHeader.split(' ')[1];
-    try {
-        const decoded = jsonwebtoken_1.default.verify(token, JWT_SECRET);
-        req.user = decoded;
-        next();
-    }
-    catch (err) {
-        res.status(401).json({ error: 'Invalid token' });
-    }
-};
-const adminMiddleware = (req, res, next) => {
-    const role = req.user?.role;
-    if (role !== 'ADMIN') {
-        return res.status(403).json({ error: 'Acesso negado' });
-    }
-    next();
-};
-app.post('/api/auth/logout-all', authMiddleware, async (req, res) => {
-    try {
-        const userId = req.user?.id;
-        const userEmail = req.user?.email;
-        if (!userId) {
-            await logSessionAuditEvent({
-                eventType: 'logout_all',
-                success: false,
-                req,
-                details: 'invalid_token_payload',
-            });
-            return res.status(401).json({ error: 'Invalid token payload' });
-        }
-        const result = await prisma.refreshSession.updateMany({
-            where: {
-                userId,
-                revokedAt: null,
-            },
-            data: {
-                revokedAt: new Date(),
-            },
-        });
-        await logSessionAuditEvent({
-            eventType: 'logout_all',
-            success: true,
-            req,
-            userId,
-            userEmail: userEmail ?? null,
-            details: `revoked=${result.count}`,
-        });
-        return res.json({ revokedSessions: result.count });
-    }
-    catch (error) {
-        await logSessionAuditEvent({
-            eventType: 'logout_all',
-            success: false,
-            req,
-            userId: req.user?.id ?? null,
-            userEmail: req.user?.email ?? null,
-            details: 'internal_error',
-        });
-        console.error('Logout-all error:', error);
-        res.status(500).json({ error: 'Erro interno no logout-all' });
-    }
-});
-app.get('/api/auth/sessions', authMiddleware, async (req, res) => {
-    try {
-        const userId = req.user?.id;
-        const userEmail = req.user?.email;
-        if (!userId) {
-            await logSessionAuditEvent({
-                eventType: 'list_sessions',
-                success: false,
-                req,
-                details: 'invalid_token_payload',
-            });
-            return res.status(401).json({ error: 'Invalid token payload' });
-        }
-        const sessions = await prisma.refreshSession.findMany({
-            where: {
-                userId,
-                revokedAt: null,
-                expiresAt: { gt: new Date() },
-            },
-            select: {
-                id: true,
-                createdAt: true,
-                expiresAt: true,
-            },
-            orderBy: { createdAt: 'desc' },
-        });
-        await logSessionAuditEvent({
-            eventType: 'list_sessions',
-            success: true,
-            req,
-            userId,
-            userEmail: userEmail ?? null,
-            details: `count=${sessions.length}`,
-        });
-        return res.json({
-            data: sessions,
-            count: sessions.length,
-            maxActiveSessions: MAX_ACTIVE_REFRESH_SESSIONS,
-        });
-    }
-    catch (error) {
-        await logSessionAuditEvent({
-            eventType: 'list_sessions',
-            success: false,
-            req,
-            userId: req.user?.id ?? null,
-            userEmail: req.user?.email ?? null,
-            details: 'internal_error',
-        });
-        console.error('List sessions error:', error);
-        res.status(500).json({ error: 'Erro interno ao listar sessões' });
-    }
-});
-app.post('/api/auth/revoke-session', authMiddleware, async (req, res) => {
-    const { sessionId } = req.body;
-    try {
-        const userId = req.user?.id;
-        const userEmail = req.user?.email;
-        if (!userId) {
-            await logSessionAuditEvent({
-                eventType: 'revoke_session',
-                success: false,
-                req,
-                details: 'invalid_token_payload',
-            });
-            return res.status(401).json({ error: 'Invalid token payload' });
-        }
-        if (!sessionId || typeof sessionId !== 'string') {
-            await logSessionAuditEvent({
-                eventType: 'revoke_session',
-                success: false,
-                req,
-                userId,
-                userEmail: userEmail ?? null,
-                details: 'missing_session_id',
-            });
-            return res.status(400).json({ error: 'sessionId é obrigatório' });
-        }
-        const session = await prisma.refreshSession.findUnique({
-            where: { id: sessionId },
-            select: { id: true, userId: true, revokedAt: true },
-        });
-        if (!session || session.userId !== userId) {
-            await logSessionAuditEvent({
-                eventType: 'revoke_session',
-                success: false,
-                req,
-                userId,
-                userEmail: userEmail ?? null,
-                sessionId,
-                details: 'session_not_found_for_user',
-            });
-            return res.status(404).json({ error: 'Sessão não encontrada' });
-        }
-        if (session.revokedAt) {
-            await logSessionAuditEvent({
-                eventType: 'revoke_session',
-                success: true,
-                req,
-                userId,
-                userEmail: userEmail ?? null,
-                sessionId,
-                details: 'already_revoked',
-            });
-            return res.status(204).send();
-        }
-        await prisma.refreshSession.update({
-            where: { id: sessionId },
-            data: { revokedAt: new Date() },
-        });
-        await logSessionAuditEvent({
-            eventType: 'revoke_session',
-            success: true,
-            req,
-            userId,
-            userEmail: userEmail ?? null,
-            sessionId,
-            details: 'revoked',
-        });
-        return res.status(204).send();
-    }
-    catch (error) {
-        await logSessionAuditEvent({
-            eventType: 'revoke_session',
-            success: false,
-            req,
-            userId: req.user?.id ?? null,
-            userEmail: req.user?.email ?? null,
-            sessionId: typeof sessionId === 'string' ? sessionId : null,
-            details: 'internal_error',
-        });
-        console.error('Revoke session error:', error);
-        res.status(500).json({ error: 'Erro interno ao revogar sessão' });
-    }
-});
-app.get('/api/security/session-audit', authMiddleware, adminMiddleware, async (req, res) => {
-    try {
-        const { page = '1', limit = '20', } = req.query;
-        const pageNum = Math.max(1, Number.parseInt(page, 10) || 1);
-        const limitNum = Math.min(200, Math.max(1, Number.parseInt(limit, 10) || 20));
-        let where = {};
-        let orderBy = { createdAt: 'desc' };
-        let sortBy = 'createdAt';
-        let sortOrder = 'desc';
-        try {
-            where = parseSessionAuditWhere(req.query);
-            const sortParsed = parseSessionAuditSort(req.query);
-            orderBy = sortParsed.orderBy;
-            sortBy = sortParsed.sortBy;
-            sortOrder = sortParsed.sortOrder;
-        }
-        catch (error) {
-            return res.status(400).json({ error: error.message });
-        }
-        const skip = (pageNum - 1) * limitNum;
-        const [data, count, successCount, failureCount, loginFailureCount] = await Promise.all([
-            prisma.sessionAuditEvent.findMany({
-                where,
-                skip,
-                take: limitNum,
-                orderBy,
-                select: {
-                    id: true,
-                    userId: true,
-                    userEmail: true,
-                    eventType: true,
-                    success: true,
-                    sessionId: true,
-                    ipAddress: true,
-                    userAgent: true,
-                    details: true,
-                    createdAt: true,
-                },
-            }),
-            prisma.sessionAuditEvent.count({ where }),
-            prisma.sessionAuditEvent.count({
-                where: {
-                    ...where,
-                    success: true,
-                },
-            }),
-            prisma.sessionAuditEvent.count({
-                where: {
-                    ...where,
-                    success: false,
-                },
-            }),
-            prisma.sessionAuditEvent.count({
-                where: {
-                    ...where,
-                    eventType: 'login',
-                    success: false,
-                },
-            }),
-        ]);
-        return res.json({
-            data,
-            count,
-            page: pageNum,
-            limit: limitNum,
-            sortBy,
-            sortOrder,
-            summary: {
-                total: count,
-                success: successCount,
-                failure: failureCount,
-                loginFailure: loginFailureCount,
-            },
-        });
-    }
-    catch (error) {
-        console.error('Session audit query error:', error);
-        return res.status(500).json({ error: 'Erro interno ao consultar auditoria de sessão' });
-    }
-});
-app.get('/api/security/session-audit/export/meta', authMiddleware, adminMiddleware, async (req, res) => {
-    try {
-        const { limit = '1000' } = req.query;
-        const requestedLimit = Math.max(1, Number.parseInt(limit, 10) || 1000);
-        const effectiveLimit = Math.min(SESSION_AUDIT_EXPORT_MAX_LIMIT, requestedLimit);
-        let where = {};
-        try {
-            where = parseSessionAuditWhere(req.query);
-        }
-        catch (error) {
-            return res.status(400).json({ error: error.message });
-        }
-        const count = await prisma.sessionAuditEvent.count({ where });
-        return res.json({
-            count,
-            requestedLimit,
-            effectiveLimit,
-            maxLimit: SESSION_AUDIT_EXPORT_MAX_LIMIT,
-            truncated: count > effectiveLimit,
-        });
-    }
-    catch (error) {
-        console.error('Session audit export meta error:', error);
-        return res.status(500).json({ error: 'Erro interno ao consultar meta de exportação' });
-    }
-});
-app.get('/api/security/session-audit/export', authMiddleware, adminMiddleware, async (req, res) => {
-    try {
-        const { limit = '1000' } = req.query;
-        const take = Math.min(SESSION_AUDIT_EXPORT_MAX_LIMIT, Math.max(1, Number.parseInt(limit, 10) || 1000));
-        let where = {};
-        let orderBy = { createdAt: 'desc' };
-        let sortBy = 'createdAt';
-        let sortOrder = 'desc';
-        try {
-            where = parseSessionAuditWhere(req.query);
-            const sortParsed = parseSessionAuditSort(req.query);
-            orderBy = sortParsed.orderBy;
-            sortBy = sortParsed.sortBy;
-            sortOrder = sortParsed.sortOrder;
-        }
-        catch (error) {
-            return res.status(400).json({ error: error.message });
-        }
-        const [rows, totalCount] = await Promise.all([
-            prisma.sessionAuditEvent.findMany({
-                where,
-                take,
-                orderBy,
-                select: {
-                    createdAt: true,
-                    eventType: true,
-                    success: true,
-                    userEmail: true,
-                    sessionId: true,
-                    ipAddress: true,
-                    userAgent: true,
-                    details: true,
-                },
-            }),
-            prisma.sessionAuditEvent.count({ where }),
-        ]);
-        const header = [
-            'createdAt',
-            'eventType',
-            'success',
-            'userEmail',
-            'sessionId',
-            'ipAddress',
-            'userAgent',
-            'details',
-        ].join(',');
-        const lines = rows.map((row) => [
-            escapeCsv(row.createdAt.toISOString()),
-            escapeCsv(row.eventType),
-            escapeCsv(row.success),
-            escapeCsv(row.userEmail ?? ''),
-            escapeCsv(row.sessionId ?? ''),
-            escapeCsv(row.ipAddress ?? ''),
-            escapeCsv(row.userAgent ?? ''),
-            escapeCsv(row.details ?? ''),
-        ].join(','));
-        const csv = [header, ...lines].join('\n');
-        const filenameTs = new Date().toISOString().replace(/[:.]/g, '-');
-        const totalBytes = Buffer.byteLength(`\uFEFF${csv}`, 'utf-8');
-        res.setHeader('Content-Type', 'text/csv; charset=utf-8');
-        res.setHeader('Content-Disposition', `attachment; filename="session-audit-${filenameTs}.csv"`);
-        res.setHeader('Content-Length', String(totalBytes));
-        res.setHeader('X-Session-Audit-Total', String(totalCount));
-        res.setHeader('X-Session-Audit-Returned', String(rows.length));
-        res.setHeader('X-Session-Audit-Limit', String(take));
-        res.setHeader('X-Session-Audit-Max-Limit', String(SESSION_AUDIT_EXPORT_MAX_LIMIT));
-        res.setHeader('X-Session-Audit-Sort-By', sortBy);
-        res.setHeader('X-Session-Audit-Sort-Order', sortOrder);
-        return res.status(200).send(`\uFEFF${csv}`);
-    }
-    catch (error) {
-        console.error('Session audit export error:', error);
-        return res.status(500).json({ error: 'Erro interno ao exportar auditoria de sessão' });
-    }
-});
-app.get('/api/security/metrics', authMiddleware, adminMiddleware, async (req, res) => {
-    try {
-        const { windowHours, topN } = req.query;
-        const requestedWindowHours = Number.parseInt(windowHours || '', 10);
-        const requestedTopN = Number.parseInt(topN || '', 10);
-        const effectiveWindowHours = Number.isFinite(requestedWindowHours) && requestedWindowHours > 0
-            ? Math.min(24 * 14, requestedWindowHours)
-            : SECURITY_METRICS_WINDOW_HOURS;
-        const effectiveTopN = Number.isFinite(requestedTopN) && requestedTopN > 0
-            ? Math.min(100, requestedTopN)
-            : SECURITY_METRICS_TOP_N;
-        const metrics = await (0, securityMetrics_1.calculateSecurityMetrics)(prisma, {
-            windowHours: effectiveWindowHours,
-            topN: effectiveTopN,
-        });
-        return res.json(metrics);
-    }
-    catch (error) {
-        console.error('Security metrics query error:', error);
-        return res.status(500).json({ error: 'Erro interno ao consultar métricas de segurança' });
-    }
-});
-app.get('/api/security/metrics/history', authMiddleware, adminMiddleware, async (req, res) => {
-    try {
-        const { windowHours, limit, startTime, endTime } = req.query;
-        const requestedWindowHours = Number.parseInt(windowHours || '', 10);
-        const effectiveWindowHours = Number.isFinite(requestedWindowHours) && requestedWindowHours > 0
-            ? Math.min(24 * 14, requestedWindowHours)
-            : undefined;
-        const requestedLimit = Number.parseInt(limit || '', 10);
-        const effectiveLimit = Number.isFinite(requestedLimit) && requestedLimit > 0
-            ? Math.min(500, requestedLimit)
-            : SECURITY_METRICS_HISTORY_DEFAULT_POINTS;
-        let parsedStartTime;
-        if (startTime) {
-            const candidate = new Date(startTime);
-            if (Number.isNaN(candidate.getTime())) {
-                return res.status(400).json({ error: 'startTime inválido' });
-            }
-            parsedStartTime = candidate;
-        }
-        let parsedEndTime;
-        if (endTime) {
-            const candidate = new Date(endTime);
-            if (Number.isNaN(candidate.getTime())) {
-                return res.status(400).json({ error: 'endTime inválido' });
-            }
-            parsedEndTime = candidate;
-        }
-        const history = await (0, securityMetrics_1.listSecurityMetricsHistory)(prisma, {
-            limit: effectiveLimit,
-            windowHours: effectiveWindowHours,
-            startTime: parsedStartTime,
-            endTime: parsedEndTime,
-        });
-        return res.json({
-            generatedAt: new Date().toISOString(),
-            filters: {
-                windowHours: effectiveWindowHours ?? null,
-                limit: effectiveLimit,
-                startTime: parsedStartTime?.toISOString() ?? null,
-                endTime: parsedEndTime?.toISOString() ?? null,
-            },
-            count: history.length,
-            data: history,
-        });
-    }
-    catch (error) {
-        console.error('Security metrics history query error:', error);
-        return res.status(500).json({ error: 'Erro interno ao consultar histórico de métricas' });
-    }
-});
-app.post('/api/security/metrics/snapshots', authMiddleware, adminMiddleware, async (req, res) => {
-    try {
-        const body = (req.body || {});
-        const requestedWindowHours = Number.parseInt(String(body.windowHours || ''), 10);
-        const requestedTopN = Number.parseInt(String(body.topN || ''), 10);
-        const effectiveWindowHours = Number.isFinite(requestedWindowHours) && requestedWindowHours > 0
-            ? Math.min(24 * 14, requestedWindowHours)
-            : SECURITY_METRICS_WINDOW_HOURS;
-        const effectiveTopN = Number.isFinite(requestedTopN) && requestedTopN > 0
-            ? Math.min(100, requestedTopN)
-            : SECURITY_METRICS_TOP_N;
-        const result = await (0, securityMetrics_1.createSecurityMetricsSnapshot)(prisma, {
-            windowHours: effectiveWindowHours,
-            topN: effectiveTopN,
-        });
-        return res.status(201).json(result);
-    }
-    catch (error) {
-        console.error('Security metrics snapshot creation error:', error);
-        return res.status(500).json({ error: 'Erro interno ao criar snapshot de métricas' });
-    }
-});
-// ============ Health ============
-app.get('/api/health', (req, res) => {
+// ============ Centralized Routes ============
+exports.app.use('/api/auth', auth_routes_1.default);
+exports.app.use('/api/audit', audit_routes_1.default);
+exports.app.use('/api/security', security_routes_1.default);
+exports.app.use('/api/resident', resident_auth_routes_1.default);
+exports.app.use('/api/doorbell', doorbell_routes_1.default);
+exports.app.use('/api/guarita', guarita_routes_1.default);
+exports.app.use('/api/deliveries', deliveries_routes_1.default);
+exports.app.use('/api/ops', ops_routes_1.default);
+exports.app.use('/api/system-settings', systemSettings_routes_1.default);
+exports.app.use('/api/system-users', system_users_routes_1.default);
+exports.app.use('/api/condominium', condominium_routes_1.default);
+exports.app.use('/api/access-areas', access_areas_routes_1.default);
+exports.app.use('/api/guarita/passback', guarita_passback_routes_1.default);
+// ============ Health & System ============
+exports.app.get('/api/health', (req, res) => {
     res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 // ============ Residents Sync (HikCentral + Local DB) ============
-app.post('/api/persons/sync', authMiddleware, async (req, res) => {
+// Handled in ResidentsController
+// ============ Sincronização completa de todas as pessoas por departamento ============
+exports.app.post('/api/hikcentral/persons/sync', auth_1.authMiddleware, async (req, res) => {
     try {
-        const { firstName, lastName, phone, email, orgIndexCode } = req.body;
-        // 1. Sync with HikCentral
-        const hikResult = await HikCentralService_1.HikCentralService.addPerson({
-            personGivenName: firstName,
-            personFamilyName: lastName,
-            phoneNo: phone,
-            email: email,
-            orgIndexCode: orgIndexCode || '1',
-        });
-        const hikPersonId = hikResult?.data?.personId;
-        // 2. Save/Update Local DB
-        const person = await prisma.person.upsert({
-            where: { hikPersonId: hikPersonId || '' },
-            update: {
-                firstName,
-                lastName,
-                phone,
-                email,
-                orgIndexCode: orgIndexCode || '1',
-            },
-            create: {
-                firstName,
-                lastName,
-                phone,
-                email,
-                orgIndexCode: orgIndexCode || '1',
-                hikPersonId: hikPersonId,
-            },
-        });
-        res.json({ success: true, person, hikResult });
+        const summary = await HikCentralSyncService_1.HikCentralSyncService.syncAll();
+        res.json({ success: true, ...summary });
     }
     catch (error) {
-        console.error('Sync Error:', error);
+        console.error('[Sync] Erro geral:', error.message);
         res.status(500).json({ error: error.message });
     }
 });
-// ============ Visitor Reservation (HikCentral + Local DB) ============
-app.post('/api/visitors/reserve', authMiddleware, async (req, res) => {
-    try {
-        const { visitorName, certificateNo, visitStartTime, visitEndTime, plateNo, visitorPicData } = req.body;
-        // 1. Sync with HikCentral
-        const hikResult = await HikCentralService_1.HikCentralService.reserveVisitor({
-            visitorName,
-            certificateNo,
-            visitStartTime,
-            visitEndTime,
-            plateNo,
-            visitorPicData,
-        });
-        const hikVisitorId = hikResult?.data?.visitorId;
-        // 2. Save to Local DB
-        const visitor = await prisma.visitor.create({
-            data: {
-                name: visitorName,
-                certificateType: '111',
-                certificateNo,
-                visitStartTime: new Date(visitStartTime),
-                visitEndTime: new Date(visitEndTime),
-                plateNo,
-                hikVisitorId,
-            },
-        });
-        res.json({ success: true, visitor, hikResult });
+// ============ Person Photo Proxy (HikCentral) ============
+// Middleware para injetar token do query param no header Authorization
+const photoTokenMiddleware = (req, res, next) => {
+    const queryToken = req.query.token;
+    if (queryToken && !req.headers.authorization) {
+        req.headers.authorization = `Bearer ${queryToken}`;
     }
-    catch (error) {
-        console.error('Reservation Error:', error);
-        res.status(500).json({ error: error.message });
-    }
-});
-// ============ Residents (Person) CRUD ============
-app.get('/api/residents', authMiddleware, async (req, res) => {
+    next();
+};
+// Versão flexível do auth para fotos (aceita Header ou Query Param)
+exports.app.get('/api/hikcentral/person-photo/:personId', photoTokenMiddleware, auth_1.authMiddleware, async (req, res) => {
     try {
-        const { page = 1, limit = 20, search = '' } = req.query;
-        const pageNum = parseInt(page);
-        const limitNum = parseInt(limit);
-        // Tentar buscar do HikCentral primeiro
-        try {
-            const hikResult = await HikCentralService_1.HikCentralService.getPersonListByOrgName('MORADORES', pageNum, limitNum);
-            const hikPersons = hikResult?.data?.list || [];
-            if (hikPersons.length > 0) {
-                // Mapear dados do HikCentral para o formato local
-                const residents = hikPersons.map((p) => ({
-                    id: p.personId || p.indexCode || `hik-${Math.random().toString(36).substr(2, 9)}`,
-                    firstName: p.personGivenName || p.personName || '',
-                    lastName: p.personFamilyName || '',
-                    phone: p.phoneNo || p.phone || null,
-                    email: p.email || null,
-                    orgIndexCode: p.orgIndexCode || '',
-                    hikPersonId: p.personId || p.indexCode || null,
-                    orgName: p.orgName || 'MORADORES',
-                    gender: p.gender || null,
-                    certificateNo: p.certificateNo || null,
-                    personPhoto: p.personPhoto ? `https://100.77.145.39${p.personPhoto.picUri || ''}` : null,
-                    createdAt: p.createTime || new Date().toISOString(),
-                    updatedAt: p.updateTime || new Date().toISOString(),
-                }));
-                // Filtrar por busca se necessário
-                let filtered = residents;
-                if (search) {
-                    const searchLower = search.toLowerCase();
-                    filtered = residents.filter((r) => (r.firstName + ' ' + r.lastName).toLowerCase().includes(searchLower) ||
-                        r.phone?.toLowerCase().includes(searchLower) ||
-                        r.email?.toLowerCase().includes(searchLower));
-                }
-                // Salvar/atualizar no banco local (em background)
-                for (const r of residents) {
-                    try {
-                        await prisma.person.upsert({
-                            where: { hikPersonId: r.hikPersonId || `temp-${r.id}` },
-                            update: {
-                                firstName: r.firstName,
-                                lastName: r.lastName,
-                                phone: r.phone,
-                                email: r.email,
-                                orgIndexCode: r.orgIndexCode,
-                            },
-                            create: {
-                                firstName: r.firstName,
-                                lastName: r.lastName,
-                                phone: r.phone,
-                                email: r.email,
-                                orgIndexCode: r.orgIndexCode,
-                                hikPersonId: r.hikPersonId,
-                            },
-                        });
-                    }
-                    catch (e) {
-                        // Ignora erros de upsert individual
-                    }
-                }
-                return res.json({
-                    data: filtered,
-                    count: hikResult?.data?.total || filtered.length,
-                    source: 'hikcentral',
-                });
+        const { personId } = req.params;
+        const { picUri } = req.query;
+        const token = req.headers.authorization?.split(' ')[1];
+        // Se o picUri foi passado diretamente (otimização), usamos ele
+        if (picUri && typeof picUri === 'string' && picUri.length > 5) {
+            console.log(`[Photo Proxy] Usando picUri fornecido via query: ${picUri} para person ${personId}`);
+            let apiPath = picUri;
+            if (!picUri.startsWith('/')) {
+                apiPath = `/artemis/media/pic/${picUri}`;
+            }
+            try {
+                const buffer = await HikCentralService_1.HikCentralService.hikRequestRaw(apiPath, { method: 'GET' });
+                res.set('Content-Type', 'image/jpeg');
+                res.set('Cache-Control', 'public, max-age=3600');
+                return res.send(buffer);
+            }
+            catch (e) {
+                console.warn(`[Photo Proxy] Falha ao buscar picUri direto (${picUri}), tentando fallback...`);
             }
         }
-        catch (hikError) {
-            console.log('Fallback to local DB for residents:', hikError.message);
+        // Primeiro checar se temos foto local no banco
+        const localPerson = await exports.prisma.person.findFirst({ where: { hikPersonId: personId } });
+        if (localPerson?.photoUrl) {
+            // Se a foto local é base64, retorna como imagem
+            if (localPerson.photoUrl.startsWith('data:')) {
+                const matches = localPerson.photoUrl.match(/^data:([^;]+);base64,(.+)$/);
+                if (matches) {
+                    const contentType = matches[1];
+                    const buffer = Buffer.from(matches[2], 'base64');
+                    res.set('Content-Type', contentType);
+                    res.set('Cache-Control', 'public, max-age=3600');
+                    return res.send(buffer);
+                }
+            }
         }
-        // Fallback: buscar do banco local
-        const skip = (pageNum - 1) * limitNum;
-        const where = search ? {
-            OR: [
-                { firstName: { contains: search, mode: 'insensitive' } },
-                { lastName: { contains: search, mode: 'insensitive' } },
-            ]
-        } : {};
-        const data = await prisma.person.findMany({
-            where: where,
-            skip,
-            take: limitNum,
-            orderBy: { createdAt: 'desc' }
-        });
-        const count = await prisma.person.count({ where: where });
-        res.json({ data, count, source: 'local' });
+        // Buscar foto do HikCentral via proxy autenticado (fallback lento)
+        const photoResult = await HikCentralService_1.HikCentralService.getPersonPhoto(personId);
+        if (!photoResult) {
+            return res.status(404).json({ error: 'Foto não encontrada' });
+        }
+        res.set('Content-Type', photoResult.contentType);
+        res.set('Cache-Control', 'public, max-age=3600');
+        res.send(photoResult.buffer);
     }
     catch (error) {
+        console.error('[Photo Proxy] Erro:', error.message);
         res.status(500).json({ error: error.message });
     }
 });
-app.get('/api/residents/select', authMiddleware, async (req, res) => {
+exports.app.get('/api/residents/select', auth_1.authMiddleware, async (req, res) => {
     try {
-        const data = await prisma.person.findMany({
-            select: { id: true, firstName: true, lastName: true, orgIndexCode: true },
+        const data = await exports.prisma.person.findMany({
+            select: { id: true, firstName: true, lastName: true, unit_number: true, block: true, tower: true, parkingSpaces: true, department: { select: { id: true, name: true, color: true } } },
             orderBy: { firstName: 'asc' }
         });
         res.json(data.map(p => ({
             id: p.id,
             full_name: `${p.firstName} ${p.lastName}`,
-            unit_number: p.orgIndexCode,
-            block: null,
-            tower: null,
+            unit_number: p.unit_number || '',
+            block: p.block || null,
+            tower: p.tower || null,
+            parkingSpaces: p.parkingSpaces ?? null,
+            department: p.department || null,
         })));
     }
     catch (error) {
         res.status(500).json({ error: error.message });
     }
 });
-app.post('/api/residents', authMiddleware, async (req, res) => {
+exports.app.post('/api/residents', auth_1.authMiddleware, async (req, res) => {
     try {
-        const person = await prisma.person.create({ data: req.body });
-        res.json(person);
+        const body = { ...req.body };
+        const prismaData = {};
+        if (body.full_name) {
+            const parts = body.full_name.trim().split(' ');
+            prismaData.firstName = parts[0] || '';
+            prismaData.lastName = parts.slice(1).join(' ') || '';
+        }
+        else {
+            prismaData.firstName = body.firstName || '';
+            prismaData.lastName = body.lastName || '';
+        }
+        prismaData.phone = body.phone || null;
+        prismaData.email = body.email || null;
+        prismaData.cpf = body.cpf || null;
+        prismaData.rg = body.rg || null;
+        prismaData.tower = body.tower || null;
+        prismaData.block = body.block || null;
+        prismaData.unit_number = body.unit_number || null;
+        prismaData.is_owner = body.is_owner !== undefined ? body.is_owner : true;
+        prismaData.notes = body.notes || null;
+        prismaData.photoUrl = body.photo_url || null;
+        prismaData.document_photo_url = body.document_photo_url || null;
+        prismaData.parkingSpaces = body.parkingSpaces !== undefined && body.parkingSpaces !== null ? parseInt(body.parkingSpaces) : null;
+        prismaData.vehiclePlate = body.vehiclePlate || null;
+        prismaData.orgIndexCode = body.orgIndexCode || '7'; // Default MORADORES
+        prismaData.cardSerial = body.cardSerial || null;
+        prismaData.txSerial = body.txSerial || null;
+        // 1. Cadastrar no HikCentral se disponível (opcional — sistema funciona sem HikCentral)
+        let hikPersonId = body.hikcentral_person_id || null;
+        if (!hikPersonId) {
+            try {
+                const hikResponse = await HikCentralService_1.HikCentralService.addPerson({
+                    personGivenName: prismaData.firstName,
+                    personFamilyName: prismaData.lastName,
+                    orgIndexCode: prismaData.orgIndexCode,
+                    phoneNo: prismaData.phone || undefined,
+                    email: prismaData.email || undefined,
+                    certificateNo: body.cpf || undefined,
+                    certificateType: body.cpf ? 1 : undefined,
+                    personProperties: body.tower ? [{ propertyName: "Torre", propertyValue: body.tower }] : []
+                });
+                hikPersonId = hikResponse?.data?.personId;
+            }
+            catch (hikErr) {
+                console.warn('[Residents] HikCentral indisponível, prosseguindo sem sincronização ACS:', hikErr.message);
+            }
+        }
+        // 2. Vincular Níveis de Acesso se fornecidos
+        if (hikPersonId && body.accessLevels && Array.isArray(body.accessLevels) && body.accessLevels.length > 0) {
+            try {
+                await HikCentralService_1.HikCentralService.authorizePerson(hikPersonId, body.accessLevels);
+            }
+            catch (authErr) {
+                console.warn('[Residents] Falha ao vincular níveis de acesso:', authErr.message);
+            }
+        }
+        // 2.5 Sincronizar Foto (Face Data) se enviada
+        if (hikPersonId && (body.photo || body.photoBase64)) {
+            const b64 = body.photoBase64 || body.photo;
+            const cleanPhotoBase64 = b64.replace(/^data:image\/[a-zA-Z0-9]+;base64,/, '');
+            try {
+                await HikCentralService_1.HikCentralService.addPersonFace(hikPersonId, cleanPhotoBase64);
+                console.log(`[HikCentral] Foto sincronizada para morador ${hikPersonId}`);
+            }
+            catch (faceErr) {
+                console.error(`[HikCentral] Erro ao sincronizar foto do morador ${hikPersonId}:`, faceErr.message);
+                // Não falha a criação se a foto der erro (apenas loga)
+            }
+        }
+        prismaData.hikPersonId = hikPersonId;
+        const person = await exports.prisma.person.create({ data: prismaData });
+        // 2.8 Sincronizar com Nice Guarita (Controles e Tags)
+        if (person.cardSerial || person.txSerial) {
+            try {
+                // Fetch the first enabled Guarita device
+                const guaritaDevice = await exports.prisma.guaritaDevice.findFirst({ where: { enabled: true } });
+                if (guaritaDevice) {
+                    if (person.cardSerial) {
+                        await NiceGuaritaService_1.NiceGuaritaService.enrollResident(guaritaDevice.id, {
+                            serial: person.cardSerial,
+                            deviceType: 0x03, // CARD
+                            name: `${person.firstName} ${person.lastName}`.trim(),
+                            unit: person.unit_number ? parseInt(person.unit_number) : undefined,
+                            vehiclePlate: person.vehiclePlate || undefined,
+                        });
+                    }
+                    if (person.txSerial) {
+                        await NiceGuaritaService_1.NiceGuaritaService.enrollResident(guaritaDevice.id, {
+                            serial: person.txSerial,
+                            deviceType: 0x01, // CONTROL
+                            name: `${person.firstName} ${person.lastName}`.trim(),
+                            unit: person.unit_number ? parseInt(person.unit_number) : undefined,
+                            vehiclePlate: person.vehiclePlate || undefined,
+                        });
+                    }
+                    console.log(`[NiceGuarita] Dispositivos de acesso (Card/TX) sincronizados para morador ${person.id}`);
+                }
+            }
+            catch (guaritaErr) {
+                console.error(`[NiceGuarita] Erro ao sincronizar morador ${person.id}:`, guaritaErr.message);
+            }
+        }
+        // 3. Gerar Link Único para o App Visitor
+        const onboardingToken = jsonwebtoken_1.default.sign({ personId: person.id, hikPersonId: person.hikPersonId, type: 'onboarding' }, JWT_SECRET, { expiresIn: '48h' });
+        const onboardingUrl = `${APP_URL}/login/first-access?token=${onboardingToken}`;
+        // 4. Simular Envio de E-mail (Placeholder)
+        if (person.email) {
+            console.log(`[Email Service] Enviando convite para ${person.email}: ${onboardingUrl}`);
+        }
+        res.json({
+            success: true,
+            id: person.id,
+            full_name: `${person.firstName} ${person.lastName}`.trim(),
+            hikcentral_person_id: person.hikPersonId,
+            onboarding_url: onboardingUrl,
+            data: person
+        });
     }
     catch (error) {
+        console.error('Create Resident Error:', error);
         res.status(500).json({ error: error.message });
     }
 });
-app.patch('/api/residents/:id', authMiddleware, async (req, res) => {
+exports.app.patch('/api/residents/:id', auth_1.authMiddleware, async (req, res) => {
     try {
-        const person = await prisma.person.update({ where: { id: req.params.id }, data: req.body });
-        res.json(person);
+        const { id } = req.params;
+        const body = { ...req.body };
+        const existing = await exports.prisma.person.findFirst({
+            where: {
+                OR: [
+                    { id },
+                    { hikPersonId: id }
+                ]
+            }
+        });
+        if (!existing)
+            return res.status(404).json({ error: 'Morador não encontrado' });
+        const parts = body.full_name?.trim().split(' ') || [];
+        const updateData = {
+            firstName: parts[0] || existing.firstName,
+            lastName: parts.slice(1).join(' ') || existing.lastName,
+            phone: body.phone !== undefined ? body.phone : existing.phone,
+            email: body.email !== undefined ? body.email : existing.email,
+            photoUrl: body.photo_url !== undefined ? body.photo_url : existing.photoUrl,
+            cpf: body.cpf !== undefined ? body.cpf : existing.cpf,
+            rg: body.rg !== undefined ? body.rg : existing.rg,
+            tower: body.tower !== undefined ? body.tower : existing.tower,
+            block: body.block !== undefined ? body.block : existing.block,
+            unit_number: body.unit_number !== undefined ? body.unit_number : existing.unit_number,
+            is_owner: body.is_owner !== undefined ? body.is_owner : existing.is_owner,
+            notes: body.notes !== undefined ? body.notes : existing.notes,
+            document_photo_url: body.document_photo_url !== undefined ? body.document_photo_url : existing.document_photo_url,
+            parkingSpaces: body.parkingSpaces !== undefined ? (body.parkingSpaces !== null ? parseInt(body.parkingSpaces) : null) : existing.parkingSpaces,
+            vehiclePlate: body.vehiclePlate !== undefined ? body.vehiclePlate : existing.vehiclePlate,
+        };
+        if (body.vehiclePlate !== undefined)
+            updateData.vehiclePlate = body.vehiclePlate;
+        if (body.cardSerial !== undefined)
+            updateData.cardSerial = body.cardSerial;
+        if (body.txSerial !== undefined)
+            updateData.txSerial = body.txSerial;
+        // 1. Sincronizar com HikCentral se tiver ID
+        if (existing.hikPersonId) {
+            try {
+                await HikCentralService_1.HikCentralService.updatePerson({
+                    personId: existing.hikPersonId,
+                    personGivenName: updateData.firstName,
+                    personFamilyName: updateData.lastName,
+                    phoneNo: updateData.phone || undefined,
+                    email: updateData.email || undefined,
+                    certificateNo: body.cpf || undefined,
+                    certificateType: body.cpf ? 1 : undefined,
+                    personProperties: body.tower ? [{ propertyName: "Torre", propertyValue: body.tower }] : []
+                });
+                // Atualizar autorizações se fornecidas
+                if (body.accessLevels && Array.isArray(body.accessLevels)) {
+                    await HikCentralService_1.HikCentralService.authorizePerson(existing.hikPersonId, body.accessLevels);
+                }
+            }
+            catch (hikErr) {
+                console.error('[HikCentral] Erro ao atualizar no patch:', hikErr.message);
+            }
+        }
+        const person = await exports.prisma.person.update({
+            where: { id: existing.id },
+            data: updateData
+        });
+        // 4. Atualizar Dispositivos Nice Guarita
+        if (body.cardSerial !== undefined || body.txSerial !== undefined) {
+            try {
+                const guaritaDevice = await exports.prisma.guaritaDevice.findFirst({ where: { enabled: true } });
+                if (guaritaDevice) {
+                    if (person.cardSerial) {
+                        await NiceGuaritaService_1.NiceGuaritaService.enrollResident(guaritaDevice.id, {
+                            serial: person.cardSerial,
+                            deviceType: 0x03,
+                            name: `${person.firstName} ${person.lastName}`.trim(),
+                            unit: person.unit_number ? parseInt(person.unit_number) : undefined,
+                            vehiclePlate: person.vehiclePlate || undefined,
+                        });
+                    }
+                    if (person.txSerial) {
+                        await NiceGuaritaService_1.NiceGuaritaService.enrollResident(guaritaDevice.id, {
+                            serial: person.txSerial,
+                            deviceType: 0x01,
+                            name: `${person.firstName} ${person.lastName}`.trim(),
+                            unit: person.unit_number ? parseInt(person.unit_number) : undefined,
+                            vehiclePlate: person.vehiclePlate || undefined,
+                        });
+                    }
+                }
+            }
+            catch (err) {
+                console.error(`[NiceGuarita] Erro ao atualizar morador ${existing.id}:`, err.message);
+            }
+        }
+        res.json({
+            success: true,
+            id: person.id,
+            full_name: `${person.firstName} ${person.lastName}`.trim(),
+            cpf: '',
+            phone: person.phone || null,
+            email: person.email || null,
+            unit_number: person.orgIndexCode || '',
+            block: null,
+            tower: HIK_ORG_NAMES[person.orgIndexCode] || null,
+            photo_url: person.photoUrl || null,
+            is_owner: true,
+            hikcentral_person_id: person.hikPersonId || null,
+            notes: null,
+            created_by: null,
+            created_at: person.createdAt,
+            updated_at: person.updatedAt,
+        });
     }
     catch (error) {
+        console.error('Update Resident Error:', error);
         res.status(500).json({ error: error.message });
     }
 });
-app.delete('/api/residents/:id', authMiddleware, async (req, res) => {
+exports.app.delete('/api/residents/:id', auth_1.authMiddleware, async (req, res) => {
     try {
-        await prisma.person.delete({ where: { id: req.params.id } });
+        const { id } = req.params;
+        try {
+            await exports.prisma.person.delete({ where: { id } });
+        }
+        catch (uuidErr) {
+            if (uuidErr?.code === 'P2025' || uuidErr?.code === 'P2023') {
+                const existing = await exports.prisma.person.findFirst({ where: { hikPersonId: id } });
+                if (!existing)
+                    return res.status(404).json({ error: 'Morador não encontrado' });
+                await exports.prisma.person.delete({ where: { id: existing.id } });
+            }
+            else {
+                throw uuidErr;
+            }
+        }
         res.status(204).send();
     }
     catch (error) {
         res.status(500).json({ error: error.message });
     }
 });
+exports.app.post('/api/residents/:id/recovery-link', auth_1.authMiddleware, async (req, res) => {
+    try {
+        const { id } = req.params;
+        // 1. Tentar buscar no banco local primeiro
+        let person = await exports.prisma.person.findUnique({ where: { id } });
+        // Se não encontrar, assume que `id` pode ser o hikPersonId (IndexCode)
+        if (!person) {
+            person = await exports.prisma.person.findFirst({ where: { hikPersonId: id } });
+        }
+        if (!person) {
+            return res.status(404).json({ error: 'Morador não encontrado no banco de dados local.' });
+        }
+        if (!person.email) {
+            return res.status(400).json({
+                error: 'Este morador não possui e-mail cadastrado. Onboarding do App Visitor requer um e-mail válido.'
+            });
+        }
+        // 2. Gerar Token JWT com validade de 48h
+        const onboardingToken = jsonwebtoken_1.default.sign({ personId: person.id, hikPersonId: person.hikPersonId, type: 'onboarding' }, JWT_SECRET, { expiresIn: '48h' });
+        // 3. Montar a URL de onboarding (adaptada para testes locais conforme registro anterior)
+        const onboardingUrl = `${APP_URL}/login/first-access?token=${onboardingToken}`;
+        res.status(200).json({
+            message: 'Link de acesso gerado com sucesso.',
+            onboarding_url: onboardingUrl
+        });
+    }
+    catch (error) {
+        console.error('Erro ao gerar link de recuperação:', error);
+        res.status(500).json({ error: 'Falha interna ao gerar link de acesso.' });
+    }
+});
+// ============ Staff (Administração e Portaria) ============
+// Handled in StaffController
 // ============ Visitors CRUD ============
-app.get('/api/visitors', authMiddleware, async (req, res) => {
+exports.app.get('/api/visitors', auth_1.authMiddleware, async (req, res) => {
     try {
         const { page = 1, limit = 20, search = '' } = req.query;
         const skip = (parseInt(page) - 1) * parseInt(limit);
         const where = search ? {
             name: { contains: search, mode: 'insensitive' }
         } : {};
-        const data = await prisma.visitor.findMany({
+        const data = await exports.prisma.visitor.findMany({
             where: where,
             skip,
             take: parseInt(limit),
             orderBy: { createdAt: 'desc' }
         });
-        const count = await prisma.visitor.count({ where: where });
+        const count = await exports.prisma.visitor.count({ where: where });
         res.json({ data, count });
     }
     catch (error) {
         res.status(500).json({ error: error.message });
     }
 });
-app.post('/api/visitors', authMiddleware, async (req, res) => {
+exports.app.post('/api/visitors', auth_1.authMiddleware, async (req, res) => {
     try {
-        const visitor = await prisma.visitor.create({ data: req.body });
+        const { created_by, accessLevelIndexCode, accessLevelId, ...validData } = req.body;
+        // ensure validData only contains Prisma visitor model fields
+        const validFields = ['name', 'surname', 'type', 'certificateType', 'certificateNo', 'email', 'phone', 'plateNo', 'visitStartTime', 'visitEndTime', 'hikVisitorId', 'externalId', 'status', 'inviteToken', 'accessLevelId', 'createdAt', 'document', 'document_photo_url', 'full_name', 'notes', 'photo_url', 'purpose', 'tower', 'updated_at', 'visiting_resident', 'visiting_unit', 'visiting_block', 'lgpdConsent', 'consentTimestamp'];
+        const sanitizedData = {};
+        for (const key of Object.keys(validData)) {
+            if (validFields.includes(key)) {
+                sanitizedData[key] = validData[key];
+            }
+        }
+        const visitor = await exports.prisma.visitor.create({ data: sanitizedData });
         res.json(visitor);
     }
     catch (error) {
         res.status(500).json({ error: error.message });
     }
 });
+exports.app.patch('/api/visitors/:id', auth_1.authMiddleware, async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { created_by, accessLevelIndexCode, accessLevelId, id: _id, ...validData } = req.body;
+        const validFields = ['name', 'surname', 'type', 'certificateType', 'certificateNo', 'email', 'phone', 'plateNo', 'visitStartTime', 'visitEndTime', 'hikVisitorId', 'externalId', 'status', 'inviteToken', 'accessLevelId', 'createdAt', 'document', 'document_photo_url', 'full_name', 'notes', 'photo_url', 'purpose', 'tower', 'updated_at', 'visiting_resident', 'visiting_unit', 'visiting_block', 'lgpdConsent', 'consentTimestamp'];
+        const sanitizedData = {};
+        for (const key of Object.keys(validData)) {
+            if (validFields.includes(key)) {
+                sanitizedData[key] = validData[key];
+            }
+        }
+        const visitor = await exports.prisma.visitor.update({
+            where: { id },
+            data: sanitizedData
+        });
+        res.json(visitor);
+    }
+    catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+// Reserve/schedule a visitor appointment (used by the operator panel for eventual service providers)
+exports.app.post('/api/visitors/reserve', auth_1.authMiddleware, async (req, res) => {
+    try {
+        const { visitorName, certificateNo, visitStartTime, visitEndTime, plateNo, visitorPicData } = req.body;
+        const nameParts = (visitorName || '').trim().split(' ');
+        const name = nameParts[0] || 'Visitante';
+        const surname = nameParts.slice(1).join(' ') || '';
+        const visitor = await exports.prisma.visitor.create({
+            data: {
+                name,
+                surname,
+                type: 'PROVIDER',
+                certificateNo: certificateNo || `res-${Date.now()}`,
+                certificateType: '111',
+                status: 'SCHEDULED',
+                visitStartTime: visitStartTime ? new Date(visitStartTime) : new Date(),
+                visitEndTime: visitEndTime ? new Date(visitEndTime) : new Date(Date.now() + 86400000),
+                plateNo: plateNo || null,
+                photo_url: visitorPicData ? `data:image/jpeg;base64,${visitorPicData}` : null,
+            }
+        });
+        res.status(201).json({ code: '0', msg: 'success', data: { visitorId: visitor.id } });
+    }
+    catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+exports.app.post('/api/visitors/pre-register', auth_1.authMiddleware, async (req, res) => {
+    try {
+        const payload = req.body;
+        // Criptografar documento se fornecido ou dummy
+        const phoneParam = payload.phone?.replace(/\D/g, '') || null;
+        const inviteToken = crypto_1.default.randomBytes(16).toString('hex');
+        // Buscar host hikPersonId usando req.user
+        let hostHikPersonId = payload.accessLevelId || null;
+        if (req.user?.email) {
+            const hostPerson = await exports.prisma.person.findFirst({
+                where: { email: req.user.email }
+            });
+            if (hostPerson && hostPerson.hikPersonId) {
+                hostHikPersonId = hostPerson.hikPersonId;
+            }
+        }
+        const visitor = await exports.prisma.visitor.create({
+            data: {
+                name: payload.name,
+                surname: payload.surname,
+                type: payload.type || 'VISITOR',
+                visitStartTime: new Date(payload.startTime),
+                visitEndTime: new Date(payload.endTime),
+                email: payload.email || null,
+                phone: phoneParam,
+                inviteToken: inviteToken,
+                status: 'PRE_REGISTERED',
+                // Assuming document is required by Prisma, use a dummy or optional
+                certificateNo: payload.document || `pre-${Date.now()}`,
+                certificateType: '111',
+                accessLevelId: hostHikPersonId
+            }
+        });
+        res.status(201).json({
+            ...visitor,
+            completionLink: `/login/guest-complete?token=${inviteToken}`
+        });
+    }
+    catch (error) {
+        console.error('Pre-register Error:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+exports.app.post('/api/invites/send-link', auth_1.authMiddleware, async (req, res) => {
+    try {
+        const { reservationId, method } = req.body;
+        // In a real application, implement the WhatsApp/Email service logic here
+        console.log(`[Mock] Sending ${method} invite for reservation ${reservationId}`);
+        res.json({ success: true, message: `Convite enviado via ${method}` });
+    }
+    catch (error) {
+        console.error('Send Link Error:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+exports.app.post('/api/onboarding/validate', async (req, res) => {
+    try {
+        const { token } = req.body;
+        if (!token)
+            return res.status(400).json({ message: "Token não fornecido" });
+        const decoded = jsonwebtoken_1.default.verify(token, JWT_SECRET);
+        if (decoded.type !== 'onboarding') {
+            return res.status(400).json({ message: "Token inválido para onboarding" });
+        }
+        const person = await exports.prisma.person.findUnique({
+            where: { id: decoded.personId }
+        });
+        if (!person) {
+            return res.status(404).json({ message: "Morador não encontrado" });
+        }
+        res.json({
+            id: person.id,
+            name: `${person.firstName} ${person.lastName}`.trim(),
+            email: person.email,
+            phone: person.phone,
+            photoUrl: person.photoUrl
+        });
+    }
+    catch (error) {
+        console.error('Onboarding Validate Error:', error);
+        res.status(400).json({ message: "Token inválido ou expirado" });
+    }
+});
+exports.app.post('/api/onboarding/complete', async (req, res) => {
+    try {
+        const { token, password } = req.body;
+        if (!token)
+            return res.status(400).json({ message: "Token não fornecido" });
+        if (!password || password.length < 6)
+            return res.status(400).json({ message: "Senha deve ter ao menos 6 caracteres" });
+        const decoded = jsonwebtoken_1.default.verify(token, JWT_SECRET);
+        if (decoded.type !== 'onboarding') {
+            return res.status(400).json({ message: "Token inválido para onboarding" });
+        }
+        const person = await exports.prisma.person.findUnique({ where: { id: decoded.personId } });
+        if (!person)
+            return res.status(404).json({ message: "Morador não encontrado" });
+        const hashed = await bcryptjs_1.default.hash(password, 10);
+        await exports.prisma.person.update({
+            where: { id: person.id },
+            data: { portalPassword: hashed }
+        });
+        res.json({ success: true });
+    }
+    catch (error) {
+        console.error('Onboarding Complete Error:', error);
+        res.status(500).json({ message: error.message || "Erro ao concluir onboarding" });
+    }
+});
+exports.app.post('/api/invites/validate', async (req, res) => {
+    try {
+        const { token } = req.body;
+        if (!token)
+            return res.status(400).json({ message: "Token não fornecido" });
+        const visitor = await exports.prisma.visitor.findFirst({
+            where: { inviteToken: token, status: 'PRE_REGISTERED' }
+        });
+        if (!visitor) {
+            return res.status(404).json({ message: "Convite inválido ou já utilizado" });
+        }
+        // In this implementation, we don't store host info in Visitor yet, but we mock or return known data
+        res.json({
+            id: visitor.id,
+            name: `${visitor.name} ${visitor.surname}`.trim(),
+            hostName: "Morador", // Fallback
+            unit: "Residência" // Fallback
+        });
+    }
+    catch (error) {
+        console.error('Validate Invite Error:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+exports.app.post('/api/invites/complete', async (req, res) => {
+    try {
+        const { token, doc, photoBase64, photo, docPhotoBase64, name, plate } = req.body;
+        if (!token)
+            return res.status(400).json({ message: "Token não fornecido" });
+        const visitor = await exports.prisma.visitor.findFirst({
+            where: { inviteToken: token, status: 'PRE_REGISTERED' }
+        });
+        if (!visitor) {
+            return res.status(404).json({ message: "Convite não encontrado ou já processado" });
+        }
+        // Remove base64 prefix if exists
+        const b64 = photoBase64 || photo;
+        const cleanPhotoBase64 = b64 ? b64.replace(/^data:image\/[a-zA-Z0-9]+;base64,/, '') : undefined;
+        // Sincronizar com HikCentral (opcional — sistema funciona sem HikCentral)
+        let hikVisitorId;
+        try {
+            const hikResult = await HikCentralService_1.HikCentralService.reserveVisitor({
+                visitorName: `${visitor.name} ${visitor.surname || ''}`.trim(),
+                certificateNo: doc || visitor.certificateNo || `DOC${Date.now()}`,
+                visitStartTime: visitor.visitStartTime.toISOString(),
+                visitEndTime: visitor.visitEndTime.toISOString(),
+                plateNo: plate || visitor.plateNo || undefined,
+                visitorPicData: cleanPhotoBase64
+            });
+            hikVisitorId = hikResult?.data?.visitorId;
+            // Tentar aplicar herança de níveis de acesso do Morador
+            const hostHikPersonId = visitor.accessLevelId;
+            if (hostHikPersonId && hikVisitorId) {
+                try {
+                    const accessLevelsRes = await HikCentralService_1.HikCentralService.getPersonAccessLevels(hostHikPersonId);
+                    const accessLevels = accessLevelsRes?.data?.list?.map((a) => a.accessLevelIndexCode || a.privilegeGroupId) || [];
+                    if (accessLevels.length > 0) {
+                        await HikCentralService_1.HikCentralService.authorizePerson(hikVisitorId, accessLevels, '2');
+                        console.log(`[HikCentral] Direitos do host ${hostHikPersonId} passados para vis. ${hikVisitorId}`);
+                    }
+                }
+                catch (err) {
+                    console.error('[HikCentral] Erro ao herdar níveis de acesso para visitante:', err.message);
+                }
+            }
+        }
+        catch (hikErr) {
+            console.warn('[Invites] HikCentral indisponível, ativando visitante apenas no DB local:', hikErr.message);
+        }
+        const updatedVisitor = await exports.prisma.visitor.update({
+            where: { id: visitor.id },
+            data: {
+                status: 'ACTIVE',
+                certificateNo: doc || visitor.certificateNo,
+                plateNo: plate || visitor.plateNo,
+                photo_url: cleanPhotoBase64 ? `data:image/jpeg;base64,${cleanPhotoBase64}` : visitor.photo_url,
+                hikVisitorId: hikVisitorId ?? visitor.hikVisitorId
+            }
+        });
+        res.json({ success: true, visitor: updatedVisitor, qrCodeData: "Visitante cadastrado com sucesso e liberado!" });
+    }
+    catch (error) {
+        console.error('Complete Invite Error:', error);
+        res.status(500).json({ message: error.message });
+    }
+});
+exports.app.get('/api/visitors/active', auth_1.authMiddleware, async (req, res) => {
+    try {
+        const activeVisitors = await exports.prisma.visitor.findMany({
+            where: {
+                status: 'ACTIVE',
+                visitEndTime: {
+                    gte: new Date()
+                }
+            },
+            orderBy: {
+                createdAt: 'desc'
+            }
+        });
+        res.json({ data: activeVisitors, count: activeVisitors.length });
+    }
+    catch (error) {
+        console.error('Active Visitors Error:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+// ── DEPARTMENTS ──────────────────────────────────────────────────────────────
+exports.app.get('/api/departments', auth_1.authMiddleware, async (req, res) => {
+    try {
+        const departments = await exports.prisma.department.findMany({
+            orderBy: { name: 'asc' },
+            include: { _count: { select: { persons: true } } }
+        });
+        res.json(departments.map(d => ({ ...d, personCount: d._count.persons })));
+    }
+    catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+exports.app.post('/api/departments', auth_1.authMiddleware, async (req, res) => {
+    try {
+        const { name, description, color, hasAddresses } = req.body;
+        if (!name?.trim())
+            return res.status(400).json({ error: 'Nome é obrigatório' });
+        const dept = await exports.prisma.department.create({
+            data: {
+                name: name.trim(),
+                description: description || null,
+                color: color || null,
+                hasAddresses: hasAddresses !== undefined ? hasAddresses : true
+            }
+        });
+        res.status(201).json(dept);
+    }
+    catch (error) {
+        res.status(error.code === 'P2002' ? 409 : 500).json({ error: error.message });
+    }
+});
+exports.app.put('/api/departments/:id', auth_1.authMiddleware, async (req, res) => {
+    try {
+        const { name, description, color, hasAddresses } = req.body;
+        const dept = await exports.prisma.department.update({
+            where: { id: req.params.id },
+            data: {
+                ...(name && { name: name.trim() }),
+                description: description ?? null,
+                color: color ?? null,
+                ...(hasAddresses !== undefined && { hasAddresses })
+            }
+        });
+        res.json(dept);
+    }
+    catch (error) {
+        res.status(error.code === 'P2025' ? 404 : 500).json({ error: error.message });
+    }
+});
+exports.app.delete('/api/departments/:id', auth_1.authMiddleware, async (req, res) => {
+    try {
+        await exports.prisma.department.delete({ where: { id: req.params.id } });
+        res.json({ success: true });
+    }
+    catch (error) {
+        res.status(error.code === 'P2025' ? 404 : 500).json({ error: error.message });
+    }
+});
 // ============ Access Logs (HikCentral + Local DB) ============
-app.get('/api/access-logs', authMiddleware, async (req, res) => {
+exports.app.get('/api/access-logs', auth_1.authMiddleware, async (req, res) => {
     try {
         const { startTime, endTime, pageNo = 1, pageSize = 50, source = 'all' } = req.query;
         const start = startTime || new Date(Date.now() - 86400000).toISOString();
@@ -1352,16 +1296,20 @@ app.get('/api/access-logs', authMiddleware, async (req, res) => {
                 const events = hikResult?.data?.list || [];
                 // Store fetched events in local DB
                 for (const event of events) {
-                    await prisma.accessEvent.upsert({
+                    await exports.prisma.accessEvent.upsert({
                         where: { id: event.eventId || event.id || `hik-${Date.now()}-${Math.random()}` },
                         update: {},
                         create: {
                             personName: event.personName || 'Desconhecido',
                             eventTime: new Date(event.eventTime || event.happenTime),
+                            occurredAt: new Date(event.eventTime || event.happenTime),
                             deviceName: event.deviceName || event.srcName || 'N/A',
                             doorName: event.doorName || event.srcName || 'N/A',
                             eventType: event.eventType?.toString() || 'ACCESS',
                             picUri: event.picUri || null,
+                            direction: event.eventType === 'EXIT' ? 'out' : 'in',
+                            category: 'access',
+                            source: 'hikcentral',
                         },
                     });
                 }
@@ -1383,13 +1331,13 @@ app.get('/api/access-logs', authMiddleware, async (req, res) => {
             },
         };
         const skip = (parseInt(pageNo) - 1) * parseInt(pageSize);
-        const data = await prisma.accessEvent.findMany({
+        const data = await exports.prisma.accessEvent.findMany({
             where,
             skip,
             take: parseInt(pageSize),
             orderBy: { eventTime: 'desc' },
         });
-        const total = await prisma.accessEvent.count({ where });
+        const total = await exports.prisma.accessEvent.count({ where });
         res.json({ data, total, source: 'local' });
     }
     catch (error) {
@@ -1398,152 +1346,11 @@ app.get('/api/access-logs', authMiddleware, async (req, res) => {
     }
 });
 // ============ Service Providers ============
-app.get('/api/service-providers', authMiddleware, async (req, res) => {
-    try {
-        const { page = '1', limit = '20', search = '' } = req.query;
-        const pageNum = Math.max(1, Number.parseInt(page, 10) || 1);
-        const limitNum = Math.min(200, Math.max(1, Number.parseInt(limit, 10) || 20));
-        const skip = (pageNum - 1) * limitNum;
-        const normalizedSearch = (search || '').trim();
-        const where = normalizedSearch
-            ? {
-                OR: [
-                    { fullName: { contains: normalizedSearch, mode: 'insensitive' } },
-                    { companyName: { contains: normalizedSearch, mode: 'insensitive' } },
-                    { serviceType: { contains: normalizedSearch, mode: 'insensitive' } },
-                    { document: { contains: normalizedSearch, mode: 'insensitive' } },
-                    { email: { contains: normalizedSearch, mode: 'insensitive' } },
-                ],
-            }
-            : {};
-        const [data, count] = await Promise.all([
-            prisma.serviceProvider.findMany({
-                where,
-                skip,
-                take: limitNum,
-                orderBy: { createdAt: 'desc' },
-            }),
-            prisma.serviceProvider.count({ where }),
-        ]);
-        return res.json({
-            data: data.map(serializeServiceProvider),
-            count,
-        });
-    }
-    catch (error) {
-        return res.status(500).json({ error: error.message || 'Erro ao consultar prestadores' });
-    }
-});
-app.post('/api/service-providers', authMiddleware, async (req, res) => {
-    try {
-        const body = (req.body || {});
-        const payload = parseServiceProviderPayload(body, false);
-        const createdBy = payload.createdBy ?? req.user?.id ?? null;
-        await ensureServiceProviderRelations({
-            ...payload,
-            createdBy,
-        });
-        const createData = {
-            fullName: payload.fullName,
-            document: payload.document,
-            serviceType: payload.serviceType,
-            providerType: payload.providerType ?? 'temporary',
-            companyName: payload.companyName ?? null,
-            phone: payload.phone ?? null,
-            email: payload.email ?? null,
-            photoUrl: payload.photoUrl ?? null,
-            documentPhotoUrl: payload.documentPhotoUrl ?? null,
-            tower: payload.tower ?? null,
-            visitingResident: payload.visitingResident ?? null,
-            validFrom: payload.validFrom ?? null,
-            validUntil: payload.validUntil ?? null,
-            authorizedUnits: payload.authorizedUnits === null ? client_1.Prisma.JsonNull : payload.authorizedUnits,
-            notes: payload.notes ?? null,
-            hikcentralPersonId: payload.hikcentralPersonId ?? null,
-            createdBy,
-        };
-        const created = await prisma.serviceProvider.create({
-            data: createData,
-        });
-        return res.status(201).json(serializeServiceProvider(created));
-    }
-    catch (error) {
-        return res.status(400).json({ error: error.message || 'Erro ao criar prestador' });
-    }
-});
-app.patch('/api/service-providers/:id', authMiddleware, async (req, res) => {
-    try {
-        const body = (req.body || {});
-        const payload = parseServiceProviderPayload(body, true);
-        if (Object.keys(payload).length === 0) {
-            return res.status(400).json({ error: 'Nenhum campo para atualizar' });
-        }
-        await ensureServiceProviderRelations(payload);
-        const updateData = {};
-        if (payload.fullName !== undefined)
-            updateData.fullName = payload.fullName;
-        if (payload.document !== undefined)
-            updateData.document = payload.document;
-        if (payload.serviceType !== undefined)
-            updateData.serviceType = payload.serviceType;
-        if (payload.providerType !== undefined)
-            updateData.providerType = payload.providerType;
-        if (payload.companyName !== undefined)
-            updateData.companyName = payload.companyName;
-        if (payload.phone !== undefined)
-            updateData.phone = payload.phone;
-        if (payload.email !== undefined)
-            updateData.email = payload.email;
-        if (payload.photoUrl !== undefined)
-            updateData.photoUrl = payload.photoUrl;
-        if (payload.documentPhotoUrl !== undefined)
-            updateData.documentPhotoUrl = payload.documentPhotoUrl;
-        if (payload.tower !== undefined)
-            updateData.tower = payload.tower;
-        if (payload.visitingResident !== undefined)
-            updateData.visitingResident = payload.visitingResident;
-        if (payload.validFrom !== undefined)
-            updateData.validFrom = payload.validFrom;
-        if (payload.validUntil !== undefined)
-            updateData.validUntil = payload.validUntil;
-        if (payload.authorizedUnits !== undefined) {
-            updateData.authorizedUnits = payload.authorizedUnits === null ? client_1.Prisma.JsonNull : payload.authorizedUnits;
-        }
-        if (payload.notes !== undefined)
-            updateData.notes = payload.notes;
-        if (payload.hikcentralPersonId !== undefined)
-            updateData.hikcentralPersonId = payload.hikcentralPersonId;
-        if (payload.createdBy !== undefined)
-            updateData.createdBy = payload.createdBy;
-        const updated = await prisma.serviceProvider.update({
-            where: { id: req.params.id },
-            data: updateData,
-        });
-        return res.json(serializeServiceProvider(updated));
-    }
-    catch (error) {
-        if (error?.code === 'P2025') {
-            return res.status(404).json({ error: 'Prestador não encontrado' });
-        }
-        return res.status(400).json({ error: error.message || 'Erro ao atualizar prestador' });
-    }
-});
-app.delete('/api/service-providers/:id', authMiddleware, async (req, res) => {
-    try {
-        await prisma.serviceProvider.delete({ where: { id: req.params.id } });
-        return res.status(204).send();
-    }
-    catch (error) {
-        if (error?.code === 'P2025') {
-            return res.status(404).json({ error: 'Prestador não encontrado' });
-        }
-        return res.status(500).json({ error: error.message || 'Erro ao remover prestador' });
-    }
-});
+// Handled in ServiceProvidersController
 // ============ Towers ============
-app.get('/api/towers/active', authMiddleware, async (req, res) => {
+exports.app.get('/api/towers/active', auth_1.authMiddleware, async (req, res) => {
     try {
-        const towers = await prisma.tower.findMany({
+        const towers = await exports.prisma.tower.findMany({
             where: { isActive: true },
             orderBy: { name: 'asc' },
         });
@@ -1554,26 +1361,47 @@ app.get('/api/towers/active', authMiddleware, async (req, res) => {
     }
 });
 // ============ Dashboard Stats (Real data) ============
-app.get('/api/dashboard/stats', authMiddleware, async (req, res) => {
+exports.app.get('/api/dashboard/stats', auth_1.authMiddleware, async (req, res) => {
     try {
         const now = new Date();
         const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-        const [totalResidents, totalVisitors, totalProviders, todayAccess, totalAccessEvents] = await Promise.all([
-            prisma.person.count(),
-            prisma.visitor.count(),
-            prisma.serviceProvider.count(),
-            prisma.accessEvent.count({
-                where: { eventTime: { gte: startOfDay } }
+        // Resolver códigos de departamento via EntityMappings (data-driven)
+        const [residentCodes, prestadoresCodes, staffCodes] = await Promise.all([
+            EntityMappingService_1.EntityMappingService.resolveOrgCodesWithFallback('/painel/residents'),
+            EntityMappingService_1.EntityMappingService.resolveOrgCodesWithFallback('/painel/service-providers'),
+            EntityMappingService_1.EntityMappingService.resolveOrgCodesWithFallback('/painel/staff'),
+        ]);
+        const [totalResidents, totalProviders] = await Promise.all([
+            exports.prisma.person.count({ where: { orgIndexCode: { in: residentCodes } } }),
+            exports.prisma.person.count({ where: { orgIndexCode: { in: prestadoresCodes } } }),
+        ]);
+        const [totalVisitors, todayAccess, totalAccessEvents] = await Promise.all([
+            exports.prisma.visitor.count(),
+            exports.prisma.accessEvent.count({
+                where: { occurredAt: { gte: startOfDay } }
             }),
-            prisma.accessEvent.count(),
+            exports.prisma.accessEvent.count(),
         ]);
         // Active visits: visitors whose visit window includes right now
-        const activeVisits = await prisma.visitor.count({
+        const activeVisits = await exports.prisma.visitor.count({
             where: {
                 visitStartTime: { lte: now },
                 visitEndTime: { gte: now },
             }
         });
+        // Fetch device status from local DB (Guarita devices)
+        let onlineDevices = 0;
+        let offlineDevices = 0;
+        try {
+            const devices = await exports.prisma.guaritaDevice.findMany();
+            // Para não bloquear, consideramos online os que estão enabled.
+            // Para um ping real precisaria testar, mas para a dashboard não queremos travar.
+            onlineDevices = devices.filter(d => d.enabled).length;
+            offlineDevices = devices.filter(d => !d.enabled).length;
+        }
+        catch (err) {
+            console.error('Error fetching devices for stats:', err);
+        }
         res.json({
             totalResidents,
             totalVisitors,
@@ -1582,6 +1410,9 @@ app.get('/api/dashboard/stats', authMiddleware, async (req, res) => {
             totalProviders,
             todayAccess,
             totalAccessEvents,
+            onlineDevices,
+            offlineDevices,
+            totalDevices: onlineDevices + offlineDevices
         });
     }
     catch (error) {
@@ -1589,10 +1420,29 @@ app.get('/api/dashboard/stats', authMiddleware, async (req, res) => {
         res.status(500).json({ error: error.message });
     }
 });
-// ============ Profiles / Users ============
-app.get('/api/profiles', authMiddleware, async (req, res) => {
+exports.app.get('/api/devices/status', auth_1.authMiddleware, async (req, res) => {
     try {
-        const users = await prisma.user.findMany({
+        const deviceResult = await HikCentralService_1.HikCentralService.getAcsDeviceList(1, 100);
+        const devices = deviceResult?.data?.list || [];
+        // Return a clean list of devices with their status
+        const formattedDevices = devices.map((d) => ({
+            id: d.acsDevIndexCode || d.acsDeviceIndexCode,
+            name: d.acsDevName || d.acsDeviceName,
+            status: d.status === 1 ? 'online' : 'offline',
+            ip: d.acsDevIp || d.acsDeviceIp,
+            type: d.treatyType || d.acsDeviceType
+        }));
+        res.json(formattedDevices);
+    }
+    catch (error) {
+        console.error('Devices Status Error:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+// ============ Profiles / Users ============
+exports.app.get('/api/profiles', auth_1.authMiddleware, async (req, res) => {
+    try {
+        const users = await exports.prisma.user.findMany({
             select: { id: true, email: true, name: true, role: true, createdAt: true }
         });
         res.json(users);
@@ -1601,9 +1451,9 @@ app.get('/api/profiles', authMiddleware, async (req, res) => {
         res.status(500).json({ error: error.message });
     }
 });
-app.get('/api/profiles/:id', authMiddleware, async (req, res) => {
+exports.app.get('/api/profiles/:id', auth_1.authMiddleware, async (req, res) => {
     try {
-        const user = await prisma.user.findUnique({
+        const user = await exports.prisma.user.findUnique({
             where: { id: req.params.id },
             select: { id: true, email: true, name: true, role: true, createdAt: true }
         });
@@ -1616,9 +1466,9 @@ app.get('/api/profiles/:id', authMiddleware, async (req, res) => {
     }
 });
 // ============ HikCentral Config ============
-app.get('/api/hik-config', authMiddleware, async (req, res) => {
+exports.app.get('/api/hik-config', auth_1.authMiddleware, async (req, res) => {
     try {
-        const config = await prisma.hikcentralConfig.findFirst({
+        const config = await exports.prisma.hikcentralConfig.findFirst({
             orderBy: { createdAt: 'desc' }
         });
         if (!config)
@@ -1629,18 +1479,18 @@ app.get('/api/hik-config', authMiddleware, async (req, res) => {
         res.status(500).json({ error: error.message });
     }
 });
-app.put('/api/hik-config', authMiddleware, async (req, res) => {
+exports.app.put('/api/hik-config', auth_1.authMiddleware, async (req, res) => {
     try {
         const { apiUrl, appKey, appSecret, syncEnabled } = req.body;
-        const existing = await prisma.hikcentralConfig.findFirst({ orderBy: { createdAt: 'desc' } });
+        const existing = await exports.prisma.hikcentralConfig.findFirst({ orderBy: { createdAt: 'desc' } });
         if (existing) {
-            const config = await prisma.hikcentralConfig.update({
+            const config = await exports.prisma.hikcentralConfig.update({
                 where: { id: existing.id },
                 data: { apiUrl, appKey, appSecret, syncEnabled },
             });
             return res.json(config);
         }
-        const config = await prisma.hikcentralConfig.create({
+        const config = await exports.prisma.hikcentralConfig.create({
             data: { apiUrl, appKey, appSecret, syncEnabled },
         });
         res.json(config);
@@ -1650,17 +1500,22 @@ app.put('/api/hik-config', authMiddleware, async (req, res) => {
     }
 });
 // ============ Visit Logs ============
-app.post('/api/visit-logs', authMiddleware, async (req, res) => {
+exports.app.post('/api/visit-logs', auth_1.authMiddleware, async (req, res) => {
     try {
-        // Store as an access event
-        const log = await prisma.accessEvent.create({
-            data: {
-                personName: req.body.personName || 'Visitante',
-                eventTime: new Date(),
-                deviceName: req.body.deviceName || 'Manual',
-                doorName: req.body.doorName || 'Portaria',
-                eventType: req.body.eventType || 'VISIT',
-            }
+        // Store as an access event (com broadcast SSE para a Central de Eventos)
+        const log = await (0, EventBusService_1.emitEvent)({
+            personName: req.body.personName || 'Visitante',
+            personType: req.body.personType || 'visitor',
+            personId: req.body.visitor_id || null,
+            unit: req.body.unit || null,
+            operatorId: req.user?.id || req.body.authorized_by || null,
+            deviceName: req.body.deviceName || 'Manual',
+            doorName: req.body.doorName || 'Portaria',
+            eventType: req.body.eventType || 'VISIT',
+            direction: 'in',
+            category: 'access',
+            source: 'manual',
+            notes: req.body.notes || null,
         });
         res.json(log);
     }
@@ -1669,10 +1524,10 @@ app.post('/api/visit-logs', authMiddleware, async (req, res) => {
     }
 });
 // ============ Users CRUD (for admin panel) ============
-app.get('/api/users', authMiddleware, async (req, res) => {
+exports.app.get('/api/users', auth_1.authMiddleware, async (req, res) => {
     try {
-        const users = await prisma.user.findMany({
-            select: { id: true, email: true, name: true, role: true, createdAt: true },
+        const users = await exports.prisma.user.findMany({
+            select: { id: true, email: true, name: true, role: true, isProtected: true, createdAt: true },
             orderBy: { createdAt: 'desc' }
         });
         res.json(users);
@@ -1681,14 +1536,14 @@ app.get('/api/users', authMiddleware, async (req, res) => {
         res.status(500).json({ error: error.message });
     }
 });
-app.post('/api/users', authMiddleware, async (req, res) => {
+exports.app.post('/api/users', auth_1.authMiddleware, async (req, res) => {
     try {
         const { email, password, name, role } = req.body;
         if (!email || !password || !name) {
             return res.status(400).json({ error: 'Email, senha e nome são obrigatórios' });
         }
         const hashedPassword = await bcryptjs_1.default.hash(password, 12);
-        const user = await prisma.user.create({
+        const user = await exports.prisma.user.create({
             data: { email, password: hashedPassword, name, role: role || 'ADMIN' },
         });
         const { password: _, ...userWithoutPassword } = user;
@@ -1698,9 +1553,14 @@ app.post('/api/users', authMiddleware, async (req, res) => {
         res.status(500).json({ error: error.message });
     }
 });
-app.delete('/api/users/:id', authMiddleware, async (req, res) => {
+exports.app.delete('/api/users/:id', auth_1.authMiddleware, async (req, res) => {
     try {
-        await prisma.user.delete({ where: { id: req.params.id } });
+        // Check if user is protected before deleting
+        const user = await exports.prisma.user.findUnique({ where: { id: req.params.id } });
+        if (user?.isProtected) {
+            return res.status(403).json({ error: 'Usuário protegido não pode ser removido' });
+        }
+        await exports.prisma.user.delete({ where: { id: req.params.id } });
         res.status(204).send();
     }
     catch (error) {
@@ -1708,12 +1568,12 @@ app.delete('/api/users/:id', authMiddleware, async (req, res) => {
     }
 });
 // ============ System Status (for admin panel) ============
-app.get('/api/system/status', authMiddleware, async (req, res) => {
+exports.app.get('/api/system/status', auth_1.authMiddleware, async (req, res) => {
     try {
         // Check DB connectivity
         let dbStatus = 'OFFLINE';
         try {
-            await prisma.$queryRaw `SELECT 1`;
+            await exports.prisma.$queryRaw `SELECT 1`;
             dbStatus = 'ONLINE';
         }
         catch {
@@ -1745,69 +1605,7 @@ app.get('/api/system/status', authMiddleware, async (req, res) => {
         res.status(500).json({ error: error.message });
     }
 });
-app.listen(Number(port), '0.0.0.0', () => {
-    console.log(`Backend API running on http://0.0.0.0:${port}`);
-    if (SESSION_AUDIT_PRUNE_INTERVAL_MINUTES === 0) {
-        console.log('Session audit retention job disabled (SESSION_AUDIT_PRUNE_INTERVAL_MINUTES=0)');
-    }
-    else {
-        let pruneInFlight = false;
-        const runPrune = async () => {
-            if (pruneInFlight)
-                return;
-            pruneInFlight = true;
-            try {
-                await pruneSessionAuditEvents();
-            }
-            catch (error) {
-                console.error('Session audit prune job error:', error?.message || error);
-            }
-            finally {
-                pruneInFlight = false;
-            }
-        };
-        void runPrune();
-        setInterval(() => {
-            void runPrune();
-        }, SESSION_AUDIT_PRUNE_INTERVAL_MINUTES * 60 * 1000);
-    }
-    if (SECURITY_METRICS_SNAPSHOT_INTERVAL_MINUTES === 0) {
-        console.log('Security metrics snapshot job disabled (SECURITY_METRICS_SNAPSHOT_INTERVAL_MINUTES=0)');
-    }
-    else {
-        let snapshotInFlight = false;
-        const runSnapshot = async () => {
-            if (snapshotInFlight)
-                return;
-            snapshotInFlight = true;
-            try {
-                const { snapshot, metrics } = await (0, securityMetrics_1.createSecurityMetricsSnapshot)(prisma, {
-                    windowHours: SECURITY_METRICS_WINDOW_HOURS,
-                    topN: SECURITY_METRICS_TOP_N,
-                });
-                const pruneResult = await (0, securityMetrics_1.pruneSecurityMetricsSnapshots)(prisma, SECURITY_METRICS_SNAPSHOT_RETENTION_DAYS);
-                console.log(JSON.stringify({
-                    action: 'collect_security_metrics_snapshot',
-                    snapshotId: snapshot.id,
-                    windowHours: snapshot.windowHours,
-                    topN: snapshot.topN,
-                    attempts: metrics.login.attempts,
-                    failedAttempts: metrics.login.failedAttempts,
-                    failureRate: metrics.login.failureRate,
-                    prunedSnapshots: pruneResult.deleted,
-                    timestamp: new Date().toISOString(),
-                }));
-            }
-            catch (error) {
-                console.error('Security metrics snapshot job error:', error?.message || error);
-            }
-            finally {
-                snapshotInFlight = false;
-            }
-        };
-        void runSnapshot();
-        setInterval(() => {
-            void runSnapshot();
-        }, SECURITY_METRICS_SNAPSHOT_INTERVAL_MINUTES * 60 * 1000);
-    }
-});
+// ============ Background: Sincronização de Eventos de Acesso a cada 2 minutos ============
+setInterval(() => {
+    HikCentralSyncService_1.HikCentralSyncService.syncAccessEvents().catch(err => console.error('[Cron] Falha no syncAccessEvents:', err?.message || err));
+}, 2 * 60 * 1000); // 2 minutos

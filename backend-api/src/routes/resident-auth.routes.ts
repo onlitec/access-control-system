@@ -2,6 +2,7 @@ import { Router, Request, Response, NextFunction } from 'express';
 import { PrismaClient } from '@prisma/client';
 import jwt from 'jsonwebtoken';
 import crypto from 'crypto';
+import bcrypt from 'bcryptjs';
 import { config } from '../config/unifiedConfig';
 
 const router = Router();
@@ -35,24 +36,26 @@ function residentAuthMiddleware(req: Request, res: Response, next: NextFunction)
 // Validates CPF + phone against the Person table.
 router.post('/auth/login', async (req: Request, res: Response): Promise<void> => {
   try {
-    const { cpf, phone } = req.body as { cpf?: string; phone?: string };
-    if (!cpf || !phone) {
-      res.status(400).json({ error: 'CPF e telefone são obrigatórios' });
+    const { cpf, password } = req.body as { cpf?: string; password?: string };
+    if (!cpf || !password) {
+      res.status(400).json({ error: 'CPF e senha são obrigatórios' });
       return;
     }
 
     const cleanCpf = cpf.replace(/\D/g, '');
-    const cleanPhone = phone.replace(/\D/g, '');
 
     const person = await prisma.person.findFirst({
-      where: {
-        cpf: { contains: cleanCpf },
-        phone: { contains: cleanPhone },
-      },
+      where: { cpf: { contains: cleanCpf } },
     });
 
-    if (!person) {
-      res.status(401).json({ error: 'CPF ou telefone inválidos' });
+    if (!person || !person.portalPassword) {
+      res.status(401).json({ error: 'Acesso não configurado. Solicite o link de primeiro acesso à portaria.' });
+      return;
+    }
+
+    const passwordMatch = await bcrypt.compare(password, person.portalPassword);
+    if (!passwordMatch) {
+      res.status(401).json({ error: 'Senha incorreta.' });
       return;
     }
 

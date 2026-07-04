@@ -30,7 +30,7 @@ export default function LoginPage() {
             <div className="login-split">
                 <div className="login-brand">
                     <div className="login-brand-content">
-                        <div className="login-brand-eyebrow">Condomínio Calabasas</div>
+                        <div className="login-brand-eyebrow">Condomínio Residencial</div>
                         <h1 className="login-brand-title">Controle<br />de Acesso</h1>
                         <p className="login-brand-sub">Painel administrativo seguro para gestão de moradores, visitantes e prestadores.</p>
                     </div>

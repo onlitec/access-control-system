@@ -1,11 +1,74 @@
 import { Router, Request, Response } from 'express';
 import { HikCentralService, VisitorWithStatus } from '../services/HikCentralService';
 import { authMiddleware } from '../middleware/auth';
+import { PrismaClient } from '@prisma/client';
 
 const router = Router();
+const prisma = new PrismaClient();
 
 // Aplicar authMiddleware a todas as rotas do HikCentral
 router.use(authMiddleware);
+
+/** Returns true only when PROVIDER_TYPE is explicitly set to hikcentral */
+const isHikCentralConfigured = () =>
+    (process.env.PROVIDER_TYPE ?? 'local').toLowerCase() === 'hikcentral' &&
+    !!process.env.HIKCENTRAL_IP_BASE;
+
+/** Map local Visitor status to HikCentral appointment status codes */
+const localStatusToAppoint = (status: string | null): number => {
+    if (status === 'ACTIVE') return 2;   // checked-in
+    if (status === 'FINISHED') return 1; // checked-out
+    return 0;                            // scheduled / pre-registered
+};
+
+const serializeLocalVisitor = (v: any) => ({
+    id: v.id,
+    visitor_id: v.id,
+    visitor_name: v.full_name || `${v.name || ''} ${v.surname || ''}`.trim() || 'Sem nome',
+    visitor_group_name: v.purpose || 'Visita',
+    plate_no: v.plateNo || '',
+    certificate_no: v.certificateNo || v.document || '',
+    phone_num: v.phone || '',
+    appoint_status: localStatusToAppoint(v.status),
+    appoint_status_text: v.status || 'SCHEDULED',
+    appoint_start_time: v.visitStartTime?.toISOString?.() || v.visitStartTime || null,
+    appoint_end_time: v.visitEndTime?.toISOString?.() || v.visitEndTime || null,
+    visit_start_time: null,
+    visit_end_time: null,
+    // Pass through rich local fields so the page can show them directly
+    visiting_unit: v.visiting_unit || null,
+    visiting_block: v.visiting_block || null,
+    tower: v.tower || null,
+    notes: v.notes || null,
+    photo_url: v.photo_url || null,
+});
+
+const serializeLocalProvider = (p: any) => {
+    const now = new Date();
+    const until = p.validUntil ? new Date(p.validUntil) : null;
+    const status = until && until < now ? 1 : 2; // expired → checked-out, otherwise checked-in
+    return {
+        id: p.id,
+        visitor_id: p.id,
+        visitor_name: p.fullName || 'Sem nome',
+        visitor_group_name: p.serviceType || 'Prestador',
+        plate_no: '',
+        certificate_no: p.document || '',
+        phone_num: p.phone || '',
+        appoint_status: status,
+        appoint_status_text: status === 1 ? 'FINISHED' : 'ACTIVE',
+        appoint_start_time: p.validFrom || p.createdAt?.toISOString?.() || null,
+        appoint_end_time: p.validUntil || null,
+        visit_start_time: null,
+        visit_end_time: null,
+        visiting_unit: p.visitingUnit || null,
+        visiting_block: p.visitingBlock || null,
+        tower: p.tower || null,
+        notes: p.notes || null,
+        photo_url: p.photoUrl || null,
+        hikcentral_person_id: p.hikcentralPersonId || null,
+    };
+};
 
 // ============ CONSTANTES ============
 
@@ -50,10 +113,14 @@ const serialize = (item: VisitorWithStatus) => ({
  * São visitantes cadastrados pelos moradores.
  */
 router.get('/visitantes', async (req: Request, res: Response) => {
+    if (!isHikCentralConfigured()) {
+        const rows = await prisma.visitor.findMany({ orderBy: { createdAt: 'desc' }, take: 500 });
+        const data = rows.map(serializeLocalVisitor);
+        return res.json({ data, total: data.length });
+    }
     try {
         const groupName = process.env.HIK_VISITOR_GROUP_NAME_VISITANTES || 'VISITANTES';
         const allVisitors = await HikCentralService.fetchVisitorsWithStatus(groupName);
-        console.log(`[HikCentral] /visitantes: ${allVisitors.length} registros`);
         res.json({ data: allVisitors.map(serialize), total: allVisitors.length });
     } catch (error: any) {
         console.error('Erro /visitantes:', error);
@@ -61,16 +128,16 @@ router.get('/visitantes', async (req: Request, res: Response) => {
     }
 });
 
-/**
- * GET /api/hikcentral/visitantes-atividade
- * Retorna visitantes com status 2 (Em Atividade)
- */
 router.get('/visitantes-atividade', async (req: Request, res: Response) => {
+    if (!isHikCentralConfigured()) {
+        const rows = await prisma.visitor.findMany({ where: { status: 'ACTIVE' }, orderBy: { createdAt: 'desc' }, take: 500 });
+        const data = rows.map(serializeLocalVisitor);
+        return res.json({ data, total: data.length });
+    }
     try {
         const groupName = process.env.HIK_VISITOR_GROUP_NAME_VISITANTES || 'VISITANTES';
         const allVisitors = await HikCentralService.fetchVisitorsWithStatus(groupName);
         const active = allVisitors.filter(v => v.appointStatus === STATUS.CHECKED_IN);
-        console.log(`[HikCentral] /visitantes-atividade: ${active.length} de ${allVisitors.length} registros`);
         res.json({ data: active.map(serialize), total: active.length });
     } catch (error: any) {
         console.error('Erro /visitantes-atividade:', error);
@@ -78,16 +145,16 @@ router.get('/visitantes-atividade', async (req: Request, res: Response) => {
     }
 });
 
-/**
- * GET /api/hikcentral/visitantes-finalizados
- * Retorna visitantes com status 1 (Finalizado/Saiu)
- */
 router.get('/visitantes-finalizados', async (req: Request, res: Response) => {
+    if (!isHikCentralConfigured()) {
+        const rows = await prisma.visitor.findMany({ where: { status: 'FINISHED' }, orderBy: { createdAt: 'desc' }, take: 500 });
+        const data = rows.map(serializeLocalVisitor);
+        return res.json({ data, total: data.length });
+    }
     try {
         const groupName = process.env.HIK_VISITOR_GROUP_NAME_VISITANTES || 'VISITANTES';
         const allVisitors = await HikCentralService.fetchVisitorsWithStatus(groupName);
         const finished = allVisitors.filter(v => v.appointStatus === STATUS.CHECKED_OUT);
-        console.log(`[HikCentral] /visitantes-finalizados: ${finished.length} de ${allVisitors.length} registros`);
         res.json({ data: finished.map(serialize), total: finished.length });
     } catch (error: any) {
         console.error('Erro /visitantes-finalizados:', error);
@@ -97,16 +164,15 @@ router.get('/visitantes-finalizados', async (req: Request, res: Response) => {
 
 // ============ ENDPOINTS DE PRESTADORES (Módulo Visitor - Grupo PRESTADORES) ============
 
-/**
- * GET /api/hikcentral/prestadores
- * Retorna TODOS os prestadores do grupo PRESTADORES (todos os status).
- * São prestadores cadastrados pelos moradores no módulo de visitantes.
- */
 router.get('/prestadores', async (req: Request, res: Response) => {
+    if (!isHikCentralConfigured()) {
+        const rows = await prisma.serviceProvider.findMany({ orderBy: { createdAt: 'desc' }, take: 500 });
+        const data = rows.map(serializeLocalProvider);
+        return res.json({ data, total: data.length });
+    }
     try {
         const groupName = process.env.HIK_VISITOR_GROUP_NAME_PRESTADORES || 'PRESTADORES';
         const allProviders = await HikCentralService.fetchVisitorsWithStatus(groupName);
-        console.log(`[HikCentral] /prestadores: ${allProviders.length} registros`);
         res.json({ data: allProviders.map(serialize), total: allProviders.length });
     } catch (error: any) {
         console.error('Erro /prestadores:', error);
@@ -114,16 +180,20 @@ router.get('/prestadores', async (req: Request, res: Response) => {
     }
 });
 
-/**
- * GET /api/hikcentral/prestadores-atividade
- * Retorna prestadores com status 2 (Em Atividade)
- */
 router.get('/prestadores-atividade', async (req: Request, res: Response) => {
+    if (!isHikCentralConfigured()) {
+        const now = new Date().toISOString().split('T')[0];
+        const rows = await prisma.serviceProvider.findMany({
+            where: { OR: [{ validUntil: null }, { validUntil: { gte: now } }] },
+            orderBy: { createdAt: 'desc' }, take: 500
+        });
+        const data = rows.map(serializeLocalProvider).filter(p => p.appoint_status === 2);
+        return res.json({ data, total: data.length });
+    }
     try {
         const groupName = process.env.HIK_VISITOR_GROUP_NAME_PRESTADORES || 'PRESTADORES';
         const allVisitors = await HikCentralService.fetchVisitorsWithStatus(groupName);
         const active = allVisitors.filter(v => v.appointStatus === STATUS.CHECKED_IN);
-        console.log(`[HikCentral] /prestadores-atividade: ${active.length} de ${allVisitors.length} registros`);
         res.json({ data: active.map(serialize), total: active.length });
     } catch (error: any) {
         console.error('Erro /prestadores-atividade:', error);
@@ -131,16 +201,20 @@ router.get('/prestadores-atividade', async (req: Request, res: Response) => {
     }
 });
 
-/**
- * GET /api/hikcentral/prestadores-finalizados
- * Retorna prestadores com status 1 (Finalizado/Saiu)
- */
 router.get('/prestadores-finalizados', async (req: Request, res: Response) => {
+    if (!isHikCentralConfigured()) {
+        const now = new Date().toISOString().split('T')[0];
+        const rows = await prisma.serviceProvider.findMany({
+            where: { validUntil: { lt: now } },
+            orderBy: { createdAt: 'desc' }, take: 500
+        });
+        const data = rows.map(serializeLocalProvider);
+        return res.json({ data, total: data.length });
+    }
     try {
         const groupName = process.env.HIK_VISITOR_GROUP_NAME_PRESTADORES || 'PRESTADORES';
         const allVisitors = await HikCentralService.fetchVisitorsWithStatus(groupName);
         const finished = allVisitors.filter(v => v.appointStatus === STATUS.CHECKED_OUT);
-        console.log(`[HikCentral] /prestadores-finalizados: ${finished.length} de ${allVisitors.length} registros`);
         res.json({ data: finished.map(serialize), total: finished.length });
     } catch (error: any) {
         console.error('Erro /prestadores-finalizados:', error);
@@ -157,13 +231,13 @@ router.get('/prestadores-finalizados', async (req: Request, res: Response) => {
  * (não no módulo de visitantes). Têm acesso recorrente, não por agendamento.
  */
 router.get('/internal-providers', async (req: Request, res: Response) => {
+    if (!isHikCentralConfigured()) {
+        const rows = await prisma.serviceProvider.findMany({ where: { providerType: 'permanent' }, orderBy: { createdAt: 'desc' }, take: 500 });
+        return res.json({ data: rows.map(serializeLocalProvider), total: rows.length });
+    }
     try {
-        // orgIndexCode 3 = PRESTADORES (departamento permanente do condomínio)
         const prestadoresOrgCode = process.env.HIK_PRESTADORES_ORG_CODE || '3';
-
         const result = await HikCentralService.getPersonsByDepartment(prestadoresOrgCode);
-        console.log(`[HikCentral] /internal-providers: ${result.length} prestadores internos`);
-
         res.json({ data: result, total: result.length });
     } catch (error: any) {
         console.error('Erro /internal-providers:', error);
@@ -252,8 +326,44 @@ router.get('/person-properties', async (req: Request, res: Response) => {
 
     } catch (error: any) {
         console.error('[HikCentral] Erro crítico em /person-properties:', error.message);
-        // Mesmo em erro crítico, tentamos retornar o fallback para não quebrar o frontend
         res.json({ options: ['TORRE - PERFECTO', 'TORRE - NOBILE', 'TORRE - DESEO', 'TORRE - PARAÍSO'] });
+    }
+});
+
+// ============ ORGANIZATIONS / ACCESS LEVELS / RESIDENTS SYNC ============
+
+router.get('/organizations', async (req: Request, res: Response) => {
+    if (!isHikCentralConfigured()) return res.json({ code: '0', msg: 'unavailable', data: { list: [] } });
+    try {
+        const result = await HikCentralService.getOrgList(1, 500);
+        return res.json({ code: '0', msg: 'success', data: { list: result?.data?.list || [] } });
+    } catch {
+        return res.json({ code: '0', msg: 'unavailable', data: { list: [] } });
+    }
+});
+
+router.get('/access-levels', async (req: Request, res: Response) => {
+    if (!isHikCentralConfigured()) return res.json({ success: true, data: { list: [] } });
+    try {
+        const result = await HikCentralService.getAccessLevelList(1, 200);
+        return res.json({ success: true, data: { list: result?.data?.list || [] } });
+    } catch {
+        return res.json({ success: true, data: { list: [] } });
+    }
+});
+
+router.post('/residents/sync', async (req: Request, res: Response) => {
+    try {
+        const orgs = await HikCentralService.getOrgList(1, 500);
+        const orgList: any[] = orgs?.data?.list || [];
+        let total = 0;
+        for (const org of orgList) {
+            const persons = await HikCentralService.getPersonList({ orgIndexCode: org.orgIndexCode, pageNo: 1, pageSize: 1000 });
+            total += persons?.data?.list?.length || 0;
+        }
+        return res.json({ success: true, count: total });
+    } catch {
+        return res.json({ success: false, count: 0, message: 'HikCentral não configurado ou indisponível' });
     }
 });
 

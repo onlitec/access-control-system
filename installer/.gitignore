@@ -1,0 +1,8 @@
+# Artefatos de build do instalador (grandes, regeneráveis)
+windows/assets/binaries/
+windows/stage/
+dist/
+build.log
+
+# Segredos empacotados no instalador - NUNCA versionar (repositorio publico)
+windows/scripts/smtp-defaults.env

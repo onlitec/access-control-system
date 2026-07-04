@@ -1,82 +1,91 @@
 import React, { useState, useEffect } from 'react';
-import { getDashboardStats, getSystemStatus } from '@/services/api';
+import { useNavigate } from 'react-router-dom';
 import {
-    Users,
-    UserCheck,
+    getOpsHealth,
+    getCondominiumSettings,
+    getSystemUsers,
+    getBackupStatus,
+} from '@/services/api';
+import {
     Activity,
-    ShieldCheck,
-    Server,
     Database,
-    Wifi,
+    Users,
+    Building2,
+    ShieldAlert,
+    CheckCircle2,
     Clock,
-    TrendingUp,
     AlertTriangle,
-    Briefcase,
+    Info,
 } from 'lucide-react';
 
-interface Stats {
-    totalResidents: number;
-    totalVisitors: number;
-    activeVisits: number;
-    completedVisits: number;
-    totalProviders: number;
-    todayAccess: number;
-    totalAccessEvents: number;
-}
-
-interface SystemStatus {
-    api: string;
-    database: string;
-    hikcentral: string;
-    uptime: number;
-    timestamp: string;
-}
-
 export default function DashboardPage() {
-    const [stats, setStats] = useState<Stats | null>(null);
-    const [system, setSystem] = useState<SystemStatus | null>(null);
+    const navigate = useNavigate();
     const [loading, setLoading] = useState(true);
-    const [error, setError] = useState('');
+    const [isDemoMode, setIsDemoMode] = useState(false);
     const [loadedAt] = useState(new Date());
 
-    useEffect(() => {
-        loadData();
-    }, []);
+    // Stats state
+    const [healthStatus, setHealthStatus] = useState<'healthy' | 'warning' | 'error'>('healthy');
+    const [lastBackupStr, setLastBackupStr] = useState<string>('Nenhum backup');
+    const [usersCount, setUsersCount] = useState<number>(0);
+    const [condoName, setCondoName] = useState<string>('Condomínio');
 
     const loadData = async () => {
         setLoading(true);
-        setError('');
         try {
-            const [statsData, systemData] = await Promise.all([
-                getDashboardStats(),
-                getSystemStatus().catch(() => null),
+            const [health, settings, users, backup] = await Promise.all([
+                getOpsHealth().catch(() => null),
+                getCondominiumSettings().catch(() => null),
+                getSystemUsers().catch(() => null),
+                getBackupStatus().catch(() => null),
             ]);
-            setStats(statsData);
-            setSystem(systemData);
-        } catch (err: any) {
-            setError(err.message);
+
+            // Process health
+            if (health) {
+                const errorRate = health.api?.errorRatePercent || 0;
+                if (errorRate > 20) setHealthStatus('error');
+                else if (errorRate > 5) setHealthStatus('warning');
+                else setHealthStatus('healthy');
+            }
+
+            // Process settings
+            if (settings) {
+                setCondoName(settings.name);
+            }
+
+            // Process users
+            if (users) {
+                setUsersCount(users.filter(u => u.status === 'active').length);
+            }
+
+            // Process backups
+            if (backup && backup.lastBackup && backup.lastBackup.completedAt) {
+                const date = new Date(backup.lastBackup.completedAt);
+                setLastBackupStr(date.toLocaleString('pt-BR'));
+            }
+
+            setIsDemoMode(false);
+        } catch (err) {
+            console.warn('Dashboard endpoints failed, using simulated data:', err);
+            setHealthStatus('healthy');
+            setLastBackupStr(new Date().toLocaleString('pt-BR'));
+            setUsersCount(3);
+            setCondoName('Condomínio Residencial (Simulado)');
+            setIsDemoMode(true);
         } finally {
             setLoading(false);
         }
     };
 
-    const formatUptime = (seconds: number) => {
-        const h = Math.floor(seconds / 3600);
-        const m = Math.floor((seconds % 3600) / 60);
-        return `${h}h ${m}m`;
-    };
-
-    const statusColor = (status: string) => {
-        if (status === 'ONLINE') return 'status-online';
-        if (status === 'OFFLINE') return 'status-offline';
-        return 'status-unknown';
-    };
+    useEffect(() => {
+        loadData();
+    }, []);
 
     if (loading) {
         return (
             <div className="page-loading">
                 <div className="spinner"></div>
-                <p>Carregando dashboard...</p>
+                <p>Carregando painel de controle...</p>
             </div>
         );
     }
@@ -85,104 +94,188 @@ export default function DashboardPage() {
         <div className="page">
             <div className="page-header">
                 <div>
-                    <h1>Dashboard</h1>
-                    <p>Visão geral do sistema de controle de acesso</p>
+                    <h1>Painel de Operações do Sistema</h1>
+                    <p>Visão geral de infraestrutura, controle de acesso e saúde do servidor</p>
                 </div>
             </div>
 
-            {error && (
-                <div className="alert alert-warning">
-                    <AlertTriangle size={18} />
-                    <span>{error}</span>
+            {/* Banner Mode Demo */}
+            {isDemoMode && (
+                <div className="alert alert-warning" style={{ background: 'rgba(245, 158, 11, 0.12)', border: '1px solid var(--amber-500)', color: 'var(--amber-400)', marginBottom: '20px', display: 'flex', gap: '10px', alignItems: 'center', borderRadius: 'var(--radius)' }}>
+                    <AlertTriangle size={20} style={{ flexShrink: 0 }} />
+                    <div>
+                        <strong>Modo demonstração — dados simulados</strong>
+                        <p style={{ margin: '4px 0 0', fontSize: '0.85rem', color: 'rgba(245, 158, 11, 0.8)' }}>
+                            Não foi possível carregar as métricas reais. Exibindo dados simulados.
+                        </p>
+                    </div>
                 </div>
             )}
 
-            {/* Métricas operacionais — o que está acontecendo agora */}
-            <div className="dashboard-section-label">Tempo real</div>
-            <div className="stats-grid stats-grid-hero">
-                <div className="stat-card stat-card-hero stat-amber">
-                    <div className="stat-icon"><TrendingUp size={28} /></div>
-                    <div className="stat-info">
-                        <span className="stat-value stat-value-hero">{stats?.todayAccess ?? '—'}</span>
-                        <span className="stat-label">Acessos hoje</span>
+            {/* Premium 4-Card Summary Grid */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '20px', marginTop: '20px' }}>
+                
+                {/* 1. SISTEMA CARD */}
+                <div onClick={() => navigate('/admin/health')} style={{
+                    background: 'var(--bg-secondary)',
+                    border: '1px solid var(--border-primary)',
+                    borderRadius: 'var(--radius)',
+                    padding: '24px',
+                    cursor: 'pointer',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    justifyContent: 'space-between',
+                    minHeight: '140px',
+                    transition: 'all 0.2s ease',
+                    boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)',
+                }} className="dashboard-card-hover">
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                        <div>
+                            <span style={{ fontSize: '0.85rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', fontWeight: 600 }}>Saúde do Sistema</span>
+                            <h2 style={{ fontSize: '1.5rem', marginTop: '8px', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                {healthStatus === 'healthy' && <span style={{ color: 'var(--green-400)' }}>Saudável</span>}
+                                {healthStatus === 'warning' && <span style={{ color: 'var(--amber-400)' }}>Atenção</span>}
+                                {healthStatus === 'error' && <span style={{ color: 'var(--red-400)' }}>Erro</span>}
+                            </h2>
+                        </div>
+                        <div style={{
+                            background: healthStatus === 'healthy' ? 'rgba(34, 197, 94, 0.1)' : healthStatus === 'warning' ? 'rgba(245, 158, 11, 0.1)' : 'rgba(239, 68, 68, 0.1)',
+                            padding: '10px',
+                            borderRadius: '12px',
+                            color: healthStatus === 'healthy' ? 'var(--green-400)' : healthStatus === 'warning' ? 'var(--amber-400)' : 'var(--red-400)',
+                        }}>
+                            <Activity size={24} />
+                        </div>
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.85rem', color: 'var(--text-muted)' }}>
+                        <span style={{
+                            width: '8px',
+                            height: '8px',
+                            borderRadius: '50%',
+                            background: healthStatus === 'healthy' ? 'var(--green-500)' : healthStatus === 'warning' ? 'var(--amber-500)' : 'var(--red-500)',
+                            display: 'inline-block'
+                        }}></span>
+                        Verificar containers e conexões
                     </div>
                 </div>
-                <div className="stat-card stat-card-hero stat-purple">
-                    <div className="stat-icon"><Activity size={28} /></div>
-                    <div className="stat-info">
-                        <span className="stat-value stat-value-hero">{stats?.activeVisits ?? '—'}</span>
-                        <span className="stat-label">Visitas ativas</span>
+
+                {/* 2. BACKUPS CARD */}
+                <div onClick={() => navigate('/admin/backups')} style={{
+                    background: 'var(--bg-secondary)',
+                    border: '1px solid var(--border-primary)',
+                    borderRadius: 'var(--radius)',
+                    padding: '24px',
+                    cursor: 'pointer',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    justifyContent: 'space-between',
+                    minHeight: '140px',
+                    transition: 'all 0.2s ease',
+                    boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)',
+                }} className="dashboard-card-hover">
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                        <div>
+                            <span style={{ fontSize: '0.85rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', fontWeight: 600 }}>Backups</span>
+                            <h2 style={{ fontSize: '1rem', marginTop: '12px', fontWeight: 600, color: 'var(--text-primary)', wordBreak: 'break-all' }}>
+                                {lastBackupStr}
+                            </h2>
+                        </div>
+                        <div style={{
+                            background: 'rgba(59, 130, 246, 0.1)',
+                            padding: '10px',
+                            borderRadius: '12px',
+                            color: 'var(--blue-400)',
+                        }}>
+                            <Database size={24} />
+                        </div>
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.85rem', color: 'var(--text-muted)' }}>
+                        <CheckCircle2 size={14} style={{ color: 'var(--green-400)' }} />
+                        Gerenciar cópias de segurança
                     </div>
                 </div>
+
+                {/* 3. USUÁRIOS CARD */}
+                <div onClick={() => navigate('/admin/system-users')} style={{
+                    background: 'var(--bg-secondary)',
+                    border: '1px solid var(--border-primary)',
+                    borderRadius: 'var(--radius)',
+                    padding: '24px',
+                    cursor: 'pointer',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    justifyContent: 'space-between',
+                    minHeight: '140px',
+                    transition: 'all 0.2s ease',
+                    boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)',
+                }} className="dashboard-card-hover">
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                        <div>
+                            <span style={{ fontSize: '0.85rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', fontWeight: 600 }}>Usuários do Sistema</span>
+                            <h2 style={{ fontSize: '1.5rem', marginTop: '8px', fontWeight: 700 }}>
+                                {usersCount} <span style={{ fontSize: '0.9rem', fontWeight: 500, color: 'var(--text-muted)' }}>operadores</span>
+                            </h2>
+                        </div>
+                        <div style={{
+                            background: 'rgba(168, 85, 247, 0.1)',
+                            padding: '10px',
+                            borderRadius: '12px',
+                            color: 'var(--purple-400)',
+                        }}>
+                            <Users size={24} />
+                        </div>
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.85rem', color: 'var(--text-muted)' }}>
+                        <Clock size={14} />
+                        Controle de acessos operacionais
+                    </div>
+                </div>
+
+                {/* 4. CONDOMÍNIO CARD */}
+                <div onClick={() => navigate('/admin/condominium')} style={{
+                    background: 'var(--bg-secondary)',
+                    border: '1px solid var(--border-primary)',
+                    borderRadius: 'var(--radius)',
+                    padding: '24px',
+                    cursor: 'pointer',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    justifyContent: 'space-between',
+                    minHeight: '140px',
+                    transition: 'all 0.2s ease',
+                    boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)',
+                }} className="dashboard-card-hover">
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                        <div>
+                            <span style={{ fontSize: '0.85rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', fontWeight: 600 }}>Estrutura Física</span>
+                            <h2 style={{ fontSize: '1rem', marginTop: '12px', fontWeight: 600, color: 'var(--text-primary)', textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap', maxWidth: '200px' }}>
+                                {condoName}
+                            </h2>
+                        </div>
+                        <div style={{
+                            background: 'rgba(236, 72, 153, 0.1)',
+                            padding: '10px',
+                            borderRadius: '12px',
+                            color: 'var(--pink-400)',
+                        }}>
+                            <Building2 size={24} />
+                        </div>
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.85rem', color: 'var(--text-muted)' }}>
+                        <Building2 size={14} />
+                        Configurar torres, blocos e aptos
+                    </div>
+                </div>
+
             </div>
 
-            {/* Métricas cadastrais — totais que mudam devagar */}
-            <div className="dashboard-section-label" style={{ marginTop: 24 }}>Cadastros</div>
-            <div className="stats-grid">
-                <div className="stat-card stat-blue">
-                    <div className="stat-icon"><Users size={22} /></div>
-                    <div className="stat-info">
-                        <span className="stat-value">{stats?.totalResidents ?? '—'}</span>
-                        <span className="stat-label">Moradores</span>
-                    </div>
+            <div style={{ marginTop: '30px', background: 'var(--bg-secondary)', padding: '20px', borderRadius: 'var(--radius)', border: '1px solid var(--border-primary)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', fontSize: '0.85rem', color: 'var(--text-muted)' }}>
+                    <Info size={16} />
+                    <span>Última verificação às {loadedAt.toLocaleTimeString('pt-BR')}</span>
                 </div>
-                <div className="stat-card stat-green">
-                    <div className="stat-icon"><UserCheck size={22} /></div>
-                    <div className="stat-info">
-                        <span className="stat-value">{stats?.totalVisitors ?? '—'}</span>
-                        <span className="stat-label">Visitantes</span>
-                    </div>
-                </div>
-                <div className="stat-card stat-blue">
-                    <div className="stat-icon"><Briefcase size={22} /></div>
-                    <div className="stat-info">
-                        <span className="stat-value">{stats?.totalProviders ?? '—'}</span>
-                        <span className="stat-label">Prestadores</span>
-                    </div>
-                </div>
+                <button className="btn btn-secondary" style={{ padding: '6px 12px', fontSize: '0.8rem' }} onClick={loadData}>Recarregar</button>
             </div>
-
-            {system && (
-                <div className="system-status-section" style={{ marginTop: 28 }}>
-                    <h2><ShieldCheck size={20} /> Status do Sistema</h2>
-                    <div className="status-grid">
-                        <div className="status-card">
-                            <Server size={20} />
-                            <div>
-                                <span className="status-label">Backend API</span>
-                                <span className={`status-badge ${statusColor(system.api)}`}>{system.api}</span>
-                            </div>
-                        </div>
-                        <div className="status-card">
-                            <Database size={20} />
-                            <div>
-                                <span className="status-label">Banco de Dados</span>
-                                <span className={`status-badge ${statusColor(system.database)}`}>{system.database}</span>
-                            </div>
-                        </div>
-                        <div className="status-card">
-                            <Wifi size={20} />
-                            <div>
-                                <span className="status-label">HikCentral</span>
-                                <span className={`status-badge ${statusColor(system.hikcentral)}`}>{system.hikcentral}</span>
-                            </div>
-                        </div>
-                        <div className="status-card">
-                            <Clock size={20} />
-                            <div>
-                                <span className="status-label">Uptime</span>
-                                <span className="status-value">{formatUptime(system.uptime)}</span>
-                                <span className="status-uptime-since">
-                                    desde {new Date(Date.now() - system.uptime * 1000).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}
-                                </span>
-                            </div>
-                        </div>
-                    </div>
-                    <div className="status-footer">
-                        Verificado às {loadedAt.toLocaleTimeString('pt-BR')}
-                    </div>
-                </div>
-            )}
         </div>
     );
 }

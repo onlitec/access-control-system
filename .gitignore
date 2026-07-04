@@ -18,3 +18,12 @@ backend-api/query_db.js
 backend-api/testsprite_tests/
 backend-api/src/scripts/test-*.ts
 documentation/TECNOLOGIAS_E_ESTRUTURA.md
+
+# SDK de fornecedor (Nice MG3000) - binarios/demos de terceiros, nao redistribuir
+sdk-nice/
+
+# Logs de runtime e arquivos de trabalho locais
+monitoring/audit.log
+monitoring/cron/*.log
+*.orig
+docs/prints/

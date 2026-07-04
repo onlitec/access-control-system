@@ -10,6 +10,13 @@ export interface PersonInput {
   certificateNo?: string;
   certificateType?: number;
   faceBase64?: string;
+  // Nice Guarita MG3000 specific
+  cardSerial?: string;       // hex serial of card/tag, e.g. "A1B2C3"
+  txSerial?: string;         // hex serial of remote control (TX)
+  unit?: number;             // unit number (0-9999)
+  block?: number;            // block index (0=A, 1=B, ...)
+  vehiclePlate?: string;     // vehicle plate max 7 chars
+  receiverBitmask?: number;  // which receivers can access (bitmask)
 }
 
 export interface ExternalPerson {
@@ -35,6 +42,9 @@ export interface VisitorInput {
   visitEndTime: string;
   plateNo?: string;
   faceBase64?: string;
+  // Nice Guarita
+  fullName?: string;
+  cardSerial?: string;
 }
 
 export interface ExternalVisitor {

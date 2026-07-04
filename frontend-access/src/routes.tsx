@@ -1,11 +1,15 @@
 import { Navigate } from 'react-router-dom';
 import type { ReactNode } from 'react';
 import LoginPage from './pages/LoginPage';
+import FirstSetupPage from './pages/FirstSetupPage';
 import DashboardPage from './pages/DashboardPage';
 import ResidentsPage from './pages/ResidentsPage';
 import VisitorsPage from './pages/VisitorsPage';
 import ServiceProvidersPage from './pages/ServiceProvidersPage';
+import StaffPage from './pages/StaffPage';
 import AccessLogsPage from './pages/AccessLogsPage';
+import EventsCenterPage from './pages/EventsCenterPage';
+import DeliveriesPage from './pages/DeliveriesPage';
 import HikcentralConfigPage from './pages/HikcentralConfigPage';
 import AdminUsersPage from './pages/AdminUsersPage';
 import ResidentSelfService from './pages/ResidentSelfService';
@@ -16,7 +20,6 @@ import ActiveProvidersPage from './pages/ActiveProvidersPage';
 import FinishedProvidersPage from './pages/FinishedProvidersPage';
 import TodayAccessesPage from './pages/TodayAccessesPage';
 import DeviceStatusPage from './pages/DeviceStatusPage';
-import StaffPage from './pages/StaffPage';
 
 export interface RouteConfig {
   name: string;
@@ -30,6 +33,12 @@ const routes: RouteConfig[] = [
     name: 'Login',
     path: '/login',
     element: <LoginPage />,
+    visible: false
+  },
+  {
+    name: 'Configuração Inicial',
+    path: '/setup',
+    element: <FirstSetupPage />,
     visible: false
   },
   {
@@ -59,10 +68,13 @@ const routes: RouteConfig[] = [
     element: <ServiceProvidersPage />
   },
   {
-    name: 'Prestadores Calabasas',
+    name: 'Funcionários',
     path: '/staff',
     element: <StaffPage />
   },
+
+  { name: 'Entregas', path: '/entregas', element: <DeliveriesPage /> },
+  { name: 'Central de Eventos', path: '/eventos', element: <EventsCenterPage /> },
   { name: 'Histórico de Acesso', path: '/access-logs', element: <AccessLogsPage /> },
   { name: 'Visitas Ativas', path: '/visitas-ativas', element: <ActiveVisitsPage /> },
   { name: 'Visitas Concluídas', path: '/visitas-concluidas', element: <CompletedVisitsPage /> },

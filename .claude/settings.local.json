@@ -1,0 +1,19 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git *)",
+      "Bash(ssh -T git@github.com)",
+      "Bash(gh auth *)",
+      "Bash(awk '/export const getSystemStatus/,/^}/' /opt/access-control-system/frontend-admin/src/services/api.ts)",
+      "Bash(awk '/export const getDashboardStats/,/^}/' /opt/access-control-system/frontend-admin/src/services/api.ts)",
+      "Bash(awk '/export const getSessionAudit = /,/^}/' /opt/access-control-system/frontend-admin/src/services/api.ts)",
+      "Bash(awk '/export const getSecurityMetrics = /,/^}/' /opt/access-control-system/frontend-admin/src/services/api.ts)",
+      "Bash(awk '/export const getSecurityMetricsHistory = /,/^}/' /opt/access-control-system/frontend-admin/src/services/api.ts)",
+      "Bash(npx tsc *)",
+      "Bash(npm run *)",
+      "Bash(docker exec *)",
+      "Bash(docker compose *)",
+      "Bash(curl -sk https://172.20.120.41:8443/api/dashboard/stats -H \"Authorization: Bearer test\")"
+    ]
+  }
+}

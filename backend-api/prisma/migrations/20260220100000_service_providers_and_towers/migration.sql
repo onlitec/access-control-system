@@ -58,8 +58,8 @@ CREATE INDEX "service_providers_tower_idx" ON "service_providers"("tower");
 -- Seed default towers
 INSERT INTO "towers" ("id", "name", "description", "is_active", "created_at", "updated_at")
 VALUES
-    ('tower-a', 'Tower A', NULL, true, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
-    ('tower-b', 'Tower B', NULL, true, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
-    ('tower-c', 'Tower C', NULL, true, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
-    ('block-1', 'Block 1', NULL, true, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
-    ('block-2', 'Block 2', NULL, true, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP);
+    ('tower-a', 'Torre A', NULL, true, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+    ('tower-b', 'Torre B', NULL, true, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+    ('tower-c', 'Torre C', NULL, true, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+    ('block-1', 'Bloco 1', NULL, true, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+    ('block-2', 'Bloco 2', NULL, true, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP);

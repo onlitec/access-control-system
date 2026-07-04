@@ -1,0 +1,19 @@
+<service>
+  <id>onliacesso-api</id>
+  <name>OnliAcesso - API</name>
+  <description>Backend API (Express + Prisma) do sistema OnliAcesso, porta 3001.</description>
+  <executable>%BASE%\..\binaries\node\node.exe</executable>
+  <arguments>dist\server.js</arguments>
+  <workingdirectory>%BASE%\..\apps\backend-api</workingdirectory>
+  <env name="NODE_ENV" value="production"/>
+  <env name="PATH" value="%BASE%\..\binaries\ffmpeg\bin;%BASE%\..\binaries\node;%PATH%"/>
+  <depend>onliacesso-postgres</depend>
+  <startmode>Automatic</startmode>
+  <stoptimeout>20sec</stoptimeout>
+  <log mode="roll-by-size">
+    <logpath>%BASE%\..\logs</logpath>
+    <sizeThreshold>10240</sizeThreshold>
+    <keepFiles>5</keepFiles>
+  </log>
+  <onfailure action="restart" delay="10 sec"/>
+</service>

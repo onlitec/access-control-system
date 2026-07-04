@@ -7,7 +7,7 @@ interface RouteGuardProps {
 }
 
 // Please add the pages that can be accessed without logging in to PUBLIC_ROUTES.
-const PUBLIC_ROUTES = ['/login', '/403', '/404'];
+const PUBLIC_ROUTES = ['/login', '/setup', '/403', '/404'];
 
 function matchPublicRoute(path: string, patterns: string[]) {
   return patterns.some(pattern => {
@@ -31,6 +31,14 @@ export function RouteGuard({ children }: RouteGuardProps) {
 
     if (!user && !isPublic) {
       navigate('/login', { state: { from: location.pathname }, replace: true });
+      return;
+    }
+
+    if (user && user.role === 'operador_portaria') {
+      const adminRoutes = ['/hikcentral-config', '/admin/users'];
+      if (adminRoutes.includes(location.pathname)) {
+        navigate('/dashboard', { replace: true });
+      }
     }
   }, [user, loading, location.pathname, navigate]);
 

@@ -1,23 +1,24 @@
 {
-    "name": "access-control-system",
-    "private": true,
-    "workspaces": [
-        "backend-api",
-        "frontend-visitor",
-        "frontend-access",
-        "frontend-admin",
-        "shared"
-    ],
-    "scripts": {
-        "dev": "npm run dev --workspaces --if-present",
-        "build": "npm run build --workspaces --if-present",
-        "start": "npm run start --workspaces --if-present"
-    },
-    "engines": {
-        "node": ">=20 <21",
-        "npm": ">=10 <11"
-    },
-    "devDependencies": {
-        "typescript": "^5.3.3"
-    }
+  "name": "access-control-system",
+  "version": "2.1.0-beta.3",
+  "private": true,
+  "workspaces": [
+    "backend-api",
+    "frontend-visitor",
+    "frontend-access",
+    "frontend-admin",
+    "shared"
+  ],
+  "scripts": {
+    "dev": "npm run dev --workspaces --if-present",
+    "build": "npm run build --workspaces --if-present",
+    "start": "npm run start --workspaces --if-present"
+  },
+  "engines": {
+    "node": ">=20 <21",
+    "npm": ">=10 <11"
+  },
+  "devDependencies": {
+    "typescript": "^5.3.3"
+  }
 }

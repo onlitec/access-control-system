@@ -1,0 +1,18 @@
+<service>
+  <id>onliacesso-access</id>
+  <name>OnliAcesso - Painel Portarias</name>
+  <description>Frontend estático do painel das portarias do OnliAcesso, porta 3003.</description>
+  <executable>%BASE%\..\binaries\node\node.exe</executable>
+  <arguments>serve-static.js --root "%BASE%\..\apps\frontend-access\dist" --port 3003 --base /painel</arguments>
+  <workingdirectory>%BASE%\..\apps</workingdirectory>
+  <env name="NODE_ENV" value="production"/>
+  <depend>onliacesso-api</depend>
+  <startmode>Automatic</startmode>
+  <stoptimeout>20sec</stoptimeout>
+  <log mode="roll-by-size">
+    <logpath>%BASE%\..\logs</logpath>
+    <sizeThreshold>10240</sizeThreshold>
+    <keepFiles>5</keepFiles>
+  </log>
+  <onfailure action="restart" delay="10 sec"/>
+</service>

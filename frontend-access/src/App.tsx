@@ -10,7 +10,8 @@ import routes from './routes';
 // Componente para gerenciar o layout condicionalmente
 function AppContent() {
   const location = useLocation();
-  const isLoginPage = location.pathname === '/login';
+  // páginas sem o layout da aplicação (tela cheia, sem menu)
+  const isLoginPage = location.pathname === '/login' || location.pathname === '/setup';
 
   return (
     <>

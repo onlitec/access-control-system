@@ -41,7 +41,7 @@ check_code_https "admin" "$HTTPS_URL/admin/" "200"
 
 PAINEL_ASSET=$(curl -k -sS "$HTTPS_URL/painel/" | grep -oE '/painel/assets/[^" ]+\.(js|css)' | head -n1)
 ADMIN_ASSET=$(curl -k -sS "$HTTPS_URL/admin/" | grep -oE '/admin/assets/[^" ]+\.(js|css)' | head -n1)
-NEXT_ASSET=$(curl -k -sS "$HTTPS_URL/login" | grep -oE '/login/_next/static/[^" ]+\.(js|css)' | head -n1)
+NEXT_ASSET=$(curl -k -sS "$HTTPS_URL/login" | grep -oE '/_next/static/[^" ]+\.(js|css)' | head -n1)
 
 if [[ -z "$PAINEL_ASSET" || -z "$ADMIN_ASSET" || -z "$NEXT_ASSET" ]]; then
   echo "[smoke][FAIL] could not extract asset paths"

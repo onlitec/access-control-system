@@ -19,6 +19,8 @@ type ServiceProviderWriteData = {
     photoUrl?: string | null;
     documentPhotoUrl?: string | null;
     tower?: string | null;
+    visitingBlock?: string | null;
+    visitingUnit?: string | null;
     visitingResident?: string | null;
     validFrom?: string | null;
     validUntil?: string | null;
@@ -106,6 +108,8 @@ const parseServiceProviderPayload = (
     const photoUrlKeys = ['photo_url', 'photoUrl'];
     const documentPhotoUrlKeys = ['document_photo_url', 'documentPhotoUrl'];
     const towerKeys = ['tower'];
+    const visitingBlockKeys = ['visiting_block', 'visitingBlock'];
+    const visitingUnitKeys = ['visiting_unit', 'visitingUnit'];
     const visitingResidentKeys = ['visiting_resident', 'visitingResident'];
     const validFromKeys = ['valid_from', 'validFrom'];
     const validUntilKeys = ['valid_until', 'validUntil'];
@@ -148,6 +152,12 @@ const parseServiceProviderPayload = (
     }
     if (!partial || hasAnyField(body, towerKeys)) {
         data.tower = normalizeOptionalText(getFirstField(body, towerKeys), 'tower');
+    }
+    if (!partial || hasAnyField(body, visitingBlockKeys)) {
+        data.visitingBlock = normalizeOptionalText(getFirstField(body, visitingBlockKeys), 'visiting_block');
+    }
+    if (!partial || hasAnyField(body, visitingUnitKeys)) {
+        data.visitingUnit = normalizeOptionalText(getFirstField(body, visitingUnitKeys), 'visiting_unit');
     }
     if (!partial || hasAnyField(body, visitingResidentKeys)) {
         data.visitingResident = normalizeOptionalText(getFirstField(body, visitingResidentKeys), 'visiting_resident');
@@ -197,6 +207,8 @@ const serializeServiceProvider = (item: any) => ({
     photo_url: item.photoUrl,
     document_photo_url: item.documentPhotoUrl,
     tower: item.tower,
+    visiting_block: item.visitingBlock,
+    visiting_unit: item.visitingUnit,
     visiting_resident: item.visitingResident,
     valid_from: item.validFrom,
     valid_until: item.validUntil,
@@ -347,6 +359,8 @@ export class ServiceProvidersController {
                 photoUrl: payload.photoUrl ?? null,
                 documentPhotoUrl: payload.documentPhotoUrl ?? null,
                 tower: payload.tower ?? null,
+                visitingBlock: payload.visitingBlock ?? null,
+                visitingUnit: payload.visitingUnit ?? null,
                 visitingResident: payload.visitingResident ?? null,
                 validFrom: payload.validFrom ?? null,
                 validUntil: payload.validUntil ?? null,
@@ -385,6 +399,8 @@ export class ServiceProvidersController {
             if (payload.photoUrl !== undefined) updateData.photoUrl = payload.photoUrl;
             if (payload.documentPhotoUrl !== undefined) updateData.documentPhotoUrl = payload.documentPhotoUrl;
             if (payload.tower !== undefined) updateData.tower = payload.tower;
+            if (payload.visitingBlock !== undefined) updateData.visitingBlock = payload.visitingBlock;
+            if (payload.visitingUnit !== undefined) updateData.visitingUnit = payload.visitingUnit;
             if (payload.visitingResident !== undefined) updateData.visitingResident = payload.visitingResident;
             if (payload.validFrom !== undefined) updateData.validFrom = payload.validFrom;
             if (payload.validUntil !== undefined) updateData.validUntil = payload.validUntil;
