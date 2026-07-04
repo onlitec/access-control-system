@@ -120,40 +120,18 @@ try {
         Log "Arquivos ja estao em $TargetDir (copia dispensada)."
     }
 
-    foreach ($d in @("data", "logs", "config", "backups", "certs")) {
+    foreach ($d in @("data", "logs", "config", "backups")) {
         New-Item -ItemType Directory -Force -Path (Join-Path $TargetDir $d) | Out-Null
     }
 
-    # ------------------------------------------------- 3b. Gerar certificado TLS
-    Set-Status "Verificando certificado TLS..."
-    $CertsDir = Join-Path $TargetDir "certs"
-    $CertPath = Join-Path $CertsDir "onliacesso.crt"
-    $KeyPath = Join-Path $CertsDir "onliacesso.key"
-
-    if (-not (Test-Path $CertPath) -or -not (Test-Path $KeyPath)) {
-        Log "Gerando certificado TLS auto-assinado..."
-        # Create a self-signed certificate valid for 10 years
-        $cert = New-SelfSignedCertificate -CertStoreLocation cert:\LocalMachine\My `
-            -DnsName "localhost", "127.0.0.1" -FriendlyName "OnliAcesso" `
-            -NotAfter (Get-Date).AddYears(10) -KeyExportPolicy Exportable
-
-        # Export certificate without private key
-        Export-Certificate -Cert $cert -FilePath $CertPath -Force | Out-Null
-
-        # Export certificate with private key
-        $pwd = ConvertTo-SecureString -String "temp" -Force -AsPlainText
-        Export-PfxCertificate -Cert $cert -FilePath (Join-Path $CertsDir "onliacesso.pfx") `
-            -Password $pwd -Force | Out-Null
-
-        # Extract private key from PFX using openssl (if available) or fallback to manual extraction
-        # For now, use a simpler approach: nginx will use the PFX or we export the key separately
-        Log "Certificado TLS gerado e salvo em $CertsDir"
-
-        # Clean up the certificate from LocalMachine store
-        Remove-Item -Path "cert:\LocalMachine\My\$($cert.Thumbprint)" -Force
-    } else {
-        Log "Certificado TLS ja existe em $CertsDir"
-    }
+    # NOTA: TLS/HTTPS (nginx ssl_certificate + ssl_certificate_key em PEM) foi
+    # planejado mas revertido nesta versao - New-SelfSignedCertificate gera o
+    # certificado, mas exportar a chave privada em PEM a partir dele exige
+    # OpenSSL ou codificacao ASN.1/PKCS#1 manual, que nao tem suporte nativo
+    # confiavel no `powershell.exe` (PowerShell 5.1) usado pelo Inno Setup.
+    # O proxy permanece em HTTP simples ate isso ser resolvido corretamente
+    # (empacotar um openssl.exe, ou emitir via ACME/Let's Encrypt quando
+    # houver dominio publico).
 
     $Bin     = Join-Path $TargetDir "binaries"
     $Apps    = Join-Path $TargetDir "apps"
@@ -227,7 +205,7 @@ try {
 # Condominio: $CondoName
 NODE_ENV=production
 PORT=3001
-APP_URL=https://$LocalIp
+APP_URL=http://$LocalIp
 DATABASE_URL=postgresql://postgres:$DbPassword@127.0.0.1:$PgPort/onliacesso?schema=public
 JWT_SECRET=$JwtSecret
 PROVIDER_TYPE=$ProviderType
@@ -257,9 +235,9 @@ SMTP_FROM_NAME=$($SmtpDefaults['SMTP_FROM_NAME'])
 OnliAcesso - Credenciais geradas na instalacao ($(Get-Date -Format "yyyy-MM-dd HH:mm"))
 GUARDE ESTE ARQUIVO EM LOCAL SEGURO E APAGUE-O DEPOIS.
 
-Painel:        https://$LocalIp/painel/
-Admin:         https://$LocalIp/admin/
-Portal:        https://$LocalIp/login/
+Painel:        http://$LocalIp/painel/
+Admin:         http://$LocalIp/admin/
+Portal:        http://$LocalIp/login/
 
 Admin inicial: $AdminEmail
 Senha inicial: $AdminPassword
