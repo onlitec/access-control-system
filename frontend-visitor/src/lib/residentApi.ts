@@ -39,6 +39,13 @@ export async function getMyVisitors() {
   return data.visitors as any[];
 }
 
+export async function getGrantableAccessLevels(type: 'visitor' | 'provider') {
+  const res = await fetch(`${API}/resident/access-levels?type=${type}`, { headers: authHeaders() });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Erro ao buscar níveis de acesso');
+  return data.accessLevels as { id: string; hikAccessLevelId: string; name: string }[];
+}
+
 export async function preRegisterVisitor(payload: {
   name: string;
   surname?: string;
@@ -48,6 +55,7 @@ export async function preRegisterVisitor(payload: {
   type?: string;
   visitStartTime?: string;
   visitEndTime?: string;
+  selectedAccessLevelIds?: string[];
 }) {
   const res = await fetch(`${API}/resident/visitors/pre-register`, {
     method: 'POST',
@@ -74,6 +82,7 @@ export async function preRegisterProvider(payload: {
   serviceType: string;
   validFrom?: string;
   validUntil?: string;
+  selectedAccessLevelIds?: string[];
 }) {
   const res = await fetch(`${API}/resident/providers/pre-register`, {
     method: 'POST',

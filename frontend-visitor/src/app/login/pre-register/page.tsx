@@ -3,7 +3,9 @@
 import React, { Suspense, useState, useEffect } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { ArrowLeft, UserPlus, Briefcase, Send, Copy, Check, Loader2 } from 'lucide-react';
-import { preRegisterVisitor, preRegisterProvider } from '@/lib/residentApi';
+import { preRegisterVisitor, preRegisterProvider, getGrantableAccessLevels } from '@/lib/residentApi';
+
+type GrantableLevel = { id: string; hikAccessLevelId: string; name: string };
 
 function CopyLinkBlock({ link }: { link: string }) {
   const [copied, setCopied] = useState(false);
@@ -53,10 +55,23 @@ function PreRegisterContent() {
   const [validFrom, setValidFrom] = useState('');
   const [validUntil, setValidUntil] = useState('');
 
+  // Níveis de acesso pré-aprovados pelo admin (pool separado por tipo)
+  const [availableLevels, setAvailableLevels] = useState<GrantableLevel[]>([]);
+  const [selectedLevelIds, setSelectedLevelIds] = useState<string[]>([]);
+
   useEffect(() => {
     const token = localStorage.getItem('resident_token');
     if (!token) router.replace('/login/auth');
   }, [router]);
+
+  useEffect(() => {
+    setSelectedLevelIds([]);
+    getGrantableAccessLevels(type).then(setAvailableLevels).catch(() => setAvailableLevels([]));
+  }, [type]);
+
+  function toggleLevel(id: string) {
+    setSelectedLevelIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+  }
 
   async function handleSubmitVisitor(e: React.FormEvent) {
     e.preventDefault();
@@ -71,6 +86,7 @@ function PreRegisterContent() {
         purpose: purpose || undefined,
         type: 'VISITOR',
         visitEndTime: visitEndTime || undefined,
+        selectedAccessLevelIds: selectedLevelIds,
       });
       setCompletionLink(link);
     } catch (err: any) {
@@ -92,6 +108,7 @@ function PreRegisterContent() {
         serviceType,
         validFrom: validFrom || undefined,
         validUntil: validUntil || undefined,
+        selectedAccessLevelIds: selectedLevelIds,
       });
       router.push('/login/dashboard');
     } catch (err: any) {
@@ -136,6 +153,7 @@ function PreRegisterContent() {
               onClick={() => {
                 setCompletionLink('');
                 setName(''); setSurname(''); setPhone(''); setEmail(''); setPurpose(''); setVisitEndTime('');
+                setSelectedLevelIds([]);
               }}
               className="w-full py-2.5 rounded-xl border border-zinc-700 hover:border-zinc-600 transition-colors text-sm text-zinc-400"
             >
@@ -180,6 +198,20 @@ function PreRegisterContent() {
                   <input type="datetime-local" value={visitEndTime} onChange={e => setVisitEndTime(e.target.value)}
                     className="w-full px-3 py-2 rounded-lg bg-zinc-950 border border-zinc-700 text-sm focus:outline-none focus:border-blue-500 transition-colors" />
                 </div>
+                {availableLevels.length > 0 && (
+                  <div className="space-y-2">
+                    <label className="text-xs text-zinc-400">Níveis de acesso liberados para este visitante</label>
+                    <div className="space-y-1.5 bg-zinc-950 border border-zinc-700 rounded-lg p-3">
+                      {availableLevels.map(lvl => (
+                        <label key={lvl.id} className="flex items-center gap-2 text-sm text-zinc-300 cursor-pointer">
+                          <input type="checkbox" checked={selectedLevelIds.includes(lvl.id)}
+                            onChange={() => toggleLevel(lvl.id)} className="accent-blue-500" />
+                          {lvl.name}
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                )}
                 {error && <p className="text-xs text-red-400 bg-red-950/40 border border-red-800/50 rounded-lg px-3 py-2">{error}</p>}
                 <button type="submit" disabled={loading}
                   className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 transition-colors text-sm font-semibold disabled:opacity-50">
@@ -221,6 +253,20 @@ function PreRegisterContent() {
                       className="w-full px-3 py-2 rounded-lg bg-zinc-950 border border-zinc-700 text-sm focus:outline-none focus:border-blue-500 transition-colors" />
                   </div>
                 </div>
+                {availableLevels.length > 0 && (
+                  <div className="space-y-2">
+                    <label className="text-xs text-zinc-400">Níveis de acesso liberados para este prestador</label>
+                    <div className="space-y-1.5 bg-zinc-950 border border-zinc-700 rounded-lg p-3">
+                      {availableLevels.map(lvl => (
+                        <label key={lvl.id} className="flex items-center gap-2 text-sm text-zinc-300 cursor-pointer">
+                          <input type="checkbox" checked={selectedLevelIds.includes(lvl.id)}
+                            onChange={() => toggleLevel(lvl.id)} className="accent-purple-500" />
+                          {lvl.name}
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                )}
                 {error && <p className="text-xs text-red-400 bg-red-950/40 border border-red-800/50 rounded-lg px-3 py-2">{error}</p>}
                 <button type="submit" disabled={loading}
                   className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl bg-purple-600 hover:bg-purple-500 transition-colors text-sm font-semibold disabled:opacity-50">

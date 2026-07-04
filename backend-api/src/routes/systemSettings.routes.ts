@@ -3,6 +3,7 @@ import { prisma } from '../database';
 import { authMiddleware, adminMiddleware } from '../middleware/auth';
 import { AuditService } from '../services/AuditService';
 import { EmailService } from '../services/EmailService';
+import { AccessUrlService } from '../services/AccessUrlService';
 import { config } from '../config/unifiedConfig';
 
 // Configurações de infraestrutura (SMTP, atualizações) — singleton no banco,
@@ -21,6 +22,9 @@ router.get('/', async (_req: Request, res: Response) => {
             smtpFromName: s?.smtpFromName ?? null,
             smtpPasswordSet: Boolean(s?.smtpPassword || config.SMTP.PASSWORD),
             updateManifestUrl: s?.updateManifestUrl ?? null,
+            accessMode: s?.accessMode === 'domain' ? 'domain' : 'ip',
+            accessUrlIp: s?.accessUrlIp ?? null,
+            accessUrlDomain: s?.accessUrlDomain ?? null,
             appVersion: config.APP_VERSION,
             // valores efetivos (banco com fallback .env), sem segredos
             effective: await EmailService.getEffectiveConfig().then((c) => ({
@@ -30,6 +34,7 @@ router.get('/', async (_req: Request, res: Response) => {
                 from: c.from,
                 fromName: c.fromName,
             })),
+            effectiveAccessUrl: await AccessUrlService.getEffectiveAppUrl(),
         });
     } catch (err: any) {
         console.error('[SystemSettings] GET error:', err);
@@ -50,6 +55,9 @@ router.put('/', async (req: Request, res: Response) => {
             smtpFromName: typeof b.smtpFromName === 'string' ? b.smtpFromName.trim() || null : null,
             updateManifestUrl: typeof b.updateManifestUrl === 'string'
                 ? b.updateManifestUrl.trim() || null : null,
+            accessMode: b.accessMode === 'domain' ? 'domain' : 'ip',
+            accessUrlIp: typeof b.accessUrlIp === 'string' ? b.accessUrlIp.trim() || null : null,
+            accessUrlDomain: typeof b.accessUrlDomain === 'string' ? b.accessUrlDomain.trim() || null : null,
         };
         const update: Record<string, any> = { ...data };
         if (typeof b.smtpPassword === 'string' && b.smtpPassword.trim()) {
@@ -62,6 +70,7 @@ router.put('/', async (req: Request, res: Response) => {
             create: { id: 'singleton', ...update },
         });
         EmailService.invalidateCache();
+        AccessUrlService.invalidateCache();
 
         await AuditService.logAdminAuditEvent({
             action: 'SYSTEM_SETTINGS_UPDATE',

@@ -241,7 +241,11 @@ app.use('/api/events', eventsRoutes);
 app.use('/api/hikcentral', hikcentralVisitorsRouter);
 app.use('/api', (req: any, res: any, next: any) => {
     // Basic health check and AUTH bypass
-    if (req.path === '/health' || req.path.startsWith('/auth/') || req.path.startsWith('/onboarding/') || req.path.startsWith('/resident/')) return next();
+    // /invites/validate e /invites/complete são o fluxo público do link de
+    // convite (visitante sem conta) - /invites/send-link continua exigindo
+    // login porque já tem seu próprio authMiddleware na definição da rota.
+    if (req.path === '/health' || req.path.startsWith('/auth/') || req.path.startsWith('/onboarding/') || req.path.startsWith('/resident/')
+        || req.path === '/invites/validate' || req.path === '/invites/complete') return next();
     // Injetar token do query param no header para endpoints de foto
     const queryToken = req.query.token as string;
     if (queryToken && !req.headers.authorization) {
@@ -1189,18 +1193,34 @@ app.post('/api/invites/complete', async (req, res) => {
             });
             hikVisitorId = hikResult?.data?.visitorId;
 
-            // Tentar aplicar herança de níveis de acesso do Morador
-            const hostHikPersonId = visitor.accessLevelId;
-            if (hostHikPersonId && hikVisitorId) {
+            // Autoriza só os níveis que o morador selecionou no pré-cadastro,
+            // dentre o pool aprovado pelo admin (substitui a herança total do
+            // acesso do morador anfitrião que existia antes). Revalida contra
+            // o pool ATIVO agora, caso o admin tenha desativado algum nível
+            // entre o pré-cadastro e esta conclusão.
+            const selected = Array.isArray(visitor.selectedAccessLevels) ? visitor.selectedAccessLevels as any[] : [];
+            if (selected.length > 0 && hikVisitorId) {
                 try {
-                    const accessLevelsRes: any = await HikCentralService.getPersonAccessLevels(hostHikPersonId);
-                    const accessLevels = accessLevelsRes?.data?.list?.map((a: any) => a.accessLevelIndexCode || a.privilegeGroupId) || [];
+                    const stillApproved = await prisma.grantableAccessLevel.findMany({
+                        where: {
+                            appliesTo: 'visitor',
+                            isActive: true,
+                            hikAccessLevelId: { in: selected.map((s: any) => s.hikAccessLevelId) },
+                        },
+                    });
+                    // Níveis "local-*" e "area-*" são da própria plataforma
+                    // (níveis avulsos e Áreas de Acesso do condomínio) - o
+                    // HikCentral não os conhece, então só os códigos vindos
+                    // de lá entram na autorização remota.
+                    const accessLevels = stillApproved
+                        .map((g) => g.hikAccessLevelId)
+                        .filter((code) => !code.startsWith('local-') && !code.startsWith('area-'));
                     if (accessLevels.length > 0) {
                         await HikCentralService.authorizePerson(hikVisitorId, accessLevels, '2');
-                        console.log(`[HikCentral] Direitos do host ${hostHikPersonId} passados para vis. ${hikVisitorId}`);
+                        console.log(`[HikCentral] Níveis selecionados aplicados ao visitante ${hikVisitorId}: ${accessLevels.join(', ')}`);
                     }
                 } catch (err: any) {
-                    console.error('[HikCentral] Erro ao herdar níveis de acesso para visitante:', err.message);
+                    console.error('[HikCentral] Erro ao aplicar níveis de acesso selecionados ao visitante:', err.message);
                 }
             }
         } catch (hikErr: any) {

@@ -6,13 +6,13 @@ import { config } from '../config/unifiedConfig';
 import { authMiddleware, adminMiddleware } from '../middleware/auth';
 import { AuditService } from '../services/AuditService';
 import { FaceMatchService } from '../services/FaceMatchService';
+import { AccessUrlService } from '../services/AccessUrlService';
 import { isValidCpf, cpfEquals } from '../utils/cpf.utils';
 
 const router = Router();
 const prisma = new PrismaClient();
 
 const MAX_SELFIE_ATTEMPTS = 5;
-const APP_URL = process.env.APP_URL || 'https://127.0.0.1:8443';
 
 interface OnboardingTokenPayload {
   personId: string;
@@ -55,7 +55,8 @@ export async function createOnboardingLink(personId: string, hikPersonId?: strin
     },
   });
 
-  return `${APP_URL}/login/first-access?token=${onboardingToken}`;
+  const appUrl = await AccessUrlService.getEffectiveAppUrl();
+  return `${appUrl}/login/first-access?token=${onboardingToken}`;
 }
 
 // ── POST /api/onboarding/validate ───────────────────────────────────────────

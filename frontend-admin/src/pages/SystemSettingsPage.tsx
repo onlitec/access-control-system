@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Settings, Mail, DownloadCloud, Loader2, Send, Save, CheckCircle, AlertTriangle } from 'lucide-react';
+import { Settings, Mail, DownloadCloud, Loader2, Send, Save, CheckCircle, AlertTriangle, Globe } from 'lucide-react';
 import {
   getSystemSettings,
   updateSystemSettings,
@@ -45,6 +45,11 @@ export default function SystemSettingsPage() {
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
 
+  // acesso remoto (WAN)
+  const [accessMode, setAccessMode] = useState<'ip' | 'domain'>('ip');
+  const [accessUrlIp, setAccessUrlIp] = useState('');
+  const [accessUrlDomain, setAccessUrlDomain] = useState('');
+
   // atualizações
   const [manifestUrl, setManifestUrl] = useState('');
   const [checking, setChecking] = useState(false);
@@ -65,6 +70,9 @@ export default function SystemSettingsPage() {
       setSmtpUser(data.smtpUser ?? '');
       setSmtpFrom(data.smtpFrom ?? '');
       setSmtpFromName(data.smtpFromName ?? '');
+      setAccessMode(data.accessMode ?? 'ip');
+      setAccessUrlIp(data.accessUrlIp ?? '');
+      setAccessUrlDomain(data.accessUrlDomain ?? '');
       setManifestUrl(data.updateManifestUrl ?? '');
     } catch (err: any) {
       setFeedback({ kind: 'err', text: err.message || 'Falha ao carregar as configurações' });
@@ -85,6 +93,9 @@ export default function SystemSettingsPage() {
         smtpFrom,
         smtpFromName,
         updateManifestUrl: manifestUrl,
+        accessMode,
+        accessUrlIp,
+        accessUrlDomain,
       });
       setSmtpPassword('');
       setFeedback({ kind: 'ok', text: 'Configurações salvas com sucesso.' });
@@ -218,6 +229,66 @@ export default function SystemSettingsPage() {
             </p>
             {testResult && banner(testResult)}
           </div>
+        </div>
+
+        {/* Acesso remoto (WAN) */}
+        <div className="settings-card" style={{ margin: 0 }}>
+          <div className="settings-card-header">
+            <Globe size={20} />
+            <h2>Acesso remoto (WAN)</h2>
+          </div>
+          <p className="text-muted" style={{ fontSize: '0.85rem', margin: '10px 0 20px' }}>
+            URL que entra nos links de primeiro acesso e pré-cadastro de visitantes
+            enviados a moradores. O instalador grava o IP da rede local (
+            <code style={{ fontSize: '0.8rem' }}>{settings?.effectiveAccessUrl}</code> atualmente),
+            que geralmente não é alcançável de fora do condomínio — configure aqui o
+            IP público (com a porta liberada no roteador) ou um domínio próprio.
+          </p>
+
+          <label style={labelStyle}>Como os links devem apontar</label>
+          <div style={{ display: 'flex', gap: '10px', marginBottom: '15px' }}>
+            <button
+              type="button"
+              className={accessMode === 'ip' ? 'btn btn-primary' : 'btn btn-secondary'}
+              onClick={() => setAccessMode('ip')}
+              style={{ flex: 1 }}
+            >
+              Por IP
+            </button>
+            <button
+              type="button"
+              className={accessMode === 'domain' ? 'btn btn-primary' : 'btn btn-secondary'}
+              onClick={() => setAccessMode('domain')}
+              style={{ flex: 1 }}
+            >
+              Por domínio
+            </button>
+          </div>
+
+          <div style={{ marginBottom: '15px' }}>
+            <label style={labelStyle}>URL de acesso por IP (WAN)</label>
+            <input
+              style={inputStyle}
+              value={accessUrlIp}
+              onChange={(e) => setAccessUrlIp(e.target.value)}
+              placeholder="https://201.54.12.30:8443"
+              disabled={accessMode !== 'ip'}
+            />
+          </div>
+          <div>
+            <label style={labelStyle}>URL de acesso por domínio</label>
+            <input
+              style={inputStyle}
+              value={accessUrlDomain}
+              onChange={(e) => setAccessUrlDomain(e.target.value)}
+              placeholder="https://acesso.meucondominio.com.br"
+              disabled={accessMode !== 'domain'}
+            />
+          </div>
+          <p className="text-muted" style={{ fontSize: '0.75rem', marginTop: '12px' }}>
+            Deixe em branco o campo do modo escolhido para voltar a usar o IP local
+            detectado pelo instalador.
+          </p>
         </div>
 
         {/* Atualizações */}
