@@ -133,7 +133,7 @@ export default function ResidentDashboard() {
           className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 transition-colors text-sm font-semibold"
         >
           <Plus className="h-4 w-4" />
-          {tab === 'visitors' ? 'Pré-cadastrar Visitante' : 'Pré-cadastrar Prestador'}
+          {tab === 'visitors' ? 'Nova Visita' : 'Nova Prestação de Serviço'}
         </button>
 
         {/* Visitors List */}

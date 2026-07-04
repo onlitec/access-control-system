@@ -67,6 +67,43 @@ export async function preRegisterVisitor(payload: {
   return data as { visitor: any; completionLink: string };
 }
 
+export async function createNewVisit(visitorId: string, payload: {
+  visitStartTime?: string;
+  visitEndTime?: string;
+  purpose?: string;
+  phone?: string;
+  email?: string;
+  plate?: string;
+  selectedAccessLevelIds?: string[];
+}) {
+  const res = await fetch(`${API}/resident/visitors/${visitorId}/new-visit`, {
+    method: 'POST',
+    headers: authHeaders(),
+    body: JSON.stringify(payload),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Erro ao criar nova visita');
+  return data as { visitor: any; completionLink?: string };
+}
+
+export async function createNewService(providerId: string, payload: {
+  serviceType?: string;
+  validFrom?: string;
+  validUntil?: string;
+  phone?: string;
+  email?: string;
+  selectedAccessLevelIds?: string[];
+}) {
+  const res = await fetch(`${API}/resident/providers/${providerId}/new-service`, {
+    method: 'POST',
+    headers: authHeaders(),
+    body: JSON.stringify(payload),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Erro ao criar nova prestação');
+  return data as { provider: any };
+}
+
 export async function getMyProviders() {
   const res = await fetch(`${API}/resident/providers`, { headers: authHeaders() });
   const data = await res.json();
