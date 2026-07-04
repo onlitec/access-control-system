@@ -673,6 +673,70 @@ app.get('/api/residents/select', authMiddleware, async (req, res) => {
     }
 });
 
+/**
+ * Sincroniza os seriais de tag/controle do morador com o módulo Guarita
+ * habilitado (Cmd 67 + 29). `previous` traz os seriais anteriores para
+ * remover registros que mudaram/foram limpos (evita órfão na memória do
+ * módulo). Nunca lança: o cadastro local não pode falhar por causa do
+ * hardware - o resultado volta em `guaritaSync` na resposta da API.
+ */
+async function syncPersonToGuarita(
+    person: {
+        firstName: string; lastName: string;
+        unit_number: string | null; block: string | null;
+        cardSerial: string | null; txSerial: string | null;
+        vehiclePlate: string | null;
+    },
+    previous?: { cardSerial?: string | null; txSerial?: string | null },
+): Promise<{ attempted: boolean; ok: boolean; message: string }> {
+    try {
+        const guaritaDevice = await prisma.guaritaDevice.findFirst({ where: { enabled: true } });
+        if (!guaritaDevice) return { attempted: false, ok: true, message: 'Nenhum módulo Guarita habilitado' };
+
+        const identity = NiceGuaritaService.buildModuleIdentity(person);
+        const msgs: string[] = [];
+        let ok = true;
+
+        const stale: Array<{ serial: string; type: number }> = [];
+        if (previous?.cardSerial && previous.cardSerial !== person.cardSerial) stale.push({ serial: previous.cardSerial, type: 0x03 });
+        if (previous?.txSerial && previous.txSerial !== person.txSerial) stale.push({ serial: previous.txSerial, type: 0x01 });
+        for (const s of stale) {
+            try {
+                await NiceGuaritaService.unenrollResident(guaritaDevice.id, s.serial, s.type);
+                msgs.push(`serial antigo ${s.serial} removido do módulo`);
+            } catch (err: any) { ok = false; msgs.push(`falha ao remover ${s.serial}: ${err.message}`); }
+        }
+
+        const targets: Array<{ serial: string; type: number; label: string }> = [];
+        if (person.cardSerial) targets.push({ serial: person.cardSerial, type: 0x03, label: 'tag/cartão' });
+        if (person.txSerial) targets.push({ serial: person.txSerial, type: 0x01, label: 'controle' });
+        if (targets.length === 0 && stale.length === 0) {
+            return { attempted: false, ok: true, message: 'Sem seriais para sincronizar' };
+        }
+
+        for (const t of targets) {
+            try {
+                const r = await NiceGuaritaService.enrollResident(guaritaDevice.id, {
+                    serial: t.serial,
+                    deviceType: t.type,
+                    name: identity.name,
+                    unit: identity.unit,
+                    block: identity.block,
+                    vehiclePlate: person.vehiclePlate || undefined,
+                });
+                if (r.success) msgs.push(`${t.label} ${t.serial} gravado no módulo${r.receiversUpdated ? '' : ' (atualização dos receptores pendente)'}`);
+                else { ok = false; msgs.push(`${t.label} ${t.serial}: ${r.message}`); }
+            } catch (err: any) { ok = false; msgs.push(`${t.label} ${t.serial}: ${err.message}`); }
+        }
+
+        console.log(`[NiceGuarita] Sync morador "${identity.name}": ${msgs.join('; ')}`);
+        return { attempted: true, ok, message: msgs.join('; ') };
+    } catch (err: any) {
+        console.error('[NiceGuarita] Sync morador falhou:', err.message);
+        return { attempted: true, ok: false, message: err.message };
+    }
+}
+
 app.post('/api/residents', authMiddleware, async (req, res) => {
     try {
         const body = { ...req.body };
@@ -751,35 +815,7 @@ app.post('/api/residents', authMiddleware, async (req, res) => {
         const person = await prisma.person.create({ data: prismaData });
 
         // 2.8 Sincronizar com Nice Guarita (Controles e Tags)
-        if (person.cardSerial || person.txSerial) {
-            try {
-                // Fetch the first enabled Guarita device
-                const guaritaDevice = await prisma.guaritaDevice.findFirst({ where: { enabled: true } });
-                if (guaritaDevice) {
-                    if (person.cardSerial) {
-                        await NiceGuaritaService.enrollResident(guaritaDevice.id, {
-                            serial: person.cardSerial,
-                            deviceType: 0x03, // CARD
-                            name: `${person.firstName} ${person.lastName}`.trim(),
-                            unit: person.unit_number ? parseInt(person.unit_number) : undefined,
-                            vehiclePlate: person.vehiclePlate || undefined,
-                        });
-                    }
-                    if (person.txSerial) {
-                        await NiceGuaritaService.enrollResident(guaritaDevice.id, {
-                            serial: person.txSerial,
-                            deviceType: 0x01, // CONTROL
-                            name: `${person.firstName} ${person.lastName}`.trim(),
-                            unit: person.unit_number ? parseInt(person.unit_number) : undefined,
-                            vehiclePlate: person.vehiclePlate || undefined,
-                        });
-                    }
-                    console.log(`[NiceGuarita] Dispositivos de acesso (Card/TX) sincronizados para morador ${person.id}`);
-                }
-            } catch (guaritaErr: any) {
-                console.error(`[NiceGuarita] Erro ao sincronizar morador ${person.id}:`, guaritaErr.message);
-            }
-        }
+        const guaritaSync = await syncPersonToGuarita(person);
 
         // 3. Gerar Link Único para o App Visitor (cria/reseta o estado de
         //    verificação facial para "awaiting_selfie")
@@ -796,6 +832,7 @@ app.post('/api/residents', authMiddleware, async (req, res) => {
             full_name: `${person.firstName} ${person.lastName}`.trim(),
             hikcentral_person_id: person.hikPersonId,
             onboarding_url: onboardingUrl,
+            guaritaSync,
             data: person
         });
     } catch (error: any) {
@@ -871,37 +908,19 @@ app.patch('/api/residents/:id', authMiddleware, async (req, res) => {
             data: updateData
         });
 
-        // 4. Atualizar Dispositivos Nice Guarita
+        // 4. Atualizar Dispositivos Nice Guarita (remove serial antigo que
+        // mudou/foi limpo e grava o atual, com feedback pro operador)
+        let guaritaSync: { attempted: boolean; ok: boolean; message: string } | undefined;
         if (body.cardSerial !== undefined || body.txSerial !== undefined) {
-            try {
-                const guaritaDevice = await prisma.guaritaDevice.findFirst({ where: { enabled: true } });
-                if (guaritaDevice) {
-                    if (person.cardSerial) {
-                        await NiceGuaritaService.enrollResident(guaritaDevice.id, {
-                            serial: person.cardSerial,
-                            deviceType: 0x03,
-                            name: `${person.firstName} ${person.lastName}`.trim(),
-                            unit: person.unit_number ? parseInt(person.unit_number) : undefined,
-                            vehiclePlate: person.vehiclePlate || undefined,
-                        });
-                    }
-                    if (person.txSerial) {
-                        await NiceGuaritaService.enrollResident(guaritaDevice.id, {
-                            serial: person.txSerial,
-                            deviceType: 0x01,
-                            name: `${person.firstName} ${person.lastName}`.trim(),
-                            unit: person.unit_number ? parseInt(person.unit_number) : undefined,
-                            vehiclePlate: person.vehiclePlate || undefined,
-                        });
-                    }
-                }
-            } catch (err: any) {
-                console.error(`[NiceGuarita] Erro ao atualizar morador ${existing.id}:`, err.message);
-            }
+            guaritaSync = await syncPersonToGuarita(person, {
+                cardSerial: existing.cardSerial,
+                txSerial: existing.txSerial,
+            });
         }
 
         res.json({
             success: true,
+            guaritaSync,
             id: person.id,
             full_name: `${person.firstName} ${person.lastName}`.trim(),
             cpf: '',
@@ -927,17 +946,22 @@ app.patch('/api/residents/:id', authMiddleware, async (req, res) => {
 app.delete('/api/residents/:id', authMiddleware, async (req, res) => {
     try {
         const { id } = req.params;
-        try {
-            await prisma.person.delete({ where: { id } });
-        } catch (uuidErr: any) {
-            if (uuidErr?.code === 'P2025' || uuidErr?.code === 'P2023') {
-                const existing = await prisma.person.findFirst({ where: { hikPersonId: id } });
-                if (!existing) return res.status(404).json({ error: 'Morador não encontrado' });
-                await prisma.person.delete({ where: { id: existing.id } });
-            } else {
-                throw uuidErr;
-            }
+        // Resolve o morador antes (por id ou hikPersonId) pra poder remover
+        // os seriais dele da memória do módulo Guarita antes de apagar.
+        let existing = await prisma.person.findUnique({ where: { id } }).catch(() => null);
+        if (!existing) {
+            existing = await prisma.person.findFirst({ where: { hikPersonId: id } });
         }
+        if (!existing) return res.status(404).json({ error: 'Morador não encontrado' });
+
+        if (existing.cardSerial || existing.txSerial) {
+            await syncPersonToGuarita(
+                { ...existing, cardSerial: null, txSerial: null },
+                { cardSerial: existing.cardSerial, txSerial: existing.txSerial },
+            );
+        }
+
+        await prisma.person.delete({ where: { id: existing.id } });
         res.status(204).send();
     } catch (error: any) {
         res.status(500).json({ error: error.message });

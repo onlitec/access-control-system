@@ -50,6 +50,19 @@ export const importGuaritaResidents = async (deviceId: string) => {
   });
 };
 
+export interface GuaritaRecentSerial {
+  serial: string;
+  deviceKind: string;
+  dateTime: string;
+  knownPerson: string | null;
+}
+
+// Últimos serials vistos pelo listener do módulo Guarita (captura de serial
+// pelo acionamento: operador aperta o botão do controle e vincula na tela)
+export const getGuaritaRecentSerials = async () => {
+  return request<{ serials: GuaritaRecentSerial[] }>(`/guarita/recent-serials`);
+};
+
 export const getResident = async (id: string) => {
   return request<Resident>(`/residents/${id}`);
 };

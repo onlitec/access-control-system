@@ -181,6 +181,66 @@ export class NiceGuaritaService {
     return 'unknown';
   }
 
+  // ── Identidade p/ o módulo ────────────────────────────────────────────────
+
+  /**
+   * Converte os dados do morador para o formato aceito pelo MG3000:
+   * identificação ASCII de até 18 chars (maiúsculas, sem acento), unidade
+   * numérica e bloco no código do módulo (A-Z = 0x00-0x19; 1-230 = 0x1A+).
+   */
+  static buildModuleIdentity(person: {
+    firstName: string; lastName: string;
+    unit_number?: string | null; block?: string | null;
+  }): { name: string; unit?: number; block?: number } {
+    const fullName = `${person.firstName} ${person.lastName}`.trim();
+    const name = fullName
+      .normalize('NFD').replace(/[̀-ͯ]/g, '') // remove acentos
+      .toUpperCase()
+      .replace(/[^\x20-\x7E]/g, '')                     // só ASCII imprimível
+      .substring(0, 18);
+
+    let unit: number | undefined;
+    if (person.unit_number) {
+      const n = parseInt(person.unit_number.replace(/\D/g, ''), 10);
+      if (Number.isFinite(n) && n > 0 && n <= 9999) unit = n;
+    }
+
+    let block: number | undefined;
+    if (person.block) {
+      const raw = person.block.trim().toUpperCase();
+      if (/^[A-Z]$/.test(raw)) {
+        block = raw.charCodeAt(0) - 65; // A=0x00 ... Z=0x19
+      } else {
+        const n = parseInt(raw.replace(/\D/g, ''), 10);
+        if (Number.isFinite(n) && n >= 1 && n <= 230) block = 0x19 + n; // 1=0x1A ...
+      }
+    }
+
+    return { name, unit, block };
+  }
+
+  // ── Serials recentes (captura pelo acionamento) ───────────────────────────
+
+  private static recentSerials: Array<{
+    serial: string; deviceKind: string; dateTime: Date; knownPerson: string | null;
+  }> = [];
+
+  static getRecentSerials() {
+    return [...this.recentSerials].reverse(); // mais novo primeiro
+  }
+
+  private static pushRecentSerial(entry: { serial: string; deviceKind: string; dateTime: Date; knownPerson: string | null }) {
+    this.recentSerials.push(entry);
+    if (this.recentSerials.length > 20) this.recentSerials.shift();
+  }
+
+  /** Acionamento de dispositivo NÃO cadastrado (Cmd 42/46 do módulo) - só
+   *  alimenta o buffer de captura; não gera evento de acesso. */
+  static noteUnregisteredDevice(event: { serial: string; deviceKind: string; dateTime: Date }) {
+    console.log(`[NiceGuarita] Dispositivo não cadastrado acionado: serial=${event.serial} tipo=${event.deviceKind}`);
+    this.pushRecentSerial({ ...event, knownPerson: null });
+  }
+
   // ── Device Enrollment ─────────────────────────────────────────────────────
 
   /**
@@ -395,6 +455,15 @@ export class NiceGuaritaService {
             { externalId: event.serial },
           ],
         },
+      });
+
+      // Buffer de serials recentes: alimenta a captura de serial na UI
+      // (operador aperta o botão do controle e o serial aparece pra vincular).
+      this.pushRecentSerial({
+        serial: event.serial,
+        deviceKind: event.deviceKind,
+        dateTime: event.dateTime,
+        knownPerson: person ? `${person.firstName} ${person.lastName}`.trim() : null,
       });
 
       // ── 3. Anti-Passagem Dupla ─────────────────────────────────────────────

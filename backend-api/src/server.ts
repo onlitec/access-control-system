@@ -30,6 +30,9 @@ app.listen(Number(port), '0.0.0.0', () => {
     guaritaEventServer.on('access_event', (event) => {
         void NiceGuaritaService.handleAccessEvent(event);
     });
+    guaritaEventServer.on('unregistered_device', (event) => {
+        NiceGuaritaService.noteUnregisteredDevice(event);
+    });
     guaritaEventServer.on('server_error', (err: Error) => {
         console.error('[NiceGuarita] Event server error:', err.message);
     });

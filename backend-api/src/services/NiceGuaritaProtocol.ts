@@ -522,12 +522,46 @@ export class NiceGuaritaEventServer extends EventEmitter {
 
       socket.on('data', (chunk: Buffer) => {
         buffer = Buffer.concat([buffer, chunk]);
-        // Cmd 4 auto-event frame is always 20 bytes
-        while (buffer.length >= 20) {
-          const slice = buffer.subarray(0, 20);
-          buffer = buffer.subarray(20);
-          const event = parseEventFrame(slice);
-          if (event) this.emit('access_event', { ...event, sourceIp });
+        // O módulo empurra frames de tamanhos diferentes no mesmo socket:
+        //  Cmd 4  (0x04, 20 bytes) - evento de acesso de dispositivo cadastrado
+        //  Cmd 42 (0x2A, 11 bytes) - TX/TA/CT NÃO cadastrado acionado (Cadastro Rápido)
+        //  Cmd 46 (0x2E, 10 bytes) - CT/TA/TP não cadastrado direto na leitora do receptor
+        while (buffer.length >= 2) {
+          if (buffer[0] !== 0x00) { buffer = buffer.subarray(1); continue; }
+          const cmd = buffer[1];
+          if (cmd === 0x04) {
+            if (buffer.length < 20) break;
+            const slice = buffer.subarray(0, 20);
+            buffer = buffer.subarray(20);
+            const event = parseEventFrame(slice);
+            if (event) this.emit('access_event', { ...event, sourceIp });
+          } else if (cmd === 0x2A) {
+            if (buffer.length < 11) break;
+            const f = buffer.subarray(0, 11);
+            buffer = buffer.subarray(11);
+            const kindMap: Record<number, string> = { 1: 'TX_remote', 2: 'TAG_active', 3: 'card' };
+            const kind = kindMap[f[2]];
+            if (kind) {
+              // TX tem 7 dígitos hex (nibble baixo do byte 3 + bytes 4-6)
+              const serial = f[2] === 0x01
+                ? ((f[3] & 0x0F).toString(16) + f.subarray(4, 7).toString('hex')).toUpperCase()
+                : f.subarray(4, 7).toString('hex').toUpperCase();
+              this.emit('unregistered_device', { serial, deviceKind: kind, dateTime: new Date(), sourceIp });
+            }
+          } else if (cmd === 0x2E) {
+            if (buffer.length < 10) break;
+            const f = buffer.subarray(0, 10);
+            buffer = buffer.subarray(10);
+            const kindMap: Record<number, string> = { 2: 'TAG_active', 3: 'card', 6: 'TAG_passive' };
+            const kind = kindMap[f[2]];
+            if (kind) {
+              const serial = f.subarray(5, 8).toString('hex').toUpperCase();
+              this.emit('unregistered_device', { serial, deviceKind: kind, dateTime: new Date(), sourceIp });
+            }
+          } else {
+            // byte de resync (frame desconhecido/desalinhado)
+            buffer = buffer.subarray(1);
+          }
         }
       });
 

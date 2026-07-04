@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
@@ -34,13 +34,13 @@ import {
 import { useToast } from '@/hooks/use-toast';
 import {
   Search, Pencil, Trash2, User, Camera, FileText, Video,
-  Link as LinkIcon, Loader2, Download
+  Link as LinkIcon, Loader2, Download, RadioTower, X
 } from 'lucide-react';
 import {
   getResidents, createResident, updateResident, deleteResident,
-  generateRecoveryLink, importGuaritaResidents,
+  generateRecoveryLink, importGuaritaResidents, getGuaritaRecentSerials,
   getAccessAreas, getResidentAccessAreas, setResidentAccessAreas,
-  type AccessArea,
+  type AccessArea, type GuaritaRecentSerial,
 } from '@/db/api';
 import { authRequest } from '@/services/authApi';
 import { useAuth } from '@/contexts/AuthContext';
@@ -93,6 +93,10 @@ export default function ResidentsPage() {
   const [successInfo, setSuccessInfo] = useState<OnboardingSuccessInfo | null>(null);
   const [isImporting, setIsImporting] = useState(false);
   const [generatingLink, setGeneratingLink] = useState<string | null>(null);
+  // Captura de serial pelo acionamento (módulo Guarita)
+  const [captureOpen, setCaptureOpen] = useState(false);
+  const [capturedSerials, setCapturedSerials] = useState<GuaritaRecentSerial[]>([]);
+  const captureStartRef = useRef<number>(0);
   const { user, profile } = useAuth();
   const { toast } = useToast();
 
@@ -153,6 +157,22 @@ export default function ResidentsPage() {
       form.setValue('unit_number', '');
     }
   }, [selectedBlock]);
+
+  // Polling da captura de serial: enquanto o painel está aberto, consulta o
+  // buffer de acionamentos do módulo a cada 2s e mostra o que chegou depois
+  // da abertura (operador aperta o botão do controle e o serial aparece).
+  useEffect(() => {
+    if (!captureOpen) return;
+    captureStartRef.current = Date.now() - 3000; // pequena folga pra trás
+    setCapturedSerials([]);
+    const timer = setInterval(async () => {
+      try {
+        const { serials } = await getGuaritaRecentSerials();
+        setCapturedSerials(serials.filter(s => new Date(s.dateTime).getTime() >= captureStartRef.current));
+      } catch { /* módulo/api fora: painel só fica vazio */ }
+    }, 2000);
+    return () => clearInterval(timer);
+  }, [captureOpen]);
 
   const selectedDepartmentId = form.watch('department_id');
   const selectedDepartment = departments.find(d => d.id === selectedDepartmentId);
@@ -318,15 +338,26 @@ export default function ResidentsPage() {
 
       setUploading(true);
 
+      // Toast com o resultado do push pro módulo Guarita (tag/controle)
+      const notifyGuaritaSync = (sync: { attempted: boolean; ok: boolean; message: string } | undefined) => {
+        if (!sync?.attempted) return;
+        toast({
+          title: sync.ok ? 'Módulo Guarita atualizado' : 'Falha ao gravar no módulo Guarita',
+          description: sync.message,
+          variant: sync.ok ? 'default' : 'destructive',
+        });
+      };
+
       let residentId = '';
       if (editingResident) {
-        await updateResident(editingResident.id, data);
+        const updateResp: any = await updateResident(editingResident.id, data);
         residentId = editingResident.id;
         await setResidentAccessAreas(residentId, data.access_levels || []).catch(() => {});
         toast({
           title: 'Sucesso',
           description: 'Morador atualizado com sucesso'
         });
+        notifyGuaritaSync(updateResp?.guaritaSync);
       } else {
         // Converter photo_url para base64 antes de enviar ao backend
         let photoBase64: string | undefined = undefined;
@@ -350,6 +381,7 @@ export default function ResidentsPage() {
           title: 'Sucesso',
           description: 'Morador cadastrado com sucesso'
         });
+        notifyGuaritaSync(response?.guaritaSync);
 
         if (response.onboarding_url) {
           setSuccessInfo({
@@ -948,8 +980,62 @@ export default function ResidentsPage() {
                           </div>
 
                           <div className="bg-white p-5 border border-zinc-200 rounded-2xl shadow-sm mt-4">
-                            <p className="text-sm font-semibold text-zinc-700 mb-1">Dispositivos Físicos (Nice Guarita)</p>
-                            <p className="text-xs text-zinc-400 mb-4">Cadastre as tags e controles remotos do morador (hexadecimal).</p>
+                            <div className="flex items-center justify-between mb-1">
+                              <p className="text-sm font-semibold text-zinc-700">Dispositivos Físicos (Nice Guarita)</p>
+                              <Button
+                                type="button"
+                                variant={captureOpen ? 'destructive' : 'outline'}
+                                size="sm"
+                                className="h-8 text-xs gap-1.5"
+                                onClick={() => setCaptureOpen(v => !v)}
+                              >
+                                {captureOpen ? <X className="h-3.5 w-3.5" /> : <RadioTower className="h-3.5 w-3.5" />}
+                                {captureOpen ? 'Parar captura' : 'Capturar acionamento'}
+                              </Button>
+                            </div>
+                            <p className="text-xs text-zinc-400 mb-4">
+                              Cadastre as tags e controles remotos do morador (hexadecimal) — ao salvar, o sistema grava
+                              automaticamente no módulo. Ou use "Capturar acionamento" e pressione o botão do controle
+                              perto do receptor para preencher o serial sem digitar.
+                            </p>
+                            {captureOpen && (
+                              <div className="mb-4 p-4 rounded-xl border border-blue-200 bg-blue-50/60">
+                                <p className="text-xs font-medium text-blue-700 mb-2 flex items-center gap-1.5">
+                                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                  Pressione o botão do controle (ou aproxime a tag) agora...
+                                </p>
+                                {capturedSerials.length === 0 ? (
+                                  <p className="text-xs text-blue-500/70">
+                                    Aguardando acionamento. Se o serial não aparecer, o receptor pode não encaminhar
+                                    dispositivos ainda não cadastrados — nesse caso, digite o serial impresso no controle.
+                                  </p>
+                                ) : (
+                                  <div className="space-y-1.5">
+                                    {capturedSerials.map((s, i) => (
+                                      <div key={`${s.serial}-${s.dateTime}-${i}`} className="flex items-center justify-between gap-2 bg-white rounded-lg border border-blue-100 px-3 py-1.5">
+                                        <div className="min-w-0">
+                                          <span className="text-xs font-mono font-semibold text-zinc-800">{s.serial}</span>
+                                          <span className="text-[11px] text-zinc-400 ml-2">
+                                            {new Date(s.dateTime).toLocaleTimeString('pt-BR')}
+                                            {s.knownPerson ? ` · já vinculado a ${s.knownPerson}` : ' · não cadastrado'}
+                                          </span>
+                                        </div>
+                                        <div className="flex gap-1 shrink-0">
+                                          <Button type="button" size="sm" variant="outline" className="h-6 px-2 text-[11px]"
+                                            onClick={() => { form.setValue('txSerial', s.serial); setCaptureOpen(false); }}>
+                                            → Controle
+                                          </Button>
+                                          <Button type="button" size="sm" variant="outline" className="h-6 px-2 text-[11px]"
+                                            onClick={() => { form.setValue('cardSerial', s.serial); setCaptureOpen(false); }}>
+                                            → Tag
+                                          </Button>
+                                        </div>
+                                      </div>
+                                    ))}
+                                  </div>
+                                )}
+                              </div>
+                            )}
                             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                               <FormField
                                 control={form.control}
