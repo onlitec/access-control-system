@@ -3,6 +3,7 @@ windows/assets/binaries/
 windows/stage/
 dist/
 build.log
+build-run-*.log
 
 # Segredos empacotados no instalador - NUNCA versionar (repositorio publico)
 windows/scripts/smtp-defaults.env
