@@ -942,7 +942,7 @@ app.delete('/api/residents/:id', authMiddleware, async (req, res) => {
     }
 });
 
-app.post('/api/residents/:id/recovery-link', authMiddleware, async (req, res) => {
+app.post('/api/residents/:id/recovery-link', adminMiddleware, async (req, res) => {
     try {
         const { id } = req.params;
 
@@ -1322,30 +1322,30 @@ app.get('/api/departments', authMiddleware, async (req, res) => {
     } catch (error: any) { res.status(500).json({ error: error.message }); }
 });
 
-app.post('/api/departments', authMiddleware, async (req, res) => {
+app.post('/api/departments', adminMiddleware, async (req, res) => {
     try {
         const { name, description, color, hasAddresses } = req.body;
         if (!name?.trim()) return res.status(400).json({ error: 'Nome é obrigatório' });
-        const dept = await prisma.department.create({ 
-            data: { 
-                name: name.trim(), 
-                description: description || null, 
+        const dept = await prisma.department.create({
+            data: {
+                name: name.trim(),
+                description: description || null,
                 color: color || null,
                 hasAddresses: hasAddresses !== undefined ? hasAddresses : true
-            } 
+            }
         });
         res.status(201).json(dept);
     } catch (error: any) { res.status(error.code === 'P2002' ? 409 : 500).json({ error: error.message }); }
 });
 
-app.put('/api/departments/:id', authMiddleware, async (req, res) => {
+app.put('/api/departments/:id', adminMiddleware, async (req, res) => {
     try {
         const { name, description, color, hasAddresses } = req.body;
         const dept = await prisma.department.update({
             where: { id: req.params.id },
-            data: { 
-                ...(name && { name: name.trim() }), 
-                description: description ?? null, 
+            data: {
+                ...(name && { name: name.trim() }),
+                description: description ?? null,
                 color: color ?? null,
                 ...(hasAddresses !== undefined && { hasAddresses })
             }
@@ -1354,7 +1354,7 @@ app.put('/api/departments/:id', authMiddleware, async (req, res) => {
     } catch (error: any) { res.status(error.code === 'P2025' ? 404 : 500).json({ error: error.message }); }
 });
 
-app.delete('/api/departments/:id', authMiddleware, async (req, res) => {
+app.delete('/api/departments/:id', adminMiddleware, async (req, res) => {
     try {
         await prisma.department.delete({ where: { id: req.params.id } });
         res.json({ success: true });
@@ -1563,19 +1563,19 @@ app.get('/api/profiles/:id', authMiddleware, async (req, res) => {
 });
 
 // ============ HikCentral Config ============
-app.get('/api/hik-config', authMiddleware, async (req, res) => {
+app.get('/api/hik-config', adminMiddleware, async (req, res) => {
     try {
         const config = await prisma.hikcentralConfig.findFirst({
             orderBy: { createdAt: 'desc' }
         });
-        if (!config) return res.json({ apiUrl: '', appKey: '', appSecret: '', syncEnabled: false });
-        res.json(config);
+        if (!config) return res.json({ apiUrl: '', appKey: '', appSecretSet: false, syncEnabled: false });
+        res.json({ apiUrl: config.apiUrl, appKey: config.appKey, appSecretSet: !!config.appSecret, syncEnabled: config.syncEnabled });
     } catch (error: any) {
         res.status(500).json({ error: error.message });
     }
 });
 
-app.put('/api/hik-config', authMiddleware, async (req, res) => {
+app.put('/api/hik-config', adminMiddleware, async (req, res) => {
     try {
         const { apiUrl, appKey, appSecret, syncEnabled } = req.body;
         const existing = await prisma.hikcentralConfig.findFirst({ orderBy: { createdAt: 'desc' } });
@@ -1583,15 +1583,15 @@ app.put('/api/hik-config', authMiddleware, async (req, res) => {
         if (existing) {
             const config = await prisma.hikcentralConfig.update({
                 where: { id: existing.id },
-                data: { apiUrl, appKey, appSecret, syncEnabled },
+                data: { apiUrl, appKey, ...(appSecret && { appSecret }), syncEnabled },
             });
-            return res.json(config);
+            return res.json({ apiUrl: config.apiUrl, appKey: config.appKey, appSecretSet: !!config.appSecret, syncEnabled: config.syncEnabled });
         }
 
         const config = await prisma.hikcentralConfig.create({
             data: { apiUrl, appKey, appSecret, syncEnabled },
         });
-        res.json(config);
+        res.json({ apiUrl: config.apiUrl, appKey: config.appKey, appSecretSet: !!config.appSecret, syncEnabled: config.syncEnabled });
     } catch (error: any) {
         res.status(500).json({ error: error.message });
     }
@@ -1622,7 +1622,7 @@ app.post('/api/visit-logs', authMiddleware, async (req, res) => {
 });
 
 // ============ Users CRUD (for admin panel) ============
-app.get('/api/users', authMiddleware, async (req, res) => {
+app.get('/api/users', adminMiddleware, async (req, res) => {
     try {
         const users = await prisma.user.findMany({
             select: { id: true, email: true, name: true, role: true, isProtected: true, createdAt: true },
@@ -1634,7 +1634,7 @@ app.get('/api/users', authMiddleware, async (req, res) => {
     }
 });
 
-app.post('/api/users', authMiddleware, async (req, res) => {
+app.post('/api/users', adminMiddleware, async (req, res) => {
     try {
         const { email, password, name, role } = req.body;
 
@@ -1653,7 +1653,7 @@ app.post('/api/users', authMiddleware, async (req, res) => {
     }
 });
 
-app.delete('/api/users/:id', authMiddleware, async (req, res) => {
+app.delete('/api/users/:id', adminMiddleware, async (req, res) => {
     try {
         // Check if user is protected before deleting
         const user = await prisma.user.findUnique({ where: { id: req.params.id } });
