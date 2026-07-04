@@ -436,9 +436,15 @@ export class NiceGuaritaProtocol {
 
       socket.on('data', (chunk: Buffer) => {
         buffer = Buffer.concat([buffer, chunk]);
-        
+
         // Each progressive response is 42 bytes (0x00, 0x46, 39 bytes frame, 1 byte CS)
         while (buffer.length >= 42) {
+          // Resync: eventos automáticos (Cmd 4 etc.) podem se intercalar no
+          // mesmo socket - descarta byte a byte até achar um header 0x46.
+          if (buffer[1] !== NICE_COMMANDS.READ_DEVICES) {
+            buffer = buffer.subarray(1);
+            continue;
+          }
           const frameBytes = buffer.subarray(2, 41);
           buffer = buffer.subarray(42);
 
@@ -468,6 +474,13 @@ export class NiceGuaritaProtocol {
              settle(() => resolve(frames));
              break;
           }
+
+          // Handshake progressivo (ver demo C# da Nice, Form1.cs Cmd 70):
+          // o módulo envia UM frame por vez e espera a solicitação do
+          // próximo - um único byte 0x00, SEM checksum (o demo só anexa
+          // checksum a frames de 2+ bytes). Sem isso, só o primeiro frame
+          // chega e a leitura estoura timeout.
+          socket.write(Buffer.from([0x00]));
         }
       });
 
