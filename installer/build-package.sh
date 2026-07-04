@@ -76,8 +76,17 @@ delete pkg.scripts;
 fs.writeFileSync(dest, JSON.stringify(pkg, null, 2));
 EOF
 
+
+# npm_config_target_* força o node-pre-gyp/prebuild-install do pacote `canvas`
+# (dependência nativa do FaceMatchService) a baixar o prebuilt do Windows
+# mesmo rodando este `npm install` sob WSL/Linux - sem isso, o binário
+# instalado é um .node ELF (Linux), que não carrega no node.exe Windows
+# empacotado, quebrando a verificação facial silenciosamente em produção.
 (cd "$BACKEND_STAGE" && \
     PRISMA_CLI_BINARY_TARGETS="native,windows" \
+    npm_config_target_platform=win32 \
+    npm_config_target_arch=x64 \
+    npm_config_target_libc=unknown \
     npm install --omit=dev --no-audit --no-fund --loglevel=error)
 
 log "Gerando Prisma Client (binaryTargets: native + windows)..."

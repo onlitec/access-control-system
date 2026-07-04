@@ -45,6 +45,7 @@ import condominiumRoutes from './routes/condominium.routes';
 import accessAreasRoutes from './routes/access-areas.routes';
 import guaritaPassbackRoutes from './routes/guarita-passback.routes';
 import { eventsRoutes } from './routes/events.routes';
+import onboardingRoutes, { createOnboardingLink } from './routes/onboarding.routes';
 
 dotenv.config();
 
@@ -229,6 +230,7 @@ app.use(healthMetricsMiddleware);
 // setup (cadastro do primeiro admin) é público e precisa vir antes do
 // middleware de autenticação que cobre /api
 app.use('/api/setup', setupRoutes);
+app.use('/api/onboarding', onboardingRoutes);
 app.use('/api', coreRoutes);
 app.use('/api/residents', residentsRoutes);
 app.use('/api/staff', staffRoutes);
@@ -775,13 +777,9 @@ app.post('/api/residents', authMiddleware, async (req, res) => {
             }
         }
 
-        // 3. Gerar Link Único para o App Visitor
-        const onboardingToken = jwt.sign(
-            { personId: person.id, hikPersonId: person.hikPersonId, type: 'onboarding' },
-            JWT_SECRET as string,
-            { expiresIn: '48h' }
-        );
-        const onboardingUrl = `${APP_URL}/login/first-access?token=${onboardingToken}`;
+        // 3. Gerar Link Único para o App Visitor (cria/reseta o estado de
+        //    verificação facial para "awaiting_selfie")
+        const onboardingUrl = await createOnboardingLink(person.id, person.hikPersonId);
 
         // 4. Simular Envio de E-mail (Placeholder)
         if (person.email) {
@@ -964,15 +962,8 @@ app.post('/api/residents/:id/recovery-link', adminMiddleware, async (req, res) =
             });
         }
 
-        // 2. Gerar Token JWT com validade de 48h
-        const onboardingToken = jwt.sign(
-            { personId: person.id, hikPersonId: person.hikPersonId, type: 'onboarding' },
-            JWT_SECRET as string,
-            { expiresIn: '48h' }
-        );
-
-        // 3. Montar a URL de onboarding (adaptada para testes locais conforme registro anterior)
-        const onboardingUrl = `${APP_URL}/login/first-access?token=${onboardingToken}`;
+        // 2. Gerar Token JWT (48h) e resetar o estado de verificação facial
+        const onboardingUrl = await createOnboardingLink(person.id, person.hikPersonId);
 
         res.status(200).json({
             message: 'Link de acesso gerado com sucesso.',
@@ -1138,63 +1129,8 @@ app.post('/api/invites/send-link', authMiddleware, async (req, res) => {
     }
 });
 
-app.post('/api/onboarding/validate', async (req, res) => {
-    try {
-        const { token } = req.body;
-        if (!token) return res.status(400).json({ message: "Token não fornecido" });
-
-        const decoded = jwt.verify(token, JWT_SECRET as string) as { personId: string; hikPersonId: string; type: string };
-        if (decoded.type !== 'onboarding') {
-            return res.status(400).json({ message: "Token inválido para onboarding" });
-        }
-
-        const person = await prisma.person.findUnique({
-            where: { id: decoded.personId }
-        });
-
-        if (!person) {
-            return res.status(404).json({ message: "Morador não encontrado" });
-        }
-
-        res.json({
-            id: person.id,
-            name: `${person.firstName} ${person.lastName}`.trim(),
-            email: person.email,
-            phone: person.phone,
-            photoUrl: person.photoUrl
-        });
-    } catch (error: any) {
-        console.error('Onboarding Validate Error:', error);
-        res.status(400).json({ message: "Token inválido ou expirado" });
-    }
-});
-
-app.post('/api/onboarding/complete', async (req, res) => {
-    try {
-        const { token, password } = req.body;
-        if (!token) return res.status(400).json({ message: "Token não fornecido" });
-        if (!password || password.length < 6) return res.status(400).json({ message: "Senha deve ter ao menos 6 caracteres" });
-
-        const decoded = jwt.verify(token, JWT_SECRET as string) as { personId: string; type: string };
-        if (decoded.type !== 'onboarding') {
-            return res.status(400).json({ message: "Token inválido para onboarding" });
-        }
-
-        const person = await prisma.person.findUnique({ where: { id: decoded.personId } });
-        if (!person) return res.status(404).json({ message: "Morador não encontrado" });
-
-        const hashed = await bcrypt.hash(password, 10);
-        await prisma.person.update({
-            where: { id: person.id },
-            data: { portalPassword: hashed }
-        });
-
-        res.json({ success: true });
-    } catch (error: any) {
-        console.error('Onboarding Complete Error:', error);
-        res.status(500).json({ message: error.message || "Erro ao concluir onboarding" });
-    }
-});
+// Endpoints de onboarding (validate/confirm-cpf/complete/selfie/pending-reviews)
+// migraram para routes/onboarding.routes.ts, montado em /api/onboarding acima.
 
 app.post('/api/invites/validate', async (req, res) => {
     try {

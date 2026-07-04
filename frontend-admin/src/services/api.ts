@@ -879,4 +879,35 @@ export const updateAccessSchedules = async (schedules: AccessSchedule[]) => {
     });
 };
 
+// ============ Onboarding: revisão de verificação facial pendente ============
+export interface OnboardingPendingReview {
+    personId: string;
+    name: string;
+    unit: string | null;
+    tower: string | null;
+    block: string | null;
+    referencePhotoUrl: string | null;
+    lastSelfieUrl: string | null;
+    lastSimilarity: number | null;
+    attempts: number;
+    lastAttemptAt: string | null;
+}
+
+export const getOnboardingPendingReviews = async () => {
+    return request<{ data: OnboardingPendingReview[] }>('/onboarding/pending-reviews');
+};
+
+export const approveOnboardingReview = async (personId: string) => {
+    return request<{ success: boolean }>(`/onboarding/pending-reviews/${personId}/approve`, {
+        method: 'POST',
+    });
+};
+
+export const rejectOnboardingReview = async (personId: string, notes?: string) => {
+    return request<{ success: boolean; message: string }>(`/onboarding/pending-reviews/${personId}/reject`, {
+        method: 'POST',
+        body: JSON.stringify({ notes }),
+    });
+};
+
 export const apiFetch = request;

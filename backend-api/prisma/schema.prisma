@@ -67,9 +67,36 @@ model Person {
   residentSessions   ResidentSession[]
   accessAreas        ResidentAccessArea[]
   passbackState      GuaritaPassbackState?
+  faceVerification   OnboardingFaceVerification?
 
   @@index([unitId])
   @@map("persons")
+}
+
+// ============ Onboarding: confirmação de CPF + verificação facial ============
+
+model OnboardingFaceVerification {
+  id              String    @id @default(uuid())
+  personId        String    @unique @map("person_id")
+  person          Person    @relation(fields: [personId], references: [id], onDelete: Cascade)
+
+  status          String    @default("awaiting_selfie") @map("status")
+  // "awaiting_selfie" | "approved" | "pending_admin_review" | "rejected"
+
+  attempts        Int       @default(0) @map("attempts")
+  lastSelfieUrl   String?   @map("last_selfie_url") // data:image/jpeg;base64,... (só a última tentativa)
+  lastSimilarity  Float?    @map("last_similarity")
+  lastAttemptAt   DateTime? @map("last_attempt_at")
+
+  resolvedBy      String?   @map("resolved_by") // User.id do admin que aprovou/rejeitou
+  resolvedAt      DateTime? @map("resolved_at")
+  resolutionNotes String?   @map("resolution_notes")
+
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
+
+  @@index([status])
+  @@map("onboarding_face_verifications")
 }
 
 model Visitor {

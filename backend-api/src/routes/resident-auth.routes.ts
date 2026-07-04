@@ -59,6 +59,21 @@ router.post('/auth/login', async (req: Request, res: Response): Promise<void> =>
       return;
     }
 
+    // Gate de onboarding: só loga quem já teve a verificação facial aprovada
+    // (automaticamente ou por revisão manual do admin).
+    const verification = await prisma.onboardingFaceVerification.findUnique({
+      where: { personId: person.id },
+    });
+    if (!verification || verification.status !== 'approved') {
+      res.status(403).json({
+        error:
+          verification?.status === 'pending_admin_review'
+            ? 'Seu cadastro está em análise pela portaria. Você será notificado quando aprovado.'
+            : 'Cadastro incompleto. Finalize a verificação facial no link de primeiro acesso.',
+      });
+      return;
+    }
+
     // Create session token
     const sessionToken = crypto.randomBytes(32).toString('hex');
     const expiresAt = new Date(Date.now() + 8 * 60 * 60 * 1000); // 8h

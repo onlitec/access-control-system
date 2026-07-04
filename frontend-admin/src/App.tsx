@@ -19,6 +19,7 @@ import PermissionsPage from '@/pages/PermissionsPage';
 import ReportsPage from '@/pages/ReportsPage';
 import AccessAreasPage from '@/pages/AccessAreasPage';
 import DepartmentsPage from '@/pages/DepartmentsPage';
+import OnboardingReviewPage from '@/pages/OnboardingReviewPage';
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
     const { isAuthenticated, isLoading, user } = useAuth();
@@ -82,6 +83,7 @@ function AppRoutes() {
             <Route path="/admin/permissions" element={<ProtectedRoute><PermissionsPage /></ProtectedRoute>} />
             <Route path="/admin/access-areas" element={<ProtectedRoute><AccessAreasPage /></ProtectedRoute>} />
             <Route path="/admin/departments" element={<ProtectedRoute><DepartmentsPage /></ProtectedRoute>} />
+            <Route path="/admin/onboarding-review" element={<ProtectedRoute><OnboardingReviewPage /></ProtectedRoute>} />
             <Route path="/admin/system-settings" element={<ProtectedRoute><SystemSettingsPage /></ProtectedRoute>} />
 
             {/* Auditoria */}
