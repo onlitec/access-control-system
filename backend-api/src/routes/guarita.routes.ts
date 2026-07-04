@@ -2,7 +2,7 @@ import { Router, Request, Response } from 'express';
 import { PrismaClient } from '@prisma/client';
 import { NiceGuaritaService, ServiceUnavailableError } from '../services/NiceGuaritaService';
 import { NiceGuaritaProtocol } from '../services/NiceGuaritaProtocol';
-import { authMiddleware } from '../middleware/auth';
+import { authMiddleware, portariaMiddleware } from '../middleware/auth';
 import { emitEvent } from '../services/EventBusService';
 
 const router = Router();
@@ -30,23 +30,11 @@ router.get('/devices', async (_req: Request, res: Response): Promise<void> => {
   }
 });
 
-// ── POST /api/guarita/discover ─────────────────────────────────────────────
-router.post('/discover', async (req: Request, res: Response): Promise<void> => {
-  try {
-    const { subnet, port } = req.body;
-    if (!subnet) {
-      res.status(400).json({ error: 'subnet é obrigatória' });
-      return;
-    }
-    const discovered = await NiceGuaritaService.scanNetwork(subnet, port ?? 80);
-    res.json({ found: discovered });
-  } catch (err: any) {
-    res.status(500).json({ error: err.message });
-  }
-});
+// ── POST /api/guarita/discover (legacy, port 80 scan — use /test or line 251 instead) ─────
+// router.post('/discover', portariaMiddleware, async (req: Request, res: Response): Promise<void> => {  // REMOVED: duplicate handler, use line 251
 
 // ── POST /api/guarita/devices ─────────────────────────────────────────────
-router.post('/devices', async (req: Request, res: Response): Promise<void> => {
+router.post('/devices', portariaMiddleware, async (req: Request, res: Response): Promise<void> => {
   try {
     const { name, ip, port, location, sdkConfig } = req.body;
     if (!name || !ip) {
@@ -63,7 +51,7 @@ router.post('/devices', async (req: Request, res: Response): Promise<void> => {
 });
 
 // ── PUT /api/guarita/devices/:id ──────────────────────────────────────────
-router.put('/devices/:id', async (req: Request, res: Response): Promise<void> => {
+router.put('/devices/:id', portariaMiddleware, async (req: Request, res: Response): Promise<void> => {
   try {
     const { name, ip, port, location, enabled, sdkConfig } = req.body;
     const device = await prisma.guaritaDevice.update({
@@ -84,7 +72,7 @@ router.put('/devices/:id', async (req: Request, res: Response): Promise<void> =>
 });
 
 // ── DELETE /api/guarita/devices/:id ───────────────────────────────────────
-router.delete('/devices/:id', async (req: Request, res: Response): Promise<void> => {
+router.delete('/devices/:id', portariaMiddleware, async (req: Request, res: Response): Promise<void> => {
   try {
     await prisma.guaritaDevice.delete({ where: { id: req.params.id } });
     res.json({ success: true });
@@ -104,7 +92,7 @@ router.get('/devices/:id/ping', async (req: Request, res: Response): Promise<voi
 });
 
 // ── POST /api/guarita/devices/:id/import-residents ────────────────────────
-router.post('/devices/:id/import-residents', async (req: Request, res: Response): Promise<void> => {
+router.post('/devices/:id/import-residents', portariaMiddleware, async (req: Request, res: Response): Promise<void> => {
   try {
     const result = await NiceGuaritaService.importResidents(req.params.id);
     res.json({ success: true, imported: result.imported, totalFound: result.total });
@@ -136,7 +124,7 @@ async function emitGateEvent(req: Request, deviceId: string, action: 'open' | 'c
 }
 
 // ── POST /api/guarita/devices/:id/open ────────────────────────────────────
-router.post('/devices/:id/open', async (req: Request, res: Response): Promise<void> => {
+router.post('/devices/:id/open', portariaMiddleware, async (req: Request, res: Response): Promise<void> => {
   try {
     await NiceGuaritaService.openGate(req.params.id);
     await emitGateEvent(req, req.params.id, 'open');
@@ -151,7 +139,7 @@ router.post('/devices/:id/open', async (req: Request, res: Response): Promise<vo
 });
 
 // ── POST /api/guarita/devices/:id/close ───────────────────────────────────
-router.post('/devices/:id/close', async (req: Request, res: Response): Promise<void> => {
+router.post('/devices/:id/close', portariaMiddleware, async (req: Request, res: Response): Promise<void> => {
   try {
     await NiceGuaritaService.closeGate(req.params.id);
     await emitGateEvent(req, req.params.id, 'close');
@@ -177,7 +165,7 @@ router.get('/devices/:id/status', async (req: Request, res: Response): Promise<v
 
 // ── POST /api/guarita/devices/:id/enroll ─────────────────────────────────
 // Enroll a resident card/tag into the Guarita module
-router.post('/devices/:id/enroll', async (req: Request, res: Response): Promise<void> => {
+router.post('/devices/:id/enroll', portariaMiddleware, async (req: Request, res: Response): Promise<void> => {
   try {
     const { serial, deviceType, unit, block, name, vehiclePlate, receiverBitmask } = req.body;
     if (!serial) {
@@ -201,7 +189,7 @@ router.post('/devices/:id/enroll', async (req: Request, res: Response): Promise<
 
 // ── POST /api/guarita/devices/:id/unenroll ───────────────────────────────
 // Remove a device (card/tag) from the Guarita module
-router.post('/devices/:id/unenroll', async (req: Request, res: Response): Promise<void> => {
+router.post('/devices/:id/unenroll', portariaMiddleware, async (req: Request, res: Response): Promise<void> => {
   try {
     const { serial, deviceType } = req.body;
     if (!serial) {
@@ -217,7 +205,7 @@ router.post('/devices/:id/unenroll', async (req: Request, res: Response): Promis
 
 // ── POST /api/guarita/devices/:id/sync-clock ─────────────────────────────
 // Sync the module clock to system time
-router.post('/devices/:id/sync-clock', async (req: Request, res: Response): Promise<void> => {
+router.post('/devices/:id/sync-clock', portariaMiddleware, async (req: Request, res: Response): Promise<void> => {
   try {
     const result = await NiceGuaritaService.syncClock(req.params.id);
     res.json(result);
@@ -250,7 +238,7 @@ router.post('/test', async (req: Request, res: Response): Promise<void> => {
 
 // ── POST /api/guarita/discover ────────────────────────────────────────────
 // Scan a subnet for Nice MG3000 modules (port default 9000)
-router.post('/discover', async (req: Request, res: Response): Promise<void> => {
+router.post('/discover', portariaMiddleware, async (req: Request, res: Response): Promise<void> => {
   try {
     const { subnet, port = 9000, timeoutMs = 1500 } = req.body;
     if (!subnet) { res.status(400).json({ error: 'subnet é obrigatório (ex: 192.168.1)' }); return; }

@@ -1,7 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { PrismaClient } from '@prisma/client';
 import { VideoDoorbellService } from '../services/VideoDoorbellService';
-import { authMiddleware } from '../middleware/auth';
+import { authMiddleware, adminMiddleware } from '../middleware/auth';
 import jwt from 'jsonwebtoken';
 import { config } from '../config/unifiedConfig';
 import { spawn } from 'child_process';
@@ -133,8 +133,8 @@ router.get('/devices/:id', async (req: Request, res: Response): Promise<void> =>
   }
 });
 
-// ── POST /api/doorbell/devices ────────────────────────────────────────────
-router.post('/devices', async (req: Request, res: Response): Promise<void> => {
+// ── POST /api/doorbell/devices (admin only)────────────────────────────────────────────
+router.post('/devices', adminMiddleware, async (req: Request, res: Response): Promise<void> => {
   try {
     const { name, ip, port, username, password, location } = req.body;
     if (!name || !ip || !username || !password) {
@@ -150,8 +150,8 @@ router.post('/devices', async (req: Request, res: Response): Promise<void> => {
   }
 });
 
-// ── PUT /api/doorbell/devices/:id ─────────────────────────────────────────
-router.put('/devices/:id', async (req: Request, res: Response): Promise<void> => {
+// ── PUT /api/doorbell/devices/:id (admin only) ─────────────────────────────────────────
+router.put('/devices/:id', adminMiddleware, async (req: Request, res: Response): Promise<void> => {
   try {
     const { name, ip, port, username, password, location, enabled } = req.body;
     const device = await prisma.doorbellDevice.update({
@@ -166,14 +166,14 @@ router.put('/devices/:id', async (req: Request, res: Response): Promise<void> =>
         ...(enabled !== undefined && { enabled }),
       },
     });
-    res.json({ success: true, device });
+    res.json({ success: true, device: { id: device.id, name: device.name, ip: device.ip, port: device.port, location: device.location, enabled: device.enabled } });
   } catch (err: any) {
     res.status(err.code === 'P2025' ? 404 : 500).json({ error: err.message });
   }
 });
 
-// ── DELETE /api/doorbell/devices/:id ──────────────────────────────────────
-router.delete('/devices/:id', async (req: Request, res: Response): Promise<void> => {
+// ── DELETE /api/doorbell/devices/:id (admin only) ──────────────────────────────────────
+router.delete('/devices/:id', adminMiddleware, async (req: Request, res: Response): Promise<void> => {
   try {
     await prisma.doorbellDevice.delete({ where: { id: req.params.id } });
     res.json({ success: true });

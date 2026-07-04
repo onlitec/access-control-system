@@ -2,6 +2,8 @@ import { Router, Request, Response } from 'express';
 import { prisma } from '../index';
 import { Prisma } from '@prisma/client';
 import { verify } from 'jsonwebtoken';
+import { config } from '../config/unifiedConfig';
+import { authMiddleware } from '../middleware/auth';
 import { registerEventClient, unregisterEventClient } from '../services/EventBusService';
 
 const router = Router();
@@ -12,7 +14,7 @@ router.get('/stream', (req: Request, res: Response) => {
   if (!token) return res.status(401).end();
 
   try {
-    verify(token, process.env.JWT_SECRET || 'secret');
+    verify(token, config.JWT.SECRET);
   } catch {
     return res.status(401).end();
   }
@@ -35,8 +37,8 @@ router.get('/stream', (req: Request, res: Response) => {
   });
 });
 
-// GET /api/events
-router.get('/', async (req: Request, res: Response) => {
+// GET /api/events (required authentication)
+router.get('/', authMiddleware, async (req: Request, res: Response) => {
   try {
     const {
       page = '1',

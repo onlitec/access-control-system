@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { prisma } from '../database';
-import { authMiddleware } from '../middleware/auth';
+import { authMiddleware, portariaMiddleware } from '../middleware/auth';
+import { config } from '../config/unifiedConfig';
 import { NiceGuaritaService } from '../services/NiceGuaritaService';
 import { verify } from 'jsonwebtoken';
 import { emitEvent } from '../services/EventBusService';
@@ -51,7 +52,7 @@ router.get('/events', (req: Request, res: Response) => {
     if (!token) return res.status(401).end();
 
     try {
-        verify(token, process.env.JWT_SECRET || 'secret');
+        verify(token, config.JWT.SECRET);
     } catch {
         return res.status(401).end();
     }
@@ -118,8 +119,8 @@ router.get('/alerts', async (_req: Request, res: Response) => {
     }
 });
 
-// POST /api/guarita/passback/alerts/:id/release — libera entrada + abre portão
-router.post('/alerts/:id/release', async (req: Request, res: Response) => {
+// POST /api/guarita/passback/alerts/:id/release — libera entrada + abre portão (portaria only)
+router.post('/alerts/:id/release', portariaMiddleware, async (req: Request, res: Response) => {
     try {
         const { id } = req.params;
         const operatorId = (req as any).user?.id;
@@ -201,7 +202,7 @@ router.post('/alerts/:id/dismiss', async (req: Request, res: Response) => {
 });
 
 // DELETE /api/guarita/passback/state/:personId — admin reseta estado APB de morador
-router.delete('/state/:personId', async (req: Request, res: Response) => {
+router.delete('/state/:personId', portariaMiddleware, async (req: Request, res: Response) => {
     try {
         const { personId } = req.params;
         await prisma.guaritaPassbackState.deleteMany({ where: { personId } });
