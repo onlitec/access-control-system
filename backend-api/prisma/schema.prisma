@@ -1,5 +1,7 @@
 generator client {
-  provider = "prisma-client-js"
+  provider      = "prisma-client-js"
+  // "windows" é exigido pelo instalador Windows (installer/windows)
+  binaryTargets = ["native", "windows"]
 }
 
 datasource db {
@@ -34,17 +36,27 @@ model Person {
   orgIndexCode       String            @map("org_index_code")
   hikPersonId        String?           @unique @map("hik_person_id")
   externalId         String?           @map("external_id")
+  departmentId       String?           @map("department_id")
+  department         Department?       @relation(fields: [departmentId], references: [id], onDelete: SetNull)
   photoUrl           String?           @map("photo_url")
   createdAt          DateTime          @default(now()) @map("created_at")
   updatedAt          DateTime?         @updatedAt @map("updated_at")
   block              String?
   cpf                String?
+  rg                 String?
+  parkingSpaces      Int?              @map("parking_spaces")
+  vehiclePlate       String?           @map("vehicle_plate")
   document_photo_url String?
   is_owner           Boolean?          @default(true)
   notes              String?
   tower              String?
+  txSerial           String?           @map("tx_serial")
+  cardSerial         String?           @map("card_serial")
   unit_number        String?
+  portalPassword     String?           @map("portal_password")
   residentSessions   ResidentSession[]
+  accessAreas        ResidentAccessArea[]
+  passbackState      GuaritaPassbackState?
 
   @@map("persons")
 }
@@ -77,6 +89,7 @@ model Visitor {
   updated_at         DateTime?
   visiting_resident  String?
   visiting_unit      String?
+  visiting_block     String?
   lgpdConsent        Boolean   @default(false) @map("lgpd_consent")
   consentTimestamp   DateTime? @map("consent_timestamp")
 
@@ -84,15 +97,33 @@ model Visitor {
 }
 
 model AccessEvent {
-  id         String   @id @default(uuid())
-  personName String   @map("person_name")
-  eventTime  DateTime @map("event_time")
-  deviceName String   @map("device_name")
-  doorName   String   @map("door_name")
-  eventType  String   @map("event_type")
-  picUri     String?  @map("pic_uri")
-  createdAt  DateTime @default(now()) @map("created_at")
+  id           String    @id @default(uuid())
+  occurredAt   DateTime  @default(now()) @map("occurred_at")
+  personName   String    @map("person_name")
+  personType   String    @default("visitor") @map("person_type") // "resident" | "visitor" | "provider_condo" | "provider_resident"
+  personId     String?   @map("person_id")
+  unit         String?   @map("unit") // e.g. "Torre A, Apto 102"
+  operatorId   String?   @map("operator_id") // system user who registered the entry
+  deviceName   String?   @map("device_name") // videoporteiro or access controller name
+  status       String    @default("pending") @map("status") // "authorized" | "denied" | "pending"
+  photoUrl     String?   @map("photo_url")
+  notes        String?   @map("notes")
+  createdAt    DateTime  @default(now()) @map("created_at")
 
+  // Legacy fields preserved for backward compatibility
+  eventTime    DateTime  @default(now()) @map("event_time")
+  doorName     String?   @map("door_name")
+  eventType    String?   @default("face") @map("event_type")
+  picUri       String?   @map("pic_uri")
+
+  // Central de Eventos (feed unificado)
+  direction    String?   @map("direction") // "in" | "out"
+  category     String    @default("access") @map("category") // "access" | "delivery" | "gate" | "alarm" | "device" | "system"
+  source       String?   @map("source") // "hikcentral" | "guarita" | "videoporteiro" | "qr_code" | "manual" | "controle_rf"
+  metadata     Json?     @map("metadata")
+
+  @@index([occurredAt(sort: Desc)])
+  @@index([category, occurredAt(sort: Desc)])
   @@map("access_events")
 }
 
@@ -101,11 +132,16 @@ model User {
   email              String              @unique
   password           String
   name               String
-  role               String              @default("ADMIN")
+  role               String              @default("admin_master")
+  status             String              @default("active")
   isProtected        Boolean             @default(false) @map("is_protected")
+  lastLoginAt        DateTime?           @map("last_login_at")
+  mustChangePassword Boolean             @default(true) @map("must_change_password")
+  customPermissions  Json?               @map("custom_permissions")
   createdAt          DateTime            @default(now()) @map("created_at")
   refreshSessions    RefreshSession[]
   sessionAuditEvents SessionAuditEvent[]
+  adminAuditEvents   AdminAuditEvent[]
 
   @@map("users")
 }
@@ -146,6 +182,23 @@ model SessionAuditEvent {
   @@map("session_audit_events")
 }
 
+model AdminAuditEvent {
+  id         String   @id @default(uuid())
+  userId     String?  @map("user_id")
+  userEmail  String?  @map("user_email")
+  action     String
+  status     String
+  ipAddress  String?  @map("ip_address")
+  details    String?
+  createdAt  DateTime @default(now()) @map("created_at")
+  user       User?    @relation(fields: [userId], references: [id])
+
+  @@index([createdAt])
+  @@index([action, createdAt])
+  @@index([userEmail, createdAt])
+  @@map("admin_audit_events")
+}
+
 model ServiceProvider {
   id                 String   @id @default(uuid())
   fullName           String   @map("full_name")
@@ -158,6 +211,8 @@ model ServiceProvider {
   photoUrl           String?  @map("photo_url")
   documentPhotoUrl   String?  @map("document_photo_url")
   tower              String?
+  visitingBlock      String?  @map("visiting_block")
+  visitingUnit       String?  @map("visiting_unit")
   visitingResident   String?  @map("visiting_resident")
   validFrom          String?  @map("valid_from")
   validUntil         String?  @map("valid_until")
@@ -171,15 +226,52 @@ model ServiceProvider {
   @@map("service_providers")
 }
 
+model Department {
+  id           String   @id @default(cuid())
+  name         String   @unique
+  description  String?
+  color        String?
+  hasAddresses Boolean  @default(true) @map("has_addresses")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+  persons      Person[]
+
+  @@map("departments")
+}
+
 model Tower {
   id          String   @id @default(uuid())
   name        String   @unique
   description String?
   isActive    Boolean  @default(true) @map("is_active")
+  floors      Int      @default(1)
+  blocks      Block[]
+  units       Unit[]
   createdAt   DateTime @default(now()) @map("created_at")
   updatedAt   DateTime @updatedAt @map("updated_at")
 
   @@map("towers")
+}
+
+model Delivery {
+  id            String    @id @default(uuid())
+  courierName   String?   @map("courier_name")   // nome do entregador
+  company       String?                          // iFood, Mercado Livre, Correios...
+  orderRef      String?   @map("order_ref")      // "Pedido 5894", "Vol 2"
+  unit          String                           // destino: "Torre A, Apto 804"
+  residentId    String?   @map("resident_id")
+  status        String    @default("awaiting")   // awaiting | picked_up | returned
+  photoUrl      String?   @map("photo_url")
+  notes         String?
+  receivedById  String?   @map("received_by_id") // operador que registrou
+  receivedAt    DateTime  @default(now()) @map("received_at")
+  pickedUpAt    DateTime? @map("picked_up_at")
+  pickedUpBy    String?   @map("picked_up_by")   // nome de quem retirou
+  condominiumId String?   @map("condominium_id") // preparo multi-tenant (Fase G)
+  createdAt     DateTime  @default(now()) @map("created_at")
+
+  @@index([status, receivedAt(sort: Desc)])
+  @@map("deliveries")
 }
 
 model SecurityMetricSnapshot {
@@ -284,4 +376,194 @@ model EntityMapping {
   @@index([entityType])
   @@index([pageRoute, entityType, isActive])
   @@map("entity_mappings")
+}
+
+model BackupRun {
+  id           String    @id @default(cuid())
+  status       String    // "running" | "success" | "failed"
+  type         String    // "automatic" | "manual"
+  startedAt    DateTime  @default(now()) @map("started_at")
+  completedAt  DateTime? @map("completed_at")
+  durationMs   Int?      @map("duration_ms")
+  sizeBytes    BigInt?   @map("size_bytes")
+  destination  String?
+  errorMessage String?   @map("error_message")
+  triggeredBy  String?   @map("triggered_by") // admin user id or "scheduler"
+  createdAt    DateTime  @default(now()) @map("created_at")
+
+  @@map("backup_runs")
+}
+
+model Block {
+  id        String   @id @default(cuid())
+  name      String
+  towerId   String   @map("tower_id")
+  tower     Tower    @relation(fields: [towerId], references: [id], onDelete: Cascade)
+  units     Unit[]
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@map("blocks")
+}
+
+model Unit {
+  id            String   @id @default(cuid())
+  number        String
+  floor         Int?
+  status        String   @default("vacant") // "occupied" | "vacant"
+  towerId       String   @map("tower_id")
+  tower         Tower    @relation(fields: [towerId], references: [id], onDelete: Cascade)
+  blockId       String?  @map("block_id")
+  block         Block?   @relation(fields: [blockId], references: [id], onDelete: Cascade)
+  parkingSpaces Int      @default(0) @map("parking_spaces")
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  @@map("units")
+}
+
+model CondominiumSettings {
+  id                   String   @id @default("singleton")
+  name                 String
+  cnpj                 String?
+  address              String?
+  phone                String?
+  email                String?
+  logoUrl              String?  @map("logo_url")
+  type                 String   @default("vertical")
+  antiPassbackEnabled  Boolean  @default(false) @map("anti_passback_enabled")
+  updatedAt            DateTime @updatedAt @map("updated_at")
+
+  @@map("condominium_settings")
+}
+
+// Configurações de infraestrutura do sistema (SMTP, atualizações) —
+// singleton editável pelo painel admin; campos nulos caem no fallback do .env
+model SystemSettings {
+  id                String   @id @default("singleton")
+  smtpHost          String?  @map("smtp_host")
+  smtpPort          Int?     @map("smtp_port")
+  smtpUser          String?  @map("smtp_user")
+  smtpPassword      String?  @map("smtp_password")
+  smtpFrom          String?  @map("smtp_from")
+  smtpFromName      String?  @map("smtp_from_name")
+  updateManifestUrl String?  @map("update_manifest_url")
+  updatedAt         DateTime @updatedAt @map("updated_at")
+
+  @@map("system_settings")
+}
+
+// ============ Anti-Passagem Dupla (Guarita IP) ============
+
+model GuaritaPassbackState {
+  id         String   @id @default(cuid())
+  personId   String   @unique @map("person_id")
+  serial     String
+  direction  String                       // "IN" | "OUT"
+  deviceId   String?  @map("device_id")
+  occurredAt DateTime @map("occurred_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+  person     Person   @relation(fields: [personId], references: [id], onDelete: Cascade)
+
+  @@map("guarita_passback_states")
+}
+
+model GuaritaPassbackAlert {
+  id         String    @id @default(cuid())
+  personId   String?   @map("person_id")
+  personName String    @map("person_name")
+  serial     String
+  deviceId   String?   @map("device_id")
+  deviceName String?   @map("device_name")
+  unit       String?
+  photoUrl   String?   @map("photo_url")
+  occurredAt DateTime  @map("occurred_at")
+  resolved   Boolean   @default(false)
+  resolvedAt DateTime? @map("resolved_at")
+  resolvedBy String?   @map("resolved_by")
+
+  @@map("guarita_passback_alerts")
+}
+
+model RolePermission {
+  id                 String   @id @default(uuid())
+  role               String   @unique
+  health             Boolean  @default(false)
+  containers         Boolean  @default(false)
+  backups            Boolean  @default(false)
+  logs               Boolean  @default(false)
+  integrations       Boolean  @default(false)
+  condo              Boolean  @default(false)
+  users              Boolean  @default(false)
+  permissions        Boolean  @default(false)
+  audit              Boolean  @default(false)
+  deleteRegistration Boolean  @default(false) @map("delete_registration")
+  editRegistration   Boolean  @default(false) @map("edit_registration")
+  viewOnly           Boolean  @default(false) @map("view_only")
+  editDepartments    Boolean  @default(false) @map("edit_departments")
+  manageDevices      Boolean  @default(false) @map("manage_devices")
+  createdAt          DateTime @default(now()) @map("created_at")
+  updatedAt          DateTime @updatedAt @map("updated_at")
+
+  @@map("role_permissions")
+}
+
+// ============ Áreas de Acesso do Condomínio ============
+
+model AccessArea {
+  id             String               @id @default(cuid())
+  name           String
+  description    String?
+  icon           String?              @default("🏠")
+  isActive       Boolean              @default(true) @map("is_active")
+  order          Int                  @default(0)
+  createdAt      DateTime             @default(now()) @map("created_at")
+  updatedAt      DateTime             @updatedAt @map("updated_at")
+  residentAccess ResidentAccessArea[]
+
+  @@map("access_areas")
+}
+
+model ResidentAccessArea {
+  id        String     @id @default(cuid())
+  personId  String     @map("person_id")
+  areaId    String     @map("area_id")
+  grantedAt DateTime   @default(now()) @map("granted_at")
+  grantedBy String?    @map("granted_by")
+  person    Person     @relation(fields: [personId], references: [id], onDelete: Cascade)
+  area      AccessArea @relation(fields: [areaId], references: [id], onDelete: Cascade)
+
+  @@unique([personId, areaId])
+  @@map("resident_access_areas")
+}
+
+model RegistrationRequirement {
+  id        String   @id @default(cuid())
+  category  String   // "resident" | "visitor" | "condo_provider" | "resident_provider"
+  fieldName String   @map("field_name")
+  status    String   // "required" | "optional" | "hidden"
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@unique([category, fieldName])
+  @@map("registration_requirements")
+}
+
+model Blacklist {
+  id        String   @id @default(uuid())
+  name      String
+  document  String   @unique
+  reason    String
+  createdAt DateTime @default(now()) @map("created_at")
+  createdBy String   @map("created_by")
+
+  @@map("blacklist")
+}
+
+model AccessSchedule {
+  id        String   @id @default(uuid())
+  type      String   // "visitor" | "provider"
+  dayOfWeek Int      @map("day_of_week") // 0-6
+  startTime String   @map("start_time") // "08:00"
+  endTime   String   @map("end_time") // "18:00"
+  isActive  Boolean  @default(true) @map("is_active")
+
+  @@map("access_schedules")
 }

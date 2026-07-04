@@ -2,10 +2,13 @@ import { app, prisma } from './index';
 import { AuditService } from './services/AuditService';
 import { config } from './config/unifiedConfig';
 import { initProviders } from './providers/ProviderFactory';
-import { 
-    createSecurityMetricsSnapshot, 
-    pruneSecurityMetricsSnapshots 
+import {
+    createSecurityMetricsSnapshot,
+    pruneSecurityMetricsSnapshots
 } from './services/securityMetrics';
+import { guaritaEventServer } from './services/NiceGuaritaProtocol';
+import { NiceGuaritaService, setPassbackBroadcast } from './services/NiceGuaritaService';
+import { broadcastPassbackAlert } from './routes/guarita-passback.routes';
 
 const port = process.env.PORT || 3001;
 
@@ -20,6 +23,17 @@ initProviders();
 
 app.listen(Number(port), '0.0.0.0', () => {
     console.log(`Backend API running on http://0.0.0.0:${port}`);
+
+    // ── Start Nice Guarita MG3000 event listener ─────────────────────────
+    setPassbackBroadcast(broadcastPassbackAlert);
+    guaritaEventServer.start();
+    guaritaEventServer.on('access_event', (event) => {
+        void NiceGuaritaService.handleAccessEvent(event);
+    });
+    guaritaEventServer.on('server_error', (err: Error) => {
+        console.error('[NiceGuarita] Event server error:', err.message);
+    });
+    // ─────────────────────────────────────────────────────────────────────
 
     if (SESSION_AUDIT_PRUNE_INTERVAL_MINUTES === 0) {
         console.log('Session audit retention job disabled (SESSION_AUDIT_PRUNE_INTERVAL_MINUTES=0)');

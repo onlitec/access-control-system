@@ -5,6 +5,8 @@ import { EntityMappingService } from '../services/EntityMappingService';
 import { HikCentralSyncService } from '../services/HikCentralSyncService';
 import { HIK_ORG_NAMES, resolveRoleFromOrg } from '../config/hik-constants';
 
+const isHikCentralMode = () => (process.env.PROVIDER_TYPE ?? 'local').toLowerCase() === 'hikcentral';
+
 export class ResidentsController {
     async list(req: Request, res: Response) {
         try {
@@ -13,9 +15,8 @@ export class ResidentsController {
             const limitNum = parseInt(limit);
 
             const residentOrgCodes = await EntityMappingService.resolveOrgCodesWithFallback('/painel/residents');
-            console.log(`[HikCentral] MORADORES orgCodes resolvidos: ${residentOrgCodes.join(',')}`);
 
-            try {
+            if (isHikCentralMode()) try {
                 const hikPromise = HikCentralService.getPersonList({
                     pageNo: 1,
                     pageSize: 500,
@@ -126,21 +127,29 @@ export class ResidentsController {
                 where,
                 skip,
                 take: limitNum,
-                orderBy: { createdAt: 'desc' }
+                orderBy: { createdAt: 'desc' },
+                include: { department: { select: { id: true, name: true, color: true } } }
             });
             const count = await prisma.person.count({ where });
             const localMapped = data.map((p: any) => ({
                 id: p.id,
                 full_name: `${p.firstName} ${p.lastName}`.trim() || '-',
-                cpf: '',
+                cpf: p.cpf || '',
+                rg: p.rg || '',
                 phone: p.phone || null,
                 email: p.email || null,
-                unit_number: p.orgIndexCode || '',
-                block: null,
-                tower: HIK_ORG_NAMES[p.orgIndexCode] || null,
+                unit_number: p.unit_number || p.orgIndexCode || '',
+                block: p.block || null,
+                tower: p.tower || HIK_ORG_NAMES[p.orgIndexCode] || null,
                 photo_url: p.photoUrl || (p.hikPersonId ? `/api/hikcentral/person-photo/${p.hikPersonId}` : null),
-                is_owner: true,
+                is_owner: p.is_owner !== null ? p.is_owner : true,
                 hikcentral_person_id: p.hikPersonId || null,
+                notes: p.notes || null,
+                parkingSpaces: p.parkingSpaces || null,
+                vehiclePlate: p.vehiclePlate || null,
+                created_at: p.createdAt,
+                updated_at: p.updatedAt,
+                department: p.department || null,
             }));
             res.json({ data: localMapped, count, source: 'local' });
         } catch (error: any) {

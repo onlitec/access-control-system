@@ -30,6 +30,8 @@ import {
   UserCheck,
   Briefcase,
   History,
+  Activity,
+  Package,
   Settings,
   Shield,
   ShieldCheck,
@@ -54,12 +56,19 @@ const menuSections = [
       { title: 'Moradores', icon: Users, path: '/residents' },
       { title: 'Visitantes', icon: UserCheck, path: '/visitors' },
       { title: 'Prestadores', icon: Briefcase, path: '/providers' },
-      { title: 'P. Calabasas', icon: ShieldCheck, path: '/staff' }
+      { title: 'Funcionários', icon: ShieldCheck, path: '/staff' }
+    ]
+  },
+  {
+    title: 'Operações',
+    items: [
+      { title: 'Entregas', icon: Package, path: '/entregas' }
     ]
   },
   {
     title: 'Segurança',
     items: [
+      { title: 'Central de Eventos', icon: Activity, path: '/eventos' },
       { title: 'Histórico de Acesso', icon: History, path: '/access-logs' }
     ]
   }
@@ -79,9 +88,9 @@ const adminItems = [
 ];
 
 export default function AppLayout({ children }: AppLayoutProps) {
-  const { profile, signOut } = useAuth();
+  const { user, profile, signOut } = useAuth();
   const location = useLocation();
-  const isAdmin = profile?.role === 'admin';
+  const isAdmin = user?.role === 'admin_master' || user?.role === 'gestor_condominio';
 
   const handleSignOut = async () => {
     await signOut();

@@ -1,26 +1,28 @@
 {
-  "timestamp_utc": "2026-02-23T00:15:04Z",
-  "host": "CALABASAS",
-  "overall_status": "ok",
+  "timestamp_utc": "2026-07-03T19:10:01Z",
+  "host": "CESSO-002-PACOTE",
+  "overall_status": "fail",
   "last_monitor_check": {
-    "timestamp_utc": "2026-02-23T00:15:01Z",
+    "timestamp_utc": "2026-07-03T19:10:01Z",
     "result": "ok"
   },
   "api_health": {
     "http_code": 200,
-    "latency_seconds": 0.006552
+    "latency_seconds": 0.006782
   },
   "backup": {
-    "latest_file": "calabasas_db_20260222_210001.dump",
-    "size_bytes": 961850,
-    "age_hours": 0
+    "latest_file": "calabasas_db_20260703_120001.dump",
+    "size_bytes": 924906,
+    "age_hours": 4
   },
   "security_metrics": {
-    "latest_snapshot_at": "2026-02-23T00:08:11Z",
-    "age_minutes": 6,
-    "login_attempts": 5586,
-    "login_failed_attempts": 5584,
-    "login_failure_rate": 99.96
+    "latest_snapshot_at": null,
+    "age_minutes": null,
+    "login_attempts": null,
+    "login_failed_attempts": null,
+    "login_failure_rate": null
   },
-  "services": [ {"name":"calabasas-proxy","state":"running","health":"healthy"} , {"name":"calabasas-api","state":"running","health":"healthy"} , {"name":"calabasas-db","state":"running","health":"healthy"} , {"name":"calabasas-painel","state":"running","health":"healthy"} , {"name":"calabasas-login","state":"running","health":"healthy"} , {"name":"calabasas-admin","state":"running","health":"healthy"} ]
+  "services": [ {"name":"calabasas-proxy","state":"missing","health":"missing"} , {"name":"calabasas-api","state":"
+unknown","health":"
+unknown"} , {"name":"calabasas-db","state":"missing","health":"missing"} , {"name":"calabasas-painel","state":"missing","health":"missing"} , {"name":"calabasas-login","state":"missing","health":"missing"} , {"name":"calabasas-admin","state":"missing","health":"missing"} ]
 }

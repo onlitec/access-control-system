@@ -79,4 +79,28 @@ export class AuditService {
         });
         return { deleted: deleted.count, cutoff };
     }
+
+    static async logAdminAuditEvent(params: {
+        action: string;
+        status: string;
+        req: Request;
+        userId?: string | null;
+        userEmail?: string | null;
+        details?: string;
+    }) {
+        try {
+            await prisma.adminAuditEvent.create({
+                data: {
+                    action: params.action,
+                    status: params.status,
+                    userId: params.userId ?? null,
+                    userEmail: params.userEmail ?? null,
+                    ipAddress: getClientIp(params.req),
+                    details: params.details?.slice(0, 1000),
+                },
+            });
+        } catch (error: any) {
+            console.error('Admin audit log error:', error);
+        }
+    }
 }

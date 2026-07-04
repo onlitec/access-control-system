@@ -1,0 +1,421 @@
+"use strict";
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.guaritaEventServer = exports.NiceGuaritaEventServer = exports.NiceGuaritaProtocol = exports.EVENT_TYPES = exports.ENROLL_SUBCOMMAND = exports.DEVICE_TYPES = exports.NICE_COMMANDS = void 0;
+const net_1 = __importDefault(require("net"));
+const events_1 = require("events");
+// ─────────────────────────────────────────────────────────────────────────────
+// NICE GUARITA MG3000 — BINARY PROTOCOL LAYER
+// Protocol: raw TCP socket or Serial RS-232/RS-485
+// Frame format: [0x00 header] + [CMD] + [PAYLOAD...] + [CHECKSUM (sum of all)]
+// Reference: sdk-nice/VISUAL_C_SHARP_demoMG3000_v1/demoMG3000/Form1.cs
+// ─────────────────────────────────────────────────────────────────────────────
+exports.NICE_COMMANDS = {
+    AUTO_EVENT: 0x04, // Cmd 4:  Push event from device (no request needed)
+    READ_DEVICE_COUNT: 0x07, // Cmd 7:  Read number of enrolled devices
+    WRITE_CLOCK: 0x0B, // Cmd 11: Write date/time to module
+    READ_CLOCK: 0x0C, // Cmd 12: Read date/time from module
+    TRIGGER_OUTPUT: 0x0D, // Cmd 13: Trigger relay output (open gate)
+    UPDATE_RECEIVERS: 0x1D, // Cmd 29: Push enrollments to receivers (MANDATORY after enroll)
+    REMOTE_MODE: 0x23, // Cmd 35: Activate remote mode on receivers (90s)
+    CANCEL_PROGRESSIVE: 0x2B, // Cmd 43: Stop progressive command timeout
+    STOP_PROGRESSIVE: 0x2B, // Cmd 43: Stop progressive command timeout
+    ENROLL_DEVICE: 0x43, // Cmd 67: Enroll (sub 0x00) or delete (sub 0x04) device
+    READ_DEVICES: 0x46, // Cmd 70: Read all devices (progressive)
+    FINGERPRINT_REQ: 0x39, // Cmd 57: ANVIZ fingerprint not enrolled
+    FINGERPRINT_SLOT: 0x3B, // Cmd 59: Request free biometric slot
+    FINGERPRINT_LINK: 0x4A, // Cmd 74: Link ANVIZ biometric template
+};
+exports.DEVICE_TYPES = {
+    CONTROL: 0x01, // Remote control (TX)
+    TAG_ACTIVE: 0x02, // Active TAG
+    CARD: 0x03, // Card / badge
+    BIOMETRIC: 0x05, // Fingerprint
+    TAG_PASSIVE: 0x06, // Passive TAG (RFID)
+    PASSWORD: 0x07, // Numeric password
+};
+exports.ENROLL_SUBCOMMAND = {
+    ADD: 0x00,
+    DELETE: 0x04,
+};
+exports.EVENT_TYPES = {
+    0x00: 'device_triggered',
+    0x01: 'access_granted',
+    0x02: 'device_powered_on',
+    0x03: 'doorbell',
+    0x04: 'programming_changed',
+    0x05: 'intercom_triggered',
+    0x06: 'remote_pc_trigger',
+    0x07: 'receivers_not_updated',
+    0x08: 'clone_attempt',
+    0x09: 'panic',
+    0x0A: 'sd_card_removed',
+    0x0B: 'restore_done',
+    0x0C: 'receiver_event',
+    0x0D: 'auto_backup',
+    0x0E: 'manual_backup',
+    0x0F: 'interphone',
+};
+// ─────────────────────────────────────────────────────────────────────────────
+// INTERNAL UTILITIES
+// ─────────────────────────────────────────────────────────────────────────────
+function calcChecksum(bytes) {
+    return bytes.reduce((acc, b) => (acc + b) & 0xFF, 0);
+}
+function buildFrame(payload) {
+    const cs = calcChecksum(payload);
+    return Buffer.from([...payload, cs]);
+}
+function bcd2int(bcd) {
+    return ((bcd >> 4) & 0x0F) * 10 + (bcd & 0x0F);
+}
+function int2bcd(val) {
+    return ((Math.floor(val / 10) & 0x0F) << 4) | (val % 10);
+}
+function buildDeviceFrame39(d) {
+    const frame = new Array(39).fill(0);
+    // Byte 0: [type (4 high)] + [dest nibble (4 low)]
+    let destNibble = 0x00;
+    if (d.deviceType === exports.DEVICE_TYPES.BIOMETRIC || d.deviceType === exports.DEVICE_TYPES.PASSWORD) {
+        destNibble = 0x03;
+    }
+    else if (d.deviceType === exports.DEVICE_TYPES.CONTROL) {
+        destNibble = (d.serial >>> 24) & 0x0F;
+    }
+    frame[0] = ((d.deviceType << 4) & 0xF0) | (destNibble & 0x0F);
+    // Bytes 1-3: serial (6 or 7 hex digits)
+    frame[1] = (d.serial >> 16) & 0xFF;
+    frame[2] = (d.serial >> 8) & 0xFF;
+    frame[3] = d.serial & 0xFF;
+    // Bytes 4-5: counter / biometric ID
+    const counter = d.counter ?? 0;
+    frame[4] = (counter >> 8) & 0xFF;
+    frame[5] = counter & 0xFF;
+    // Bytes 6-7: unit (centena and remainder)
+    const unit = d.unit ?? 0;
+    frame[6] = Math.floor(unit / 100);
+    frame[7] = unit % 100;
+    // Byte 8: block index
+    frame[8] = d.block ?? 0x00;
+    // Byte 9: group
+    frame[9] = d.group ?? 0x00;
+    // Byte 10: receiver bitmask (all 8 receivers enabled by default)
+    frame[10] = d.receiverBitmask ?? 0xFF;
+    // Bytes 11-28: identification (18 ASCII chars, space-padded)
+    const label = (d.identification ?? '').substring(0, 18).padEnd(18, ' ');
+    for (let i = 0; i < 18; i++) {
+        frame[11 + i] = label.charCodeAt(i) & 0xFF;
+    }
+    // Byte 29: flags — read-only, always 0 when writing
+    frame[29] = 0x00;
+    // Byte 30: vehicle brand (0x1F = no vehicle)
+    frame[30] = d.vehicleBrand ?? 0x1F;
+    // Byte 31: vehicle color
+    frame[31] = d.vehicleColor ?? 0x00;
+    // Bytes 32-38: vehicle plate (7 chars, space-padded)
+    const plateStr = (d.vehiclePlate ?? '').substring(0, 7).padEnd(7, ' ');
+    for (let i = 0; i < 7; i++) {
+        frame[32 + i] = (d.vehicleBrand !== undefined && d.vehicleBrand !== 0x1F)
+            ? plateStr.charCodeAt(i) & 0xFF
+            : 0x20;
+    }
+    return frame;
+}
+function parseEventFrame(data) {
+    if (data.length < 20 || data[1] !== exports.NICE_COMMANDS.AUTO_EVENT)
+        return null;
+    const evt = Buffer.alloc(16);
+    data.copy(evt, 0, 3, 19);
+    const evtType = (evt[0] & 0xF0) >> 4;
+    const dispType = (evt[10] & 0xF0) >> 4;
+    let serialStr = '------';
+    if ([0x00, 0x08, 0x09, 0x0C, 0x0F].includes(evtType)) {
+        if (dispType === 1) {
+            serialStr = `${(evt[0] & 0x0F).toString(16)}${evt[1].toString(16).padStart(2, '0')}${evt[2].toString(16).padStart(2, '0')}${evt[3].toString(16).padStart(2, '0')}`;
+        }
+        else {
+            serialStr = `${evt[1].toString(16).padStart(2, '0')}${evt[2].toString(16).padStart(2, '0')}${evt[3].toString(16).padStart(2, '0')}`;
+        }
+    }
+    const dateTime = new Date(2000 + bcd2int(evt[9]), bcd2int(evt[8]) - 1, bcd2int(evt[7]), bcd2int(evt[4]), bcd2int(evt[5]), bcd2int(evt[6]));
+    const kindMap = {
+        1: 'TX_remote', 2: 'TAG_active', 3: 'card',
+        5: 'biometric', 6: 'TAG_passive', 7: 'password',
+    };
+    return {
+        type: exports.EVENT_TYPES[evtType] ?? 'unknown',
+        serial: serialStr.toUpperCase(),
+        dateTime,
+        deviceKind: kindMap[dispType] ?? 'unknown',
+        rawFrame: data,
+    };
+}
+// ─────────────────────────────────────────────────────────────────────────────
+// TCP TRANSPORT
+// ─────────────────────────────────────────────────────────────────────────────
+async function tcpSendReceive(ip, port, payload, timeoutMs = 5000) {
+    return new Promise((resolve, reject) => {
+        const socket = new net_1.default.Socket();
+        const frame = buildFrame(payload);
+        let response = Buffer.alloc(0);
+        let settled = false;
+        function settle(fn) {
+            if (!settled) {
+                settled = true;
+                fn();
+            }
+        }
+        const timer = setTimeout(() => {
+            socket.destroy();
+            settle(() => reject(new Error(`NiceGuarita TCP timeout (${ip}:${port})`)));
+        }, timeoutMs);
+        socket.connect(port, ip, () => socket.write(frame));
+        socket.on('data', (chunk) => { response = Buffer.concat([response, chunk]); });
+        socket.on('end', () => { clearTimeout(timer); socket.destroy(); settle(() => resolve(response)); });
+        socket.on('close', () => { clearTimeout(timer); settle(() => resolve(response)); });
+        socket.on('error', (err) => { clearTimeout(timer); socket.destroy(); settle(() => reject(err)); });
+    });
+}
+// ─────────────────────────────────────────────────────────────────────────────
+// PROTOCOL PUBLIC API
+// ─────────────────────────────────────────────────────────────────────────────
+class NiceGuaritaProtocol {
+    /** Cmd 13: Trigger relay output (open gate/barrier) */
+    static async triggerOutput(ip, port, deviceType = 0xFF, // 0xFF = ALL
+    deviceNum = 0xFF, // 0xFF = ALL
+    output = 0x04, generateEvent = true) {
+        const frame = buildFrame([
+            0x00, exports.NICE_COMMANDS.TRIGGER_OUTPUT,
+            deviceType, deviceNum, output,
+            generateEvent ? 0x01 : 0x00,
+        ]);
+        // Cmd 13 sends no response from the device
+        await new Promise((resolve, reject) => {
+            const socket = new net_1.default.Socket();
+            socket.setTimeout(3000);
+            socket.connect(port, ip, () => { socket.write(frame); socket.end(); });
+            socket.on('close', () => resolve());
+            socket.on('timeout', () => { socket.destroy(); resolve(); });
+            socket.on('error', reject);
+        });
+    }
+    /** Cmd 67/0: Enroll a device into the Guarita memory */
+    static async enrollDevice(ip, port, device) {
+        const frame39 = buildDeviceFrame39(device);
+        const payload = [0x00, exports.NICE_COMMANDS.ENROLL_DEVICE, exports.ENROLL_SUBCOMMAND.ADD, ...frame39];
+        const resp = await tcpSendReceive(ip, port, payload, 8000);
+        if (resp.length < 4 || resp[1] !== exports.NICE_COMMANDS.ENROLL_DEVICE) {
+            return { success: false, message: 'Resposta inválida do Guarita' };
+        }
+        const code = resp[3];
+        const messages = {
+            0x00: 'Dispositivo cadastrado com sucesso',
+            0x01: 'Memória do Guarita cheia',
+            0x02: 'Dispositivo já existe na memória',
+            0xFE: 'Frame de cadastro inválido',
+        };
+        return { success: code === 0x00, errorCode: code, message: messages[code] ?? `Erro 0x${code.toString(16)}` };
+    }
+    /** Cmd 67/4: Delete a device from Guarita memory */
+    static async deleteDevice(ip, port, deviceType, serial, opts) {
+        const frame39 = new Array(39).fill(0);
+        if (deviceType === exports.DEVICE_TYPES.BIOMETRIC && opts?.biometricId !== undefined) {
+            frame39[0] = 0x53;
+            frame39[4] = (opts.biometricId >> 8) & 0xFF;
+            frame39[5] = opts.biometricId & 0xFF;
+        }
+        else if (deviceType === exports.DEVICE_TYPES.PASSWORD && opts?.password !== undefined) {
+            frame39[0] = 0x73;
+            frame39[1] = (opts.password >> 16) & 0xFF;
+            frame39[2] = (opts.password >> 8) & 0xFF;
+            frame39[3] = opts.password & 0xFF;
+        }
+        else {
+            frame39[0] = ((deviceType << 4) & 0xF0) | ((serial >>> 24) & 0x0F);
+            frame39[1] = (serial >> 16) & 0xFF;
+            frame39[2] = (serial >> 8) & 0xFF;
+            frame39[3] = serial & 0xFF;
+        }
+        const payload = [0x00, exports.NICE_COMMANDS.ENROLL_DEVICE, exports.ENROLL_SUBCOMMAND.DELETE, ...frame39];
+        const resp = await tcpSendReceive(ip, port, payload, 8000);
+        if (resp.length < 4 || resp[1] !== exports.NICE_COMMANDS.ENROLL_DEVICE) {
+            return { success: false, message: 'Resposta inválida' };
+        }
+        const code = resp[3];
+        const messages = {
+            0x00: 'Dispositivo apagado com sucesso',
+            0x03: 'Dispositivo não encontrado',
+            0xFE: 'Frame inválido',
+        };
+        return { success: code === 0x00, message: messages[code] ?? `Erro 0x${code.toString(16)}` };
+    }
+    /** Cmd 29: Update receivers — MANDATORY after every enroll/delete */
+    static async updateReceivers(ip, port) {
+        const resp = await tcpSendReceive(ip, port, [0x00, exports.NICE_COMMANDS.UPDATE_RECEIVERS], 180000);
+        if (resp.length < 3 || resp[1] !== exports.NICE_COMMANDS.UPDATE_RECEIVERS) {
+            return { success: false, message: 'Sem resposta de atualização' };
+        }
+        const code = resp[2];
+        return {
+            success: code === 0x00,
+            message: code === 0x00 ? 'Receptores atualizados' : `Erro na atualização: 0x${code.toString(16)}`,
+        };
+    }
+    /** Cmd 7: Read count of enrolled devices */
+    static async readDeviceCount(ip, port) {
+        const resp = await tcpSendReceive(ip, port, [0x00, exports.NICE_COMMANDS.READ_DEVICE_COUNT], 5000);
+        if (resp.length < 4 || resp[1] !== exports.NICE_COMMANDS.READ_DEVICE_COUNT)
+            return 0;
+        return (resp[2] << 8) | resp[3];
+    }
+    /** Cmd 11: Sync module clock to system time */
+    static async writeClock(ip, port, date) {
+        const now = date ?? new Date();
+        await tcpSendReceive(ip, port, [
+            0x00, exports.NICE_COMMANDS.WRITE_CLOCK,
+            int2bcd(now.getDate()),
+            int2bcd(now.getMonth() + 1),
+            int2bcd(now.getFullYear() % 100),
+            int2bcd(now.getHours()),
+            int2bcd(now.getMinutes()),
+            int2bcd(now.getSeconds()),
+        ], 5000);
+    }
+    /** Cmd 12: Read module clock */
+    static async readClock(ip, port) {
+        const resp = await tcpSendReceive(ip, port, [0x00, exports.NICE_COMMANDS.READ_CLOCK], 5000);
+        if (resp.length < 8 || resp[1] !== exports.NICE_COMMANDS.READ_CLOCK)
+            return null;
+        return new Date(2000 + bcd2int(resp[4]), bcd2int(resp[3]) - 1, bcd2int(resp[2]), bcd2int(resp[5]), bcd2int(resp[6]), bcd2int(resp[7]));
+    }
+    /** Connectivity check using Cmd 7 */
+    static async ping(ip, port, timeoutMs = 3000) {
+        try {
+            await tcpSendReceive(ip, port, [0x00, exports.NICE_COMMANDS.READ_DEVICE_COUNT], timeoutMs);
+            return true;
+        }
+        catch {
+            return false;
+        }
+    }
+    /** Cmd 70 (0x46): Read all devices (Progressive) */
+    static async readAllDevices(ip, port, totalDevices) {
+        if (totalDevices <= 0)
+            return [];
+        return new Promise((resolve, reject) => {
+            const socket = new net_1.default.Socket();
+            const frames = [];
+            let buffer = Buffer.alloc(0);
+            let settled = false;
+            function settle(fn) {
+                if (!settled) {
+                    settled = true;
+                    fn();
+                }
+            }
+            const timer = setTimeout(() => {
+                socket.destroy();
+                settle(() => reject(new Error(`NiceGuarita readAll timeout (${ip}:${port})`)));
+            }, 15000 + (totalDevices * 100)); // Dynamic timeout based on amount
+            socket.connect(port, ip, () => {
+                // Send Cmd 70 to start progressive read
+                socket.write(buildFrame([0x00, exports.NICE_COMMANDS.READ_DEVICES]));
+            });
+            socket.on('data', (chunk) => {
+                buffer = Buffer.concat([buffer, chunk]);
+                // Each progressive response is 42 bytes (0x00, 0x46, 39 bytes frame, 1 byte CS)
+                while (buffer.length >= 42) {
+                    const frameBytes = buffer.subarray(2, 41);
+                    buffer = buffer.subarray(42);
+                    // Parse the 39 bytes frame
+                    // Very basic parsing for extraction
+                    const typeAndDest = frameBytes[0];
+                    const devType = (typeAndDest & 0xF0) >> 4;
+                    const serialHex = frameBytes.subarray(1, 4).toString('hex').toUpperCase();
+                    const serialNum = parseInt(serialHex, 16);
+                    const name = frameBytes.subarray(11, 29).toString('ascii').trim();
+                    const unit = bcd2int(frameBytes[6]) * 100 + bcd2int(frameBytes[7]);
+                    const blockRaw = frameBytes[8];
+                    frames.push({
+                        deviceType: devType,
+                        serial: serialNum,
+                        identification: name,
+                        unit: unit > 0 ? unit : undefined,
+                        block: blockRaw > 0 ? blockRaw : undefined,
+                    });
+                    if (frames.length >= totalDevices) {
+                        // We're done! Cancel progressive stream (Cmd 43 - 0x2B)
+                        socket.write(buildFrame([0x00, exports.NICE_COMMANDS.CANCEL_PROGRESSIVE]));
+                        clearTimeout(timer);
+                        socket.destroy();
+                        settle(() => resolve(frames));
+                        break;
+                    }
+                }
+            });
+            socket.on('end', () => {
+                clearTimeout(timer);
+                socket.destroy();
+                settle(() => resolve(frames)); // return whatever we got
+            });
+            socket.on('error', (err) => {
+                clearTimeout(timer);
+                socket.destroy();
+                settle(() => reject(err));
+            });
+        });
+    }
+}
+exports.NiceGuaritaProtocol = NiceGuaritaProtocol;
+// ─────────────────────────────────────────────────────────────────────────────
+// GUARITA EVENT LISTENER SERVER
+// MG3000 pushes Cmd 4 events automatically when someone passes a reader.
+// This server listens for those frames and emits structured events.
+// ─────────────────────────────────────────────────────────────────────────────
+class NiceGuaritaEventServer extends events_1.EventEmitter {
+    constructor(listenPort = 3200) {
+        super();
+        this.server = null;
+        this.listenPort = listenPort;
+    }
+    start() {
+        if (this.server)
+            return;
+        this.server = net_1.default.createServer((socket) => {
+            let buffer = Buffer.alloc(0);
+            const sourceIp = socket.remoteAddress?.replace(/^::ffff:/, '') ?? undefined;
+            socket.on('data', (chunk) => {
+                buffer = Buffer.concat([buffer, chunk]);
+                // Cmd 4 auto-event frame is always 20 bytes
+                while (buffer.length >= 20) {
+                    const slice = buffer.subarray(0, 20);
+                    buffer = buffer.subarray(20);
+                    const event = parseEventFrame(slice);
+                    if (event)
+                        this.emit('access_event', { ...event, sourceIp });
+                }
+            });
+            socket.on('error', (err) => this.emit('socket_error', err));
+        });
+        this.server.listen(this.listenPort, '0.0.0.0', () => {
+            console.log(`[NiceGuarita] Event listener started on port ${this.listenPort}`);
+        });
+        this.server.on('error', (err) => {
+            console.error('[NiceGuarita] Event server error:', err.message);
+            this.emit('server_error', err);
+        });
+    }
+    stop() {
+        this.server?.close();
+        this.server = null;
+        console.log('[NiceGuarita] Event listener stopped');
+    }
+    get isRunning() {
+        return this.server !== null && this.server.listening;
+    }
+}
+exports.NiceGuaritaEventServer = NiceGuaritaEventServer;
+// Singleton — started once by index.ts
+exports.guaritaEventServer = new NiceGuaritaEventServer(parseInt(process.env.NICE_GUARITA_EVENT_PORT ?? '3200', 10));

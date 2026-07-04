@@ -1,5 +1,6 @@
 import { PrismaClient } from '@prisma/client';
 import { HikCentralService } from './HikCentralService';
+import { emitEvent } from './EventBusService';
 
 const prisma = new PrismaClient();
 
@@ -131,5 +132,63 @@ export class HikCentralSyncService {
         const count2 = await this.syncByOrgCode('2', 'MORADOR');
         const count7 = await this.syncByOrgCode('7', 'MORADOR');
         return count2 + count7;
+    }
+
+    /**
+     * Sincroniza logs de acesso recentes do HikCentral e salva no banco de dados local.
+     */
+    public static async syncAccessEvents(): Promise<number> {
+        try {
+            console.log(`[Sync] Iniciando sincronização de Eventos de Acesso...`);
+            
+            // Busca eventos das últimas 2 horas (para garantir que não perca nenhum caso o poll atrase)
+            const startTime = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
+            const endTime = new Date().toISOString();
+
+            const result = await HikCentralService.getAccessLogs({
+                startTime,
+                endTime,
+                pageNo: 1,
+                pageSize: 1000
+            });
+
+            const events = result?.data?.list || [];
+            if (events.length === 0) return 0;
+
+            let count = 0;
+            for (const event of events) {
+                // eventId ou indexCode
+                const eventId = event.eventId || event.id;
+                if (!eventId) continue;
+
+                // Só cria (e faz broadcast SSE) para eventos ainda não sincronizados
+                const existing = await prisma.accessEvent.findUnique({ where: { id: eventId }, select: { id: true } });
+                if (existing) continue;
+
+                await emitEvent({
+                    id: eventId,
+                    personName: event.personName || 'Desconhecido',
+                    eventTime: new Date(event.eventTime || event.happenTime),
+                    occurredAt: new Date(event.eventTime || event.happenTime),
+                    deviceName: event.deviceName || event.srcName || 'N/A',
+                    doorName: event.doorName || event.srcName || 'N/A',
+                    eventType: event.eventType?.toString() || 'ACCESS',
+                    picUri: event.picUri || null,
+                    photoUrl: event.picUri || null,
+                    direction: event.eventType === 'EXIT' ? 'out' : 'in',
+                    status: 'authorized', // Default para os que vêm do log como sucesso
+                    personType: 'visitor', // Seria ideal fazer o matching com personId para saber se é morador, mas por padrão deixamos visitor
+                    category: 'access',
+                    source: 'hikcentral',
+                });
+                count++;
+            }
+
+            console.log(`[Sync] Eventos sincronizados: ${count}`);
+            return count;
+        } catch (error: any) {
+            console.error(`[Sync] Falha ao sincronizar eventos: ${error.message}`);
+            return 0;
+        }
     }
 }

@@ -4,18 +4,24 @@ import { AuthProvider, useAuth } from '@/contexts/AuthContext';
 import AdminLayout from '@/components/AdminLayout';
 import LoginPage from '@/pages/LoginPage';
 import DashboardPage from '@/pages/DashboardPage';
-import ResidentsPage from '@/pages/ResidentsPage';
-import VisitorsPage from '@/pages/VisitorsPage';
-import ProvidersPage from '@/pages/ProvidersPage';
-import InternalProvidersPage from '@/pages/InternalProvidersPage';
-import AccessLogsPage from '@/pages/AccessLogsPage';
-import UsersPage from '@/pages/UsersPage';
-import SettingsPage from '@/pages/SettingsPage';
-import SessionAuditPage from '@/pages/SessionAuditPage';
 import IntegrationsPage from '@/pages/IntegrationsPage';
+import PlaceholderPage from '@/pages/PlaceholderPage';
+import SystemHealthPage from '@/pages/SystemHealthPage';
+import BackupsPage from '@/pages/BackupsPage';
+import SystemUsersPage from '@/pages/SystemUsersPage';
+import AuditAccessPage from '@/pages/AuditAccessPage';
+import CondominiumPage from '@/pages/CondominiumPage';
+import ServicesPage from '@/pages/ServicesPage';
+import SystemSettingsPage from '@/pages/SystemSettingsPage';
+import LogsPage from '@/pages/LogsPage';
+import AuditAdminPage from '@/pages/AuditAdminPage';
+import PermissionsPage from '@/pages/PermissionsPage';
+import ReportsPage from '@/pages/ReportsPage';
+import AccessAreasPage from '@/pages/AccessAreasPage';
+import DepartmentsPage from '@/pages/DepartmentsPage';
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
-    const { isAuthenticated, isLoading } = useAuth();
+    const { isAuthenticated, isLoading, user } = useAuth();
 
     if (isLoading) {
         return (
@@ -29,11 +35,16 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
         return <Navigate to="/admin/login" replace />;
     }
 
+    if (user?.role === 'operador_portaria') {
+        window.location.href = '/painel/';
+        return null;
+    }
+
     return <AdminLayout>{children}</AdminLayout>;
 }
 
 function AppRoutes() {
-    const { isAuthenticated, isLoading } = useAuth();
+    const { isAuthenticated, isLoading, user } = useAuth();
 
     if (isLoading) {
         return (
@@ -43,36 +54,40 @@ function AppRoutes() {
         );
     }
 
+    if (isAuthenticated && user?.role === 'operador_portaria') {
+        window.location.href = '/painel/';
+        return null;
+    }
+
     return (
         <Routes>
             <Route
                 path="/admin/login"
                 element={isAuthenticated ? <Navigate to="/admin" replace /> : <LoginPage />}
             />
-            {/* Dashboard */}
+            {/* Visão geral */}
             <Route path="/admin" element={<ProtectedRoute><DashboardPage /></ProtectedRoute>} />
 
-            {/* ===== 5 MENUS PRINCIPAIS ===== */}
-            {/* 1. Moradores — departamento MORADORES (org 7) no HikCentral */}
-            <Route path="/admin/residents" element={<ProtectedRoute><ResidentsPage /></ProtectedRoute>} />
+            {/* Sistema */}
+            <Route path="/admin/health" element={<ProtectedRoute><SystemHealthPage /></ProtectedRoute>} />
+            <Route path="/admin/services" element={<ProtectedRoute><ServicesPage /></ProtectedRoute>} />
+            <Route path="/admin/containers" element={<Navigate to="/admin/services" replace />} />
+            <Route path="/admin/backups" element={<ProtectedRoute><BackupsPage /></ProtectedRoute>} />
+            <Route path="/admin/logs" element={<ProtectedRoute><LogsPage /></ProtectedRoute>} />
 
-            {/* 2. Visitantes — grupo VISITANTES no módulo visitor do HikCentral */}
-            <Route path="/admin/visitors" element={<ProtectedRoute><VisitorsPage /></ProtectedRoute>} />
-
-            {/* 3. Prestadores — grupo PRESTADORES no módulo visitor do HikCentral (cadastrados pelos moradores) */}
-            <Route path="/admin/providers" element={<ProtectedRoute><ProvidersPage /></ProtectedRoute>} />
-
-            {/* 4. Prestadores Internos — departamento PRESTADORES (org 3), são prestadores permanentes do condomínio */}
-            <Route path="/admin/internal-providers" element={<ProtectedRoute><InternalProvidersPage /></ProtectedRoute>} />
-
-            {/* 5. Histórico de Acesso */}
-            <Route path="/admin/access-logs" element={<ProtectedRoute><AccessLogsPage /></ProtectedRoute>} />
-
-            {/* ===== MENUS ADMINISTRATIVOS ===== */}
-            <Route path="/admin/users" element={<ProtectedRoute><UsersPage /></ProtectedRoute>} />
-            <Route path="/admin/session-audit" element={<ProtectedRoute><SessionAuditPage /></ProtectedRoute>} />
-            <Route path="/admin/settings" element={<ProtectedRoute><SettingsPage /></ProtectedRoute>} />
+            {/* Configurações */}
             <Route path="/admin/integrations" element={<ProtectedRoute><IntegrationsPage /></ProtectedRoute>} />
+            <Route path="/admin/condominium" element={<ProtectedRoute><CondominiumPage /></ProtectedRoute>} />
+            <Route path="/admin/system-users" element={<ProtectedRoute><SystemUsersPage /></ProtectedRoute>} />
+            <Route path="/admin/permissions" element={<ProtectedRoute><PermissionsPage /></ProtectedRoute>} />
+            <Route path="/admin/access-areas" element={<ProtectedRoute><AccessAreasPage /></ProtectedRoute>} />
+            <Route path="/admin/departments" element={<ProtectedRoute><DepartmentsPage /></ProtectedRoute>} />
+            <Route path="/admin/system-settings" element={<ProtectedRoute><SystemSettingsPage /></ProtectedRoute>} />
+
+            {/* Auditoria */}
+            <Route path="/admin/audit-access" element={<ProtectedRoute><AuditAccessPage /></ProtectedRoute>} />
+            <Route path="/admin/audit-admin" element={<ProtectedRoute><AuditAdminPage /></ProtectedRoute>} />
+            <Route path="/admin/reports" element={<ProtectedRoute><ReportsPage /></ProtectedRoute>} />
 
             {/* Fallback */}
             <Route path="*" element={<Navigate to="/admin" replace />} />

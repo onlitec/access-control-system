@@ -1,0 +1,21 @@
+<service>
+  <id>onliacesso-proxy</id>
+  <name>OnliAcesso - Proxy Reverso</name>
+  <description>Nginx: proxy reverso do OnliAcesso na porta 80.</description>
+  <executable>%BASE%\..\binaries\nginx\nginx.exe</executable>
+  <arguments>-p "%BASE%\..\binaries\nginx" -c conf\nginx.conf -g "daemon off;"</arguments>
+  <workingdirectory>%BASE%\..\binaries\nginx</workingdirectory>
+  <stopexecutable>%BASE%\..\binaries\nginx\nginx.exe</stopexecutable>
+  <stoparguments>-p "%BASE%\..\binaries\nginx" -c conf\nginx.conf -s stop</stoparguments>
+  <depend>onliacesso-visitor</depend>
+  <depend>onliacesso-access</depend>
+  <depend>onliacesso-admin</depend>
+  <startmode>Automatic</startmode>
+  <stoptimeout>20sec</stoptimeout>
+  <log mode="roll-by-size">
+    <logpath>%BASE%\..\logs</logpath>
+    <sizeThreshold>10240</sizeThreshold>
+    <keepFiles>5</keepFiles>
+  </log>
+  <onfailure action="restart" delay="10 sec"/>
+</service>

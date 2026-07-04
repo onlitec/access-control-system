@@ -2,8 +2,8 @@ FROM node:20-slim
 
 WORKDIR /app
 
-# Install openssl and other deps for Prisma
-RUN apt-get update && apt-get install -y openssl libssl-dev && rm -rf /var/lib/apt/lists/*
+# Install openssl and other deps for Prisma and Docker CLI
+RUN apt-get update && apt-get install -y openssl libssl-dev docker.io ffmpeg && rm -rf /var/lib/apt/lists/*
 
 COPY package*.json ./
 COPY prisma ./prisma/

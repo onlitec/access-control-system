@@ -146,9 +146,9 @@ export class LocalProvider implements IAccessControlProvider {
     return events.map((e) => ({
       personName: e.personName,
       eventTime: e.eventTime.toISOString(),
-      deviceName: e.deviceName,
-      doorName: e.doorName,
-      eventType: e.eventType,
+      deviceName: e.deviceName || '',
+      doorName: e.doorName || '',
+      eventType: e.eventType || '',
       picUri: e.picUri ?? undefined,
     }));
   }

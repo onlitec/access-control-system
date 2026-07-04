@@ -78,7 +78,7 @@ export class AuthController {
             // Generate tokens
             const refreshToken = generateRefreshToken();
             const hashedToken = hashRefreshToken(refreshToken);
-            const accessToken = signAccessToken(user);
+            const accessToken = await signAccessToken(user);
 
             // Create session
             const session = await prisma.refreshSession.create({
@@ -118,12 +118,17 @@ export class AuthController {
                 maxAge: 7 * 24 * 60 * 60 * 1000 // 7d
             });
 
+            const rolePermissions = await prisma.rolePermission.findUnique({
+                where: { role: user.role }
+            });
+
             res.json({
                 user: {
                     id: user.id,
                     email: user.email,
                     role: user.role,
                     name: user.name,
+                    permissions: rolePermissions || null,
                 },
                 token: accessToken,
                 refreshToken,
@@ -165,7 +170,7 @@ export class AuthController {
             }
 
             const user = session.user;
-            const newAccessToken = signAccessToken(user);
+            const newAccessToken = await signAccessToken(user);
 
             await AuditService.logSessionAuditEvent({
                 eventType: 'refresh',
@@ -314,7 +319,7 @@ export class AuthController {
                 create: { email: person.email, password: hashedPassword, name: `${person.firstName} ${person.lastName}`.trim(), role: 'MORADOR' }
             });
 
-            const accessToken = signAccessToken(user);
+            const accessToken = await signAccessToken(user);
             const refreshToken = generateRefreshToken();
             const session = await prisma.refreshSession.create({
                 data: { userId: user.id, tokenHash: hashRefreshToken(refreshToken), expiresAt: getRefreshExpiry() }
@@ -362,7 +367,14 @@ export class AuthController {
 
             if (!user) return res.status(404).json({ error: 'User not found' });
 
-            res.json(user);
+            const rolePermissions = await prisma.rolePermission.findUnique({
+                where: { role: user.role }
+            });
+
+            res.json({
+                ...user,
+                permissions: rolePermissions || null
+            });
         } catch (error) {
             res.status(500).json({ error: 'Internal server error' });
         }

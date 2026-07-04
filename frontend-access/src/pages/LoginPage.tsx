@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
@@ -19,6 +19,18 @@ export default function LoginPage() {
   const { toast } = useToast();
 
   const from = (location.state as { from?: string })?.from || '/dashboard';
+
+  useEffect(() => {
+    // instalação nova (nenhum usuário cadastrado): abre o assistente de
+    // cadastro do primeiro administrador
+    const apiBase = import.meta.env.VITE_API_URL || (window.location.origin + '/api');
+    fetch(`${apiBase}/setup/status`, { credentials: 'include' })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        if (data?.needsSetup) navigate('/setup', { replace: true });
+      })
+      .catch(() => undefined);
+  }, [navigate]);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();

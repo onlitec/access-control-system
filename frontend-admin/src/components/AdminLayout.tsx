@@ -3,52 +3,63 @@ import { NavLink, useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import {
     LayoutDashboard,
+    Activity,
+    Box,
+    Database,
+    FileText,
+    Plug,
+    Building,
     Users,
-    UserCheck,
-    ClipboardList,
-    Settings,
-    LogOut,
     Shield,
+    ClipboardList,
+    List,
+    BarChart3,
+    LogOut,
     ChevronRight,
-    UserCog,
-    ShieldAlert,
-    Briefcase,
-    HardHat,
     Menu,
     X,
-    Plug,
+    Sun,
+    Moon,
+    KeyRound,
+    Layers,
+    Settings,
 } from 'lucide-react';
 import { avatarGradient } from '@/utils/avatarColor';
 
 const menuSections = [
     {
-        title: 'Visão Geral',
+        title: 'Visão geral',
         items: [
             { to: '/admin', icon: LayoutDashboard, label: 'Dashboard', end: true },
         ],
     },
     {
-        title: 'Gestão de Pessoas',
+        title: 'Sistema',
         items: [
-            { to: '/admin/residents', icon: Users, label: 'Moradores', end: false },
-            { to: '/admin/visitors', icon: UserCheck, label: 'Visitantes', end: false },
-            { to: '/admin/providers', icon: Briefcase, label: 'Prestadores', end: false },
-            { to: '/admin/internal-providers', icon: HardHat, label: 'Prestadores Internos', end: false },
+            { to: '/admin/health', icon: Activity, label: 'Saúde do sistema', end: false },
+            { to: '/admin/services', icon: Box, label: 'Serviços', end: false },
+            { to: '/admin/backups', icon: Database, label: 'Backups', end: false },
+            { to: '/admin/logs', icon: FileText, label: 'Logs do sistema', end: false },
         ],
     },
     {
-        title: 'Segurança',
+        title: 'Configurações',
         items: [
-            { to: '/admin/access-logs', icon: ClipboardList, label: 'Histórico de Acesso', end: false },
-            { to: '/admin/session-audit', icon: ShieldAlert, label: 'Auditoria Sessão', end: false },
-        ],
-    },
-    {
-        title: 'Administração',
-        items: [
-            { to: '/admin/users', icon: UserCog, label: 'Usuários', end: false },
             { to: '/admin/integrations', icon: Plug, label: 'Integrações', end: false },
-            { to: '/admin/settings', icon: Settings, label: 'Configurações', end: false },
+            { to: '/admin/condominium', icon: Building, label: 'Condomínio', end: false },
+            { to: '/admin/departments', icon: Layers, label: 'Departamentos', end: false },
+            { to: '/admin/access-areas', icon: KeyRound, label: 'Áreas de Acesso', end: false },
+            { to: '/admin/system-users', icon: Users, label: 'Usuários do sistema', end: false },
+            { to: '/admin/permissions', icon: Shield, label: 'Permissões', end: false },
+            { to: '/admin/system-settings', icon: Settings, label: 'Sistema (SMTP/Updates)', end: false },
+        ],
+    },
+    {
+        title: 'Auditoria',
+        items: [
+            { to: '/admin/audit-access', icon: ClipboardList, label: 'Logs de acesso', end: false },
+            { to: '/admin/audit-admin', icon: List, label: 'Logs administrativos', end: false },
+            { to: '/admin/reports', icon: BarChart3, label: 'Relatórios', end: false },
         ],
     },
 ];
@@ -61,6 +72,25 @@ export default function AdminLayout({ children }: AdminLayoutProps) {
     const { user, logout } = useAuth();
     const navigate = useNavigate();
     const [sidebarOpen, setSidebarOpen] = useState(false);
+    const [theme, setTheme] = useState<'dark' | 'light'>(() => {
+        const saved = localStorage.getItem('admin_theme');
+        if (saved === 'light') {
+            document.documentElement.classList.add('light');
+            return 'light';
+        }
+        return 'dark';
+    });
+
+    const toggleTheme = () => {
+        const nextTheme = theme === 'dark' ? 'light' : 'dark';
+        setTheme(nextTheme);
+        localStorage.setItem('admin_theme', nextTheme);
+        if (nextTheme === 'light') {
+            document.documentElement.classList.add('light');
+        } else {
+            document.documentElement.classList.remove('light');
+        }
+    };
 
     const handleLogout = () => {
         logout();
@@ -131,9 +161,14 @@ export default function AdminLayout({ children }: AdminLayoutProps) {
                             <span className="user-role">{user?.role || 'ADMIN'}</span>
                         </div>
                     </div>
-                    <button className="logout-btn" onClick={handleLogout} title="Sair">
-                        <LogOut size={18} />
-                    </button>
+                    <div style={{ display: 'flex', gap: '8px' }}>
+                        <button className="theme-toggle-btn" onClick={toggleTheme} title="Alternar tema">
+                            {theme === 'light' ? <Moon size={18} /> : <Sun size={18} />}
+                        </button>
+                        <button className="logout-btn" onClick={handleLogout} title="Sair">
+                            <LogOut size={18} />
+                        </button>
+                    </div>
                 </div>
             </aside>
 

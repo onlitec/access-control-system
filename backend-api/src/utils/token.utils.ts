@@ -27,11 +27,32 @@ export const hashRefreshToken = (token: string): string =>
 export const generateRefreshToken = (): string => 
     crypto.randomBytes(48).toString('base64url');
 
-export const signAccessToken = (user: { id: string; email: string; role: string }): string => {
+import { prisma } from '../database';
+
+export const signAccessToken = async (user: { id: string; email: string; role: string }): Promise<string> => {
     const signOptions: SignOptions = { expiresIn: config.JWT.EXPIRES_IN };
+
+    // Fetch role-level permissions and user-specific overrides in parallel
+    const [rolePerms, userRecord] = await Promise.all([
+        prisma.rolePermission.findUnique({ where: { role: user.role } }),
+        prisma.user.findUnique({ where: { id: user.id }, select: { customPermissions: true } }),
+    ]);
+
+    const customOverrides = (userRecord?.customPermissions ?? null) as Record<string, boolean> | null;
+
+    // Merge: user-level customPermissions override role-level permissions
+    const permissions = rolePerms
+        ? { ...rolePerms, ...(customOverrides ?? {}) }
+        : (customOverrides ?? null);
+
     return jwt.sign(
-        { id: user.id, email: user.email, role: user.role }, 
-        config.JWT.SECRET, 
+        {
+            id: user.id,
+            email: user.email,
+            role: user.role,
+            permissions,
+        },
+        config.JWT.SECRET,
         signOptions
     );
 };

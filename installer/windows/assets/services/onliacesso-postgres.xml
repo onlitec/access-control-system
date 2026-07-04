@@ -1,0 +1,23 @@
+<service>
+  <id>onliacesso-postgres</id>
+  <name>OnliAcesso - PostgreSQL</name>
+  <description>Banco de dados PostgreSQL 16 do sistema OnliAcesso.</description>
+  <executable>%BASE%\..\binaries\pgsql\bin\postgres.exe</executable>
+  <arguments>-D "%BASE%\..\data\pgdata"</arguments>
+  <workingdirectory>%BASE%\..\binaries\pgsql\bin</workingdirectory>
+  <!-- postgres.exe recusa rodar com token administrativo (LocalSystem) -->
+  <serviceaccount>
+    <username>NT AUTHORITY\NetworkService</username>
+  </serviceaccount>
+  <!-- shutdown limpo via pg_ctl (evita recovery no proximo start) -->
+  <stopexecutable>%BASE%\..\binaries\pgsql\bin\pg_ctl.exe</stopexecutable>
+  <stoparguments>stop -D "%BASE%\..\data\pgdata" -m fast -w -t 25</stoparguments>
+  <startmode>Automatic</startmode>
+  <stoptimeout>30sec</stoptimeout>
+  <log mode="roll-by-size">
+    <logpath>%BASE%\..\logs</logpath>
+    <sizeThreshold>10240</sizeThreshold>
+    <keepFiles>5</keepFiles>
+  </log>
+  <onfailure action="restart" delay="10 sec"/>
+</service>

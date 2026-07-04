@@ -44,6 +44,12 @@ export const getResidents = async (page = 1, limit = 20, search = '') => {
   return request<{ data: Resident[], count: number }>(`/residents?page=${page}&limit=${limit}&search=${search}`);
 };
 
+export const importGuaritaResidents = async (deviceId: string) => {
+  return request<{ success: boolean, imported: number, totalFound: number }>(`/guarita/devices/${deviceId}/import-residents`, {
+    method: 'POST'
+  });
+};
+
 export const getResident = async (id: string) => {
   return request<Resident>(`/residents/${id}`);
 };
@@ -76,7 +82,7 @@ export const deleteResident = async (id: string) => {
 };
 
 export const getAllResidentsForSelect = async () => {
-  return request<Array<{ id: string; full_name: string; unit_number: string; block: string | null; tower: string | null }>>(`/residents/select`);
+  return request<Array<{ id: string; full_name: string; unit_number: string; block: string | null; tower: string | null; parkingSpaces: number | null }>>(`/residents/select`);
 };
 
 // ============ Towers ============
@@ -133,6 +139,13 @@ export const createVisitor = async (visitor: Omit<Visitor, 'id' | 'created_at' |
   return result;
 };
 
+export const updateVisitor = async (id: string, updates: Partial<Visitor>) => {
+  return request<Visitor>(`/visitors/${id}`, {
+    method: 'PATCH',
+    body: JSON.stringify(updates),
+  });
+};
+
 // ============ Hikcentral Config ============
 export const getHikcentralConfig = async (): Promise<HikcentralConfig> => {
   const data = await request<any>(`/hik-config`);
@@ -174,6 +187,48 @@ export const getDashboardStats = async (): Promise<DashboardStats> => {
   return response.data || response as any;
 };
 
+export const getDashboardAlerts = async (limit = 10) => {
+  const response = await request<{ success: boolean; data: import('@/types').DashboardAlert[] }>(`/dashboard/alerts?limit=${limit}`);
+  return response.data || (response as any);
+};
+
+// ============ Deliveries (Entregas) ============
+export const getDeliveries = async (page = 1, limit = 50, filters: any = {}) => {
+  const queryParams = new URLSearchParams({ page: page.toString(), limit: limit.toString() });
+  if (filters.status && filters.status !== 'all') queryParams.append('status', filters.status);
+  if (filters.unit) queryParams.append('unit', filters.unit);
+  if (filters.q) queryParams.append('q', filters.q);
+  return request<{ data: any[]; total: number; page: number; totalPages: number }>(
+    `/deliveries?${queryParams.toString()}`
+  );
+};
+
+export const getDeliveryStats = async (): Promise<{ awaiting: number; receivedToday: number; pickedUpToday: number; avgPickupMinutes: number | null }> => {
+  const response = await request<{ success: boolean; data: any }>(`/deliveries/stats`);
+  return response.data || (response as any);
+};
+
+export const createDelivery = async (delivery: any) => {
+  return request<{ success: boolean; data: any }>(`/deliveries`, {
+    method: 'POST',
+    body: JSON.stringify(delivery),
+  });
+};
+
+export const pickupDelivery = async (id: string, pickedUpBy: string) => {
+  return request<{ success: boolean; data: any }>(`/deliveries/${id}/pickup`, {
+    method: 'PATCH',
+    body: JSON.stringify({ pickedUpBy }),
+  });
+};
+
+export const updateDelivery = async (id: string, changes: any) => {
+  return request<{ success: boolean; data: any }>(`/deliveries/${id}`, {
+    method: 'PATCH',
+    body: JSON.stringify(changes),
+  });
+};
+
 // ============ Visit Logs ============
 export const createVisitLog = async (log: any) => {
   return request<any>(`/visit-logs`, {
@@ -203,6 +258,29 @@ export const getAccessLogs = async (page = 1, limit = 100, filters: any = {}) =>
   }));
 
   return { data, count: result.total || data.length };
+};
+
+export const getAccessEvents = async (page = 1, limit = 50, filters: any = {}) => {
+  const queryParams = new URLSearchParams({
+    page: page.toString(),
+    limit: limit.toString(),
+  });
+  
+  if (filters.startDate) queryParams.append('startDate', filters.startDate);
+  if (filters.endDate) queryParams.append('endDate', filters.endDate);
+  if (filters.personName) queryParams.append('personName', filters.personName);
+  if (filters.personType && filters.personType !== 'all') queryParams.append('personType', filters.personType);
+  if (filters.deviceName) queryParams.append('deviceName', filters.deviceName);
+  if (filters.category && filters.category !== 'all') queryParams.append('category', filters.category);
+  if (filters.direction) queryParams.append('direction', filters.direction);
+  if (filters.source) queryParams.append('source', filters.source);
+  if (filters.status && filters.status !== 'all') queryParams.append('status', filters.status);
+  if (filters.q) queryParams.append('q', filters.q);
+
+  const result = await request<{ data: any[]; total: number; page: number; totalPages: number }>(
+    `/events?${queryParams.toString()}`
+  );
+  return result;
 };
 
 // ============ Devices Status ============
@@ -256,4 +334,91 @@ export const getHikcentralPrestadoresFinalizados = async () => {
 // ============ HikCentral Calabasas Providers (Departamento PRESTADORES - Módulo Pessoas) ============
 export const getHikcentralCalabasasProviders = async () => {
   return request<{ data: any[], total: number }>(`/hikcentral/calabasas-providers`);
+};
+
+// ============ Condominium Config & Rules Integration ============
+export interface CondominiumSettings {
+  id: string;
+  name: string;
+  cnpj?: string;
+  address?: string;
+  phone?: string;
+  email?: string;
+  logoUrl?: string;
+  type: 'vertical' | 'horizontal';
+}
+
+export interface AccessSchedule {
+  id?: string;
+  type: 'visitor' | 'provider';
+  dayOfWeek: number;
+  startTime: string;
+  endTime: string;
+  isActive: boolean;
+}
+
+export interface BlacklistRecord {
+  id: string;
+  name: string;
+  document: string;
+  reason: string;
+  createdAt?: string;
+  createdBy?: string;
+}
+
+export interface RegistrationRequirement {
+  id: string;
+  category: string;
+  fieldName: string;
+  status: 'required' | 'optional' | 'hidden';
+}
+
+export const getCondominiumSettings = async () => {
+  return request<CondominiumSettings>('/condominium/settings');
+};
+
+export const getRegistrationRequirements = async () => {
+  return request<RegistrationRequirement[]>('/condominium/requirements');
+};
+
+export const getAccessSchedules = async () => {
+  return request<AccessSchedule[]>('/condominium/schedules');
+};
+
+export const getBlacklist = async () => {
+  return request<BlacklistRecord[]>('/condominium/blacklist');
+};
+
+export const getTowersList = async () => {
+  return request<any[]>('/condominium/towers');
+};
+
+export const getUnitsList = async () => {
+  return request<any[]>('/condominium/units');
+};
+
+export interface AccessArea {
+  id: string;
+  name: string;
+  description: string | null;
+  icon: string | null;
+  isActive: boolean;
+  order: number;
+}
+
+export const getAccessAreas = async () => {
+  const res = await request<{ data: AccessArea[] }>('/access-areas');
+  return res?.data ?? [];
+};
+
+export const getResidentAccessAreas = async (personId: string) => {
+  const res = await request<{ data: string[] }>(`/access-areas/resident/${personId}`);
+  return res?.data ?? [];
+};
+
+export const setResidentAccessAreas = async (personId: string, areaIds: string[]) => {
+  return request<{ success: boolean }>(`/access-areas/resident/${personId}`, {
+    method: 'PUT',
+    body: JSON.stringify({ areaIds }),
+  });
 };

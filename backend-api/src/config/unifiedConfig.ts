@@ -11,6 +11,7 @@ const parseSafeInt = (value: string | undefined, fallback: number, min = 0): num
 export const config = {
     PORT: process.env.PORT || 3001,
     CORS_ORIGIN: process.env.CORS_ORIGIN || '*',
+    APP_VERSION: process.env.APP_VERSION || '0.0.0',
     
     JWT: {
         SECRET: process.env.JWT_SECRET as string,
@@ -28,6 +29,16 @@ export const config = {
         EXPORT_MAX_LIMIT: parseSafeInt(process.env.SESSION_AUDIT_EXPORT_MAX_LIMIT, 20000, 1),
         RETENTION_DAYS: parseSafeInt(process.env.SESSION_AUDIT_RETENTION_DAYS, 90),
         PRUNE_INTERVAL_MINUTES: parseSafeInt(process.env.SESSION_AUDIT_PRUNE_INTERVAL_MINUTES, 60),
+    },
+
+    SMTP: {
+        HOST: process.env.SMTP_HOST || 'smtp-relay.brevo.com',
+        PORT: parseSafeInt(process.env.SMTP_PORT, 587, 1),
+        USER: process.env.SMTP_USER || '',
+        PASSWORD: process.env.SMTP_PASSWORD || '',
+        // Brevo exige remetente validado na conta; por padrao usa o login SMTP
+        FROM: process.env.SMTP_FROM || process.env.SMTP_USER || '',
+        FROM_NAME: process.env.SMTP_FROM_NAME || 'OnliAcesso',
     },
 
     SECURITY_METRICS: {

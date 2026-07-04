@@ -3,6 +3,7 @@ import cors from 'cors';
 import dotenv from 'dotenv';
 import { Prisma, PrismaClient } from '@prisma/client';
 import { HikCentralService } from './services/HikCentralService';
+import { NiceGuaritaService } from './services/NiceGuaritaService';
 import { EntityMappingService } from './services/EntityMappingService';
 import { HikCentralSyncService } from './services/HikCentralSyncService';
 import {
@@ -22,6 +23,8 @@ import hikcentralVisitorsRouter from './routes/hikcentral-visitors';
 import painelRouter from './routes/painel';
 import adminRouter from './routes/admin';
 import coreRoutes from './routes';
+import setupRoutes from './routes/setup.routes';
+import systemSettingsRoutes from './routes/systemSettings.routes';
 import { authMiddleware, adminMiddleware } from './middleware/auth';
 import authRoutes from './routes/auth.routes';
 import auditRoutes from './routes/audit.routes';
@@ -32,8 +35,16 @@ import providersRoutes from './routes/service-providers.routes';
 import residentAuthRoutes from './routes/resident-auth.routes';
 import doorbellRoutes from './routes/doorbell.routes';
 import guaritaRoutes from './routes/guarita.routes';
+import deliveriesRoutes from './routes/deliveries.routes';
 import { config } from './config/unifiedConfig';
 import { AuditService } from './services/AuditService';
+import { emitEvent } from './services/EventBusService';
+import opsRoutes, { healthMetricsMiddleware } from './routes/ops.routes';
+import systemUsersRoutes from './routes/system-users.routes';
+import condominiumRoutes from './routes/condominium.routes';
+import accessAreasRoutes from './routes/access-areas.routes';
+import guaritaPassbackRoutes from './routes/guarita-passback.routes';
+import { eventsRoutes } from './routes/events.routes';
 
 dotenv.config();
 
@@ -209,22 +220,26 @@ const corsOptions: cors.CorsOptions = {
 
 app.use(helmet());
 app.use(cookieParser());
-app.use(express.json());
+app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ limit: '50mb', extended: true }));
 app.use(cors(corsOptions));
+app.use(healthMetricsMiddleware);
 
 // Global API Routes
+// setup (cadastro do primeiro admin) é público e precisa vir antes do
+// middleware de autenticação que cobre /api
+app.use('/api/setup', setupRoutes);
 app.use('/api', coreRoutes);
 app.use('/api/residents', residentsRoutes);
 app.use('/api/staff', staffRoutes);
 app.use('/api/service-providers', providersRoutes);
-app.use(express.json({ limit: '50mb' }));
-app.use(express.urlencoded({ limit: '50mb', extended: true }));
+app.use('/api/events', eventsRoutes);
 
 // ============ Platform Routes (Integrated with HikCentral) ============
 app.use('/api/hikcentral', hikcentralVisitorsRouter);
 app.use('/api', (req: any, res: any, next: any) => {
     // Basic health check and AUTH bypass
-    if (req.path === '/health' || req.path.startsWith('/auth/')) return next();
+    if (req.path === '/health' || req.path.startsWith('/auth/') || req.path.startsWith('/onboarding/') || req.path.startsWith('/resident/')) return next();
     // Injetar token do query param no header para endpoints de foto
     const queryToken = req.query.token as string;
     if (queryToken && !req.headers.authorization) {
@@ -537,6 +552,13 @@ app.use('/api/security', securityRoutes);
 app.use('/api/resident', residentAuthRoutes);
 app.use('/api/doorbell', doorbellRoutes);
 app.use('/api/guarita', guaritaRoutes);
+app.use('/api/deliveries', deliveriesRoutes);
+app.use('/api/ops', opsRoutes);
+app.use('/api/system-settings', systemSettingsRoutes);
+app.use('/api/system-users', systemUsersRoutes);
+app.use('/api/condominium', condominiumRoutes);
+app.use('/api/access-areas', accessAreasRoutes);
+app.use('/api/guarita/passback', guaritaPassbackRoutes);
 
 // ============ Health & System ============
 app.get('/api/health', (req, res) => {
@@ -628,15 +650,17 @@ app.get('/api/hikcentral/person-photo/:personId', photoTokenMiddleware, authMidd
 app.get('/api/residents/select', authMiddleware, async (req, res) => {
     try {
         const data = await prisma.person.findMany({
-            select: { id: true, firstName: true, lastName: true, orgIndexCode: true },
+            select: { id: true, firstName: true, lastName: true, unit_number: true, block: true, tower: true, parkingSpaces: true, department: { select: { id: true, name: true, color: true } } },
             orderBy: { firstName: 'asc' }
         });
         res.json(data.map(p => ({
             id: p.id,
             full_name: `${p.firstName} ${p.lastName}`,
-            unit_number: p.orgIndexCode,
-            block: null,
-            tower: null,
+            unit_number: p.unit_number || '',
+            block: p.block || null,
+            tower: p.tower || null,
+            parkingSpaces: p.parkingSpaces ?? null,
+            department: p.department || null,
         })));
     } catch (error: any) {
         res.status(500).json({ error: error.message });
@@ -659,8 +683,20 @@ app.post('/api/residents', authMiddleware, async (req, res) => {
 
         prismaData.phone = body.phone || null;
         prismaData.email = body.email || null;
-        // Se veio do frontend como unit_number, mas no HikCentral é departamento
+        prismaData.cpf = body.cpf || null;
+        prismaData.rg = body.rg || null;
+        prismaData.tower = body.tower || null;
+        prismaData.block = body.block || null;
+        prismaData.unit_number = body.unit_number || null;
+        prismaData.is_owner = body.is_owner !== undefined ? body.is_owner : true;
+        prismaData.notes = body.notes || null;
+        prismaData.photoUrl = body.photo_url || null;
+        prismaData.document_photo_url = body.document_photo_url || null;
+        prismaData.parkingSpaces = body.parkingSpaces !== undefined && body.parkingSpaces !== null ? parseInt(body.parkingSpaces) : null;
+        prismaData.vehiclePlate = body.vehiclePlate || null;
         prismaData.orgIndexCode = body.orgIndexCode || '7'; // Default MORADORES
+        prismaData.cardSerial = body.cardSerial || null;
+        prismaData.txSerial = body.txSerial || null;
 
         // 1. Cadastrar no HikCentral se disponível (opcional — sistema funciona sem HikCentral)
         let hikPersonId = body.hikcentral_person_id || null;
@@ -707,6 +743,37 @@ app.post('/api/residents', authMiddleware, async (req, res) => {
 
         prismaData.hikPersonId = hikPersonId;
         const person = await prisma.person.create({ data: prismaData });
+
+        // 2.8 Sincronizar com Nice Guarita (Controles e Tags)
+        if (person.cardSerial || person.txSerial) {
+            try {
+                // Fetch the first enabled Guarita device
+                const guaritaDevice = await prisma.guaritaDevice.findFirst({ where: { enabled: true } });
+                if (guaritaDevice) {
+                    if (person.cardSerial) {
+                        await NiceGuaritaService.enrollResident(guaritaDevice.id, {
+                            serial: person.cardSerial,
+                            deviceType: 0x03, // CARD
+                            name: `${person.firstName} ${person.lastName}`.trim(),
+                            unit: person.unit_number ? parseInt(person.unit_number) : undefined,
+                            vehiclePlate: person.vehiclePlate || undefined,
+                        });
+                    }
+                    if (person.txSerial) {
+                        await NiceGuaritaService.enrollResident(guaritaDevice.id, {
+                            serial: person.txSerial,
+                            deviceType: 0x01, // CONTROL
+                            name: `${person.firstName} ${person.lastName}`.trim(),
+                            unit: person.unit_number ? parseInt(person.unit_number) : undefined,
+                            vehiclePlate: person.vehiclePlate || undefined,
+                        });
+                    }
+                    console.log(`[NiceGuarita] Dispositivos de acesso (Card/TX) sincronizados para morador ${person.id}`);
+                }
+            } catch (guaritaErr: any) {
+                console.error(`[NiceGuarita] Erro ao sincronizar morador ${person.id}:`, guaritaErr.message);
+            }
+        }
 
         // 3. Gerar Link Único para o App Visitor
         const onboardingToken = jwt.sign(
@@ -757,8 +824,22 @@ app.patch('/api/residents/:id', authMiddleware, async (req, res) => {
             lastName: parts.slice(1).join(' ') || existing.lastName,
             phone: body.phone !== undefined ? body.phone : existing.phone,
             email: body.email !== undefined ? body.email : existing.email,
-            photoUrl: body.photo_url !== undefined ? body.photo_url : existing.photoUrl
+            photoUrl: body.photo_url !== undefined ? body.photo_url : existing.photoUrl,
+            cpf: body.cpf !== undefined ? body.cpf : existing.cpf,
+            rg: body.rg !== undefined ? body.rg : existing.rg,
+            tower: body.tower !== undefined ? body.tower : existing.tower,
+            block: body.block !== undefined ? body.block : existing.block,
+            unit_number: body.unit_number !== undefined ? body.unit_number : existing.unit_number,
+            is_owner: body.is_owner !== undefined ? body.is_owner : existing.is_owner,
+            notes: body.notes !== undefined ? body.notes : existing.notes,
+            document_photo_url: body.document_photo_url !== undefined ? body.document_photo_url : existing.document_photo_url,
+            parkingSpaces: body.parkingSpaces !== undefined ? (body.parkingSpaces !== null ? parseInt(body.parkingSpaces) : null) : existing.parkingSpaces,
+            vehiclePlate: body.vehiclePlate !== undefined ? body.vehiclePlate : existing.vehiclePlate,
         };
+
+        if (body.vehiclePlate !== undefined) updateData.vehiclePlate = body.vehiclePlate;
+        if (body.cardSerial !== undefined) updateData.cardSerial = body.cardSerial;
+        if (body.txSerial !== undefined) updateData.txSerial = body.txSerial;
 
         // 1. Sincronizar com HikCentral se tiver ID
         if (existing.hikPersonId) {
@@ -787,6 +868,35 @@ app.patch('/api/residents/:id', authMiddleware, async (req, res) => {
             where: { id: existing.id },
             data: updateData
         });
+
+        // 4. Atualizar Dispositivos Nice Guarita
+        if (body.cardSerial !== undefined || body.txSerial !== undefined) {
+            try {
+                const guaritaDevice = await prisma.guaritaDevice.findFirst({ where: { enabled: true } });
+                if (guaritaDevice) {
+                    if (person.cardSerial) {
+                        await NiceGuaritaService.enrollResident(guaritaDevice.id, {
+                            serial: person.cardSerial,
+                            deviceType: 0x03,
+                            name: `${person.firstName} ${person.lastName}`.trim(),
+                            unit: person.unit_number ? parseInt(person.unit_number) : undefined,
+                            vehiclePlate: person.vehiclePlate || undefined,
+                        });
+                    }
+                    if (person.txSerial) {
+                        await NiceGuaritaService.enrollResident(guaritaDevice.id, {
+                            serial: person.txSerial,
+                            deviceType: 0x01,
+                            name: `${person.firstName} ${person.lastName}`.trim(),
+                            unit: person.unit_number ? parseInt(person.unit_number) : undefined,
+                            vehiclePlate: person.vehiclePlate || undefined,
+                        });
+                    }
+                }
+            } catch (err: any) {
+                console.error(`[NiceGuarita] Erro ao atualizar morador ${existing.id}:`, err.message);
+            }
+        }
 
         res.json({
             success: true,
@@ -902,8 +1012,66 @@ app.get('/api/visitors', authMiddleware, async (req, res) => {
 
 app.post('/api/visitors', authMiddleware, async (req, res) => {
     try {
-        const visitor = await prisma.visitor.create({ data: req.body });
+        const { created_by, accessLevelIndexCode, accessLevelId, ...validData } = req.body;
+        // ensure validData only contains Prisma visitor model fields
+        const validFields = ['name', 'surname', 'type', 'certificateType', 'certificateNo', 'email', 'phone', 'plateNo', 'visitStartTime', 'visitEndTime', 'hikVisitorId', 'externalId', 'status', 'inviteToken', 'accessLevelId', 'createdAt', 'document', 'document_photo_url', 'full_name', 'notes', 'photo_url', 'purpose', 'tower', 'updated_at', 'visiting_resident', 'visiting_unit', 'visiting_block', 'lgpdConsent', 'consentTimestamp'];
+        const sanitizedData: any = {};
+        for (const key of Object.keys(validData)) {
+            if (validFields.includes(key)) {
+                sanitizedData[key] = validData[key];
+            }
+        }
+        const visitor = await prisma.visitor.create({ data: sanitizedData });
         res.json(visitor);
+    } catch (error: any) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+app.patch('/api/visitors/:id', authMiddleware, async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { created_by, accessLevelIndexCode, accessLevelId, id: _id, ...validData } = req.body;
+        const validFields = ['name', 'surname', 'type', 'certificateType', 'certificateNo', 'email', 'phone', 'plateNo', 'visitStartTime', 'visitEndTime', 'hikVisitorId', 'externalId', 'status', 'inviteToken', 'accessLevelId', 'createdAt', 'document', 'document_photo_url', 'full_name', 'notes', 'photo_url', 'purpose', 'tower', 'updated_at', 'visiting_resident', 'visiting_unit', 'visiting_block', 'lgpdConsent', 'consentTimestamp'];
+        const sanitizedData: any = {};
+        for (const key of Object.keys(validData)) {
+            if (validFields.includes(key)) {
+                sanitizedData[key] = validData[key];
+            }
+        }
+        const visitor = await prisma.visitor.update({
+            where: { id },
+            data: sanitizedData
+        });
+        res.json(visitor);
+    } catch (error: any) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Reserve/schedule a visitor appointment (used by the operator panel for eventual service providers)
+app.post('/api/visitors/reserve', authMiddleware, async (req, res) => {
+    try {
+        const { visitorName, certificateNo, visitStartTime, visitEndTime, plateNo, visitorPicData } = req.body;
+        const nameParts = (visitorName || '').trim().split(' ');
+        const name = nameParts[0] || 'Visitante';
+        const surname = nameParts.slice(1).join(' ') || '';
+
+        const visitor = await prisma.visitor.create({
+            data: {
+                name,
+                surname,
+                type: 'PROVIDER',
+                certificateNo: certificateNo || `res-${Date.now()}`,
+                certificateType: '111',
+                status: 'SCHEDULED',
+                visitStartTime: visitStartTime ? new Date(visitStartTime) : new Date(),
+                visitEndTime: visitEndTime ? new Date(visitEndTime) : new Date(Date.now() + 86400000),
+                plateNo: plateNo || null,
+                photo_url: visitorPicData ? `data:image/jpeg;base64,${visitorPicData}` : null,
+            }
+        });
+        res.status(201).json({ code: '0', msg: 'success', data: { visitorId: visitor.id } });
     } catch (error: any) {
         res.status(500).json({ error: error.message });
     }
@@ -1003,38 +1171,25 @@ app.post('/api/onboarding/validate', async (req, res) => {
 
 app.post('/api/onboarding/complete', async (req, res) => {
     try {
-        const { token, photoBase64 } = req.body;
+        const { token, password } = req.body;
         if (!token) return res.status(400).json({ message: "Token não fornecido" });
-        if (!photoBase64) return res.status(400).json({ message: "Foto não fornecida" });
+        if (!password || password.length < 6) return res.status(400).json({ message: "Senha deve ter ao menos 6 caracteres" });
 
-        const decoded = jwt.verify(token, JWT_SECRET as string) as { personId: string; hikPersonId: string; type: string };
+        const decoded = jwt.verify(token, JWT_SECRET as string) as { personId: string; type: string };
         if (decoded.type !== 'onboarding') {
             return res.status(400).json({ message: "Token inválido para onboarding" });
         }
 
-        const person = await prisma.person.findUnique({
-            where: { id: decoded.personId }
-        });
+        const person = await prisma.person.findUnique({ where: { id: decoded.personId } });
+        if (!person) return res.status(404).json({ message: "Morador não encontrado" });
 
-        if (!person) {
-            return res.status(404).json({ message: "Morador não encontrado" });
-        }
-
-        const cleanPhotoBase64 = photoBase64.replace(/^data:image\/[a-zA-Z0-9]+;base64,/, '');
-
-        // Sincronizar com HikCentral
-        if (person.hikPersonId) {
-            await HikCentralService.addPersonFace(person.hikPersonId, cleanPhotoBase64);
-            console.log(`[HikCentral] Foto de primeiro acesso sincronizada para morador ${person.hikPersonId}`);
-        }
-
-        // Salvar localmente (armazenamos como Data URL)
-        const updated = await prisma.person.update({
+        const hashed = await bcrypt.hash(password, 10);
+        await prisma.person.update({
             where: { id: person.id },
-            data: { photoUrl: photoBase64 }
+            data: { portalPassword: hashed }
         });
 
-        res.json({ success: true, person: updated });
+        res.json({ success: true });
     } catch (error: any) {
         console.error('Onboarding Complete Error:', error);
         res.status(500).json({ message: error.message || "Erro ao concluir onboarding" });
@@ -1156,6 +1311,56 @@ app.get('/api/visitors/active', authMiddleware, async (req, res) => {
     }
 });
 
+// ── DEPARTMENTS ──────────────────────────────────────────────────────────────
+app.get('/api/departments', authMiddleware, async (req, res) => {
+    try {
+        const departments = await prisma.department.findMany({
+            orderBy: { name: 'asc' },
+            include: { _count: { select: { persons: true } } }
+        });
+        res.json(departments.map(d => ({ ...d, personCount: d._count.persons })));
+    } catch (error: any) { res.status(500).json({ error: error.message }); }
+});
+
+app.post('/api/departments', authMiddleware, async (req, res) => {
+    try {
+        const { name, description, color, hasAddresses } = req.body;
+        if (!name?.trim()) return res.status(400).json({ error: 'Nome é obrigatório' });
+        const dept = await prisma.department.create({ 
+            data: { 
+                name: name.trim(), 
+                description: description || null, 
+                color: color || null,
+                hasAddresses: hasAddresses !== undefined ? hasAddresses : true
+            } 
+        });
+        res.status(201).json(dept);
+    } catch (error: any) { res.status(error.code === 'P2002' ? 409 : 500).json({ error: error.message }); }
+});
+
+app.put('/api/departments/:id', authMiddleware, async (req, res) => {
+    try {
+        const { name, description, color, hasAddresses } = req.body;
+        const dept = await prisma.department.update({
+            where: { id: req.params.id },
+            data: { 
+                ...(name && { name: name.trim() }), 
+                description: description ?? null, 
+                color: color ?? null,
+                ...(hasAddresses !== undefined && { hasAddresses })
+            }
+        });
+        res.json(dept);
+    } catch (error: any) { res.status(error.code === 'P2025' ? 404 : 500).json({ error: error.message }); }
+});
+
+app.delete('/api/departments/:id', authMiddleware, async (req, res) => {
+    try {
+        await prisma.department.delete({ where: { id: req.params.id } });
+        res.json({ success: true });
+    } catch (error: any) { res.status(error.code === 'P2025' ? 404 : 500).json({ error: error.message }); }
+});
+
 // ============ Access Logs (HikCentral + Local DB) ============
 app.get('/api/access-logs', authMiddleware, async (req, res) => {
     try {
@@ -1184,10 +1389,14 @@ app.get('/api/access-logs', authMiddleware, async (req, res) => {
                         create: {
                             personName: event.personName || 'Desconhecido',
                             eventTime: new Date(event.eventTime || event.happenTime),
+                            occurredAt: new Date(event.eventTime || event.happenTime),
                             deviceName: event.deviceName || event.srcName || 'N/A',
                             doorName: event.doorName || event.srcName || 'N/A',
                             eventType: event.eventType?.toString() || 'ACCESS',
                             picUri: event.picUri || null,
+                            direction: event.eventType === 'EXIT' ? 'out' : 'in',
+                            category: 'access',
+                            source: 'hikcentral',
                         },
                     });
                 }
@@ -1255,36 +1464,15 @@ app.get('/api/dashboard/stats', authMiddleware, async (req, res) => {
             EntityMappingService.resolveOrgCodesWithFallback('/painel/staff'),
         ]);
 
-        // Tentar buscar contagens do HikCentral (fonte de verdade)
-        let totalResidents = 0;
-        let totalProviders = 0;
-        let totalStaff = 0;
-        try {
-            const hikResult = await Promise.race([
-                HikCentralService.getPersonList({ pageNo: 1, pageSize: 1000 }),
-                new Promise<null>((_, reject) => setTimeout(() => reject(new Error('timeout')), 8000))
-            ]) as any;
-            const list: any[] = hikResult?.data?.list || [];
-            list.forEach((p: any) => {
-                const code = String(p.orgIndexCode || '');
-                if (residentCodes.includes(code)) totalResidents++;
-                else if (prestadoresCodes.includes(code)) totalProviders++;
-                else if (staffCodes.includes(code)) totalStaff++;
-            });
-            console.log(`[Dashboard] HikCentral: ${list.length} pessoas | Moradores:${totalResidents} Prestadores:${totalProviders} Staff:${totalStaff}`);
-        } catch (e: any) {
-            // Fallback para banco local
-            console.warn('[Dashboard] Fallback banco local:', e.message);
-            [totalResidents, totalProviders] = await Promise.all([
-                prisma.person.count({ where: { orgIndexCode: { in: residentCodes } } }),
-                prisma.person.count({ where: { orgIndexCode: { in: prestadoresCodes } } }),
-            ]);
-        }
+        const [totalResidents, totalProviders] = await Promise.all([
+            prisma.person.count({ where: { orgIndexCode: { in: residentCodes } } }),
+            prisma.person.count({ where: { orgIndexCode: { in: prestadoresCodes } } }),
+        ]);
 
         const [totalVisitors, todayAccess, totalAccessEvents] = await Promise.all([
             prisma.visitor.count(),
             prisma.accessEvent.count({
-                where: { eventTime: { gte: startOfDay } }
+                where: { occurredAt: { gte: startOfDay } }
             }),
             prisma.accessEvent.count(),
         ]);
@@ -1297,14 +1485,15 @@ app.get('/api/dashboard/stats', authMiddleware, async (req, res) => {
             }
         });
 
-        // Fetch device status from HikCentral
+        // Fetch device status from local DB (Guarita devices)
         let onlineDevices = 0;
         let offlineDevices = 0;
         try {
-            const deviceResult = await HikCentralService.getAcsDeviceList(1, 100);
-            const devices = deviceResult?.data?.list || [];
-            onlineDevices = devices.filter((d: any) => d.status === 1).length;
-            offlineDevices = devices.filter((d: any) => d.status === 0).length;
+            const devices = await prisma.guaritaDevice.findMany();
+            // Para não bloquear, consideramos online os que estão enabled.
+            // Para um ping real precisaria testar, mas para a dashboard não queremos travar.
+            onlineDevices = devices.filter(d => d.enabled).length;
+            offlineDevices = devices.filter(d => !d.enabled).length;
         } catch (err) {
             console.error('Error fetching devices for stats:', err);
         }
@@ -1411,15 +1600,20 @@ app.put('/api/hik-config', authMiddleware, async (req, res) => {
 // ============ Visit Logs ============
 app.post('/api/visit-logs', authMiddleware, async (req, res) => {
     try {
-        // Store as an access event
-        const log = await prisma.accessEvent.create({
-            data: {
-                personName: req.body.personName || 'Visitante',
-                eventTime: new Date(),
-                deviceName: req.body.deviceName || 'Manual',
-                doorName: req.body.doorName || 'Portaria',
-                eventType: req.body.eventType || 'VISIT',
-            }
+        // Store as an access event (com broadcast SSE para a Central de Eventos)
+        const log = await emitEvent({
+            personName: req.body.personName || 'Visitante',
+            personType: req.body.personType || 'visitor',
+            personId: req.body.visitor_id || null,
+            unit: req.body.unit || null,
+            operatorId: (req as any).user?.id || req.body.authorized_by || null,
+            deviceName: req.body.deviceName || 'Manual',
+            doorName: req.body.doorName || 'Portaria',
+            eventType: req.body.eventType || 'VISIT',
+            direction: 'in',
+            category: 'access',
+            source: 'manual',
+            notes: req.body.notes || null,
         });
         res.json(log);
     } catch (error: any) {
@@ -1506,3 +1700,10 @@ app.get('/api/system/status', authMiddleware, async (req, res) => {
         res.status(500).json({ error: error.message });
     }
 });
+
+// ============ Background: Sincronização de Eventos de Acesso a cada 2 minutos ============
+setInterval(() => {
+    HikCentralSyncService.syncAccessEvents().catch(err =>
+        console.error('[Cron] Falha no syncAccessEvents:', err?.message || err)
+    );
+}, 2 * 60 * 1000); // 2 minutos

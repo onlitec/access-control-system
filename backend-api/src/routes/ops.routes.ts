@@ -1,13 +1,24 @@
 import { Router, Request, Response } from 'express';
-import { execFile, spawn } from 'child_process';
+import { spawn } from 'child_process';
+import fetch from 'node-fetch';
 import { prisma } from '../database';
 import { authMiddleware, adminMiddleware } from '../middleware/auth';
 import { AuditService } from '../services/AuditService';
+import { listServices, restartService, isAllowedService, ALLOWED_SERVICES } from '../services/WindowsServiceControl';
+import { config } from '../config/unifiedConfig';
 import { statfs } from 'fs/promises';
 import path from 'path';
 import fs from 'fs';
 
 const router = Router();
+
+// Layout da instalação Windows (C:\OnliAcesso): o serviço da API roda com
+// cwd = <install>\apps\backend-api, então <install> = ../.. do cwd.
+// Tudo é sobreponível por env (gerado pelo install.ps1).
+const BACKUP_DIR = process.env.BACKUP_DIR || path.resolve(process.cwd(), '../../backups');
+const PG_BIN = process.env.PG_BIN || path.resolve(process.cwd(), '../../binaries/pgsql/bin');
+// WinSW v3 grava <serviço>.out.log/.err.log ao lado do exe do serviço
+const SERVICE_LOGS_DIR = process.env.SERVICE_LOGS_DIR || path.resolve(process.cwd(), '../../services');
 
 // In-memory request log history for the last 5 minutes
 interface RequestLog {
@@ -42,68 +53,50 @@ export function healthMetricsMiddleware(req: any, res: any, next: any) {
     next();
 }
 
-// 1. GET /api/ops/containers
-router.get('/containers', authMiddleware, adminMiddleware, (req: Request, res: Response) => {
-    execFile(
-        'docker',
-        ['ps', '--format', '{"name":"{{.Names}}","status":"{{.Status}}","state":"{{.State}}"}', '--no-trunc'],
-        (error, psStdout, stderr) => {
-            if (error) {
-                console.error('Docker CLI error:', error, stderr);
-                return res.status(503).json({ error: 'docker unavailable' });
-            }
-            try {
-                const lines = psStdout.trim().split('\n').filter((l) => l.trim().length > 0);
-                const containers = lines.map((line) => {
-                    const parsed = JSON.parse(line);
-                    const uptime = parsed.status.startsWith('Up ') ? parsed.status.slice(3) : parsed.status;
-                    return {
-                        name: parsed.name,
-                        status: parsed.status,
-                        state: parsed.state,
-                        uptime: uptime,
-                        cpu: '0.0%',
-                        memory: '0B / 0B'
-                    };
-                });
-                
-                // Filter to containers whose name starts with "access-"
-                const filtered = containers.filter((c) => c.name.startsWith('access-'));
+// 1. GET /api/ops/services — status dos serviços Windows do OnliAcesso
+router.get('/services', authMiddleware, adminMiddleware, async (_req: Request, res: Response) => {
+    try {
+        const services = await listServices();
+        return res.json(services);
+    } catch (err: any) {
+        console.error('Error listing Windows services:', err?.message || err);
+        return res.status(500).json({ error: 'falha ao consultar os serviços do Windows' });
+    }
+});
 
-                // Fetch stats to overlay CPU and Memory
-                execFile(
-                    'docker',
-                    ['stats', '--no-stream', '--format', '{"name":"{{.Name}}","cpu":"{{.CPUPerc}}","memory":"{{.MemUsage}}"}'],
-                    (statsError, statsStdout) => {
-                        if (!statsError && statsStdout) {
-                            try {
-                                const statsLines = statsStdout.trim().split('\n').filter((l) => l.trim().length > 0);
-                                const statsMap = new Map();
-                                statsLines.forEach(line => {
-                                    const parsed = JSON.parse(line);
-                                    statsMap.set(parsed.name, parsed);
-                                });
-
-                                filtered.forEach(c => {
-                                    const stats = statsMap.get(c.name);
-                                    if (stats) {
-                                        c.cpu = stats.cpu;
-                                        c.memory = stats.memory;
-                                    }
-                                });
-                            } catch (e) {
-                                console.error('Failed to parse docker stats:', e);
-                            }
-                        }
-                        return res.json(filtered);
-                    }
-                );
-            } catch (err: any) {
-                console.error('Error parsing docker ps output:', err);
-                return res.status(500).json({ error: 'failed to parse container list' });
-            }
-        }
-    );
+// 2. POST /api/ops/services/:name/restart
+router.post('/services/:name/restart', authMiddleware, adminMiddleware, async (req: Request, res: Response) => {
+    const { name } = req.params;
+    if (!isAllowedService(name)) {
+        return res.status(400).json({ error: 'serviço inválido' });
+    }
+    try {
+        const result = await restartService(name);
+        await AuditService.logAdminAuditEvent({
+            action: 'SERVICE_RESTART',
+            status: 'success',
+            req,
+            userId: (req as any).user?.id,
+            userEmail: (req as any).user?.email,
+            details: `Serviço ${name} reiniciado (${result.mode}).`,
+        });
+        return res.status(result.mode === 'deferred' ? 202 : 200).json({
+            success: true,
+            mode: result.mode,
+            message: result.message,
+        });
+    } catch (err: any) {
+        console.error(`Error restarting service ${name}:`, err?.message || err);
+        await AuditService.logAdminAuditEvent({
+            action: 'SERVICE_RESTART',
+            status: 'failed',
+            req,
+            userId: (req as any).user?.id,
+            userEmail: (req as any).user?.email,
+            details: `Falha ao reiniciar ${name}: ${err?.message || err}`,
+        });
+        return res.status(500).json({ error: `falha ao reiniciar o serviço ${name}` });
+    }
 });
 
 // 2. GET /api/ops/health
@@ -152,21 +145,14 @@ router.get('/health', authMiddleware, adminMiddleware, async (req: Request, res:
             console.error('Failed to query DB size:', err);
         }
 
-        let lastBackupAt = '2026-06-28T03:00:00Z';
+        let lastBackupAt: string | null = null;
         try {
-            const backupFilePath = path.join(__dirname, '../../backups/latest.dump');
-            if (fs.existsSync(backupFilePath)) {
-                const stat = fs.statSync(backupFilePath);
-                lastBackupAt = stat.mtime.toISOString();
-            } else {
-                // Default: last 3:00 AM UTC
-                const d = new Date();
-                d.setUTCHours(3, 0, 0, 0);
-                if (d.getTime() > Date.now()) {
-                    d.setUTCDate(d.getUTCDate() - 1);
-                }
-                lastBackupAt = d.toISOString();
-            }
+            const lastSuccess = await prisma.backupRun.findFirst({
+                where: { status: 'success' },
+                orderBy: { completedAt: 'desc' },
+                select: { completedAt: true },
+            });
+            lastBackupAt = lastSuccess?.completedAt?.toISOString() ?? null;
         } catch (err) {
             console.error('Failed to query last backup timestamp:', err);
         }
@@ -175,7 +161,9 @@ router.get('/health', authMiddleware, adminMiddleware, async (req: Request, res:
         let usedBytes = 8589934592;
         let totalBytes = 53687091200;
         try {
-            const stats = await statfs('/');
+            // raiz do drive onde a aplicação está instalada (ex.: C:\)
+            const driveRoot = path.parse(process.cwd()).root || '/';
+            const stats = await statfs(driveRoot);
             totalBytes = stats.bsize * stats.blocks;
             const freeBytes = stats.bsize * stats.bfree;
             usedBytes = totalBytes - freeBytes;
@@ -270,7 +258,7 @@ router.get('/backups/status', authMiddleware, adminMiddleware, async (req: Reque
         return res.json({
             lastBackup,
             nextScheduled: getNextScheduled().toISOString(),
-            destination: '/app/backups',
+            destination: BACKUP_DIR,
         });
     } catch (err: any) {
         console.error('Error fetching backup status:', err);
@@ -309,18 +297,40 @@ router.get('/backups/list', authMiddleware, adminMiddleware, async (req: Request
     }
 });
 
-// 5. POST /api/ops/backups/run
+// 5. POST /api/ops/backups/run — pg_dump.exe nativo (sem docker/bash)
+// TODO: restore de backups pela interface (fora do escopo desta versão)
 router.post('/backups/run', authMiddleware, adminMiddleware, async (req: Request, res: Response) => {
     try {
         const userId = (req as any).user?.id || 'admin';
-        
-        // Create a new backup run record in the database
+
+        const dbUrl = process.env.DATABASE_URL;
+        if (!dbUrl) {
+            return res.status(500).json({ error: 'DATABASE_URL não configurada' });
+        }
+        const pgDumpExe = path.join(PG_BIN, process.platform === 'win32' ? 'pg_dump.exe' : 'pg_dump');
+        if (!fs.existsSync(pgDumpExe)) {
+            return res.status(500).json({ error: `pg_dump não encontrado em ${PG_BIN}` });
+        }
+
+        const url = new URL(dbUrl);
+        const dbHost = url.hostname || '127.0.0.1';
+        const dbPort = url.port || '5432';
+        const dbUser = decodeURIComponent(url.username || 'postgres');
+        const dbPassword = decodeURIComponent(url.password || '');
+        const dbName = (url.pathname || '/onliacesso').replace(/^\//, '') || 'onliacesso';
+
+        fs.mkdirSync(BACKUP_DIR, { recursive: true });
+        const d = new Date();
+        const pad = (n: number) => String(n).padStart(2, '0');
+        const ts = `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`;
+        const outFile = path.join(BACKUP_DIR, `onliacesso-${ts}.dump`);
+
         const newRun = await prisma.backupRun.create({
             data: {
                 status: 'running',
                 type: 'manual',
                 triggeredBy: userId,
-                destination: '/app/backups',
+                destination: outFile,
             },
         });
 
@@ -335,43 +345,37 @@ router.post('/backups/run', authMiddleware, adminMiddleware, async (req: Request
 
         const startTime = Date.now();
         const runId = newRun.id;
-        const projectRoot = path.join(__dirname, '../..');
 
-        // Spawn scripts/ops.sh backup-db
-        const child = spawn('bash', ['scripts/ops.sh', 'backup-db'], {
-            cwd: projectRoot,
-            detached: false,
+        const child = spawn(
+            pgDumpExe,
+            ['-h', dbHost, '-p', dbPort, '-U', dbUser, '-Fc', '-f', outFile, dbName],
+            {
+                env: { ...process.env, PGPASSWORD: dbPassword },
+                windowsHide: true,
+            },
+        );
+
+        let stderrTail = '';
+        child.stderr?.on('data', (chunk) => {
+            stderrTail = (stderrTail + chunk.toString()).slice(-2000);
         });
 
         child.on('close', async (code) => {
             try {
                 let sizeBytes: bigint | null = null;
-                let finalDest: string | null = null;
-
-                const latestLinkPath = path.join(projectRoot, 'backups/latest.dump');
-                if (code === 0 && fs.existsSync(latestLinkPath)) {
-                    try {
-                        const realPath = fs.readlinkSync(latestLinkPath);
-                        const absolutePath = path.join(projectRoot, 'backups', realPath);
-                        if (fs.existsSync(absolutePath)) {
-                            finalDest = absolutePath;
-                            const stat = fs.statSync(absolutePath);
-                            sizeBytes = BigInt(stat.size);
-                        }
-                    } catch (e) {
-                        console.error('Error resolving latest backup link:', e);
-                    }
+                const ok = code === 0 && fs.existsSync(outFile);
+                if (ok) {
+                    sizeBytes = BigInt(fs.statSync(outFile).size);
                 }
-
                 await prisma.backupRun.update({
                     where: { id: runId },
                     data: {
-                        status: code === 0 ? 'success' : 'failed',
+                        status: ok ? 'success' : 'failed',
                         completedAt: new Date(),
                         durationMs: Date.now() - startTime,
                         sizeBytes,
-                        destination: finalDest ?? '/app/backups',
-                        errorMessage: code === 0 ? null : `Backup script exited with code ${code}`,
+                        destination: outFile,
+                        errorMessage: ok ? null : `pg_dump saiu com código ${code}: ${stderrTail.trim()}`.slice(0, 1000),
                     },
                 });
             } catch (err) {
@@ -406,6 +410,14 @@ router.post('/backups/run', authMiddleware, adminMiddleware, async (req: Request
     }
 });
 
+// Garante que um destination registrado no banco aponte para dentro do
+// diretório de backups (defesa contra registros adulterados)
+function isInsideBackupDir(dest: string): boolean {
+    const resolved = path.resolve(dest);
+    const base = path.resolve(BACKUP_DIR);
+    return resolved === base || resolved.startsWith(base + path.sep);
+}
+
 // 6. GET /api/ops/backups/:id/download
 router.get('/backups/:id/download', authMiddleware, adminMiddleware, async (req: Request, res: Response) => {
     try {
@@ -419,6 +431,9 @@ router.get('/backups/:id/download', authMiddleware, adminMiddleware, async (req:
         }
         if (run.status !== 'success' || !run.destination) {
             return res.status(400).json({ error: 'backup was not successful' });
+        }
+        if (!isInsideBackupDir(run.destination)) {
+            return res.status(400).json({ error: 'invalid backup destination' });
         }
         if (!fs.existsSync(run.destination)) {
             return res.status(404).json({ error: 'backup file not found on disk' });
@@ -444,7 +459,7 @@ router.delete('/backups/:id', authMiddleware, adminMiddleware, async (req: Reque
             return res.status(404).json({ error: 'backup run not found' });
         }
 
-        if (run.destination && fs.existsSync(run.destination)) {
+        if (run.destination && isInsideBackupDir(run.destination) && fs.existsSync(run.destination)) {
             try {
                 fs.unlinkSync(run.destination);
             } catch (err: any) {
@@ -472,138 +487,122 @@ router.delete('/backups/:id', authMiddleware, adminMiddleware, async (req: Reque
     }
 });
 
-// 8. POST /api/ops/containers/:name/start
-router.post('/containers/:name/start', authMiddleware, adminMiddleware, (req: Request, res: Response) => {
-    const { name } = req.params;
-    if (!name.startsWith('access-')) {
-        return res.status(400).json({ error: 'invalid container name' });
-    }
-    execFile('docker', ['start', name], async (error, stdout, stderr) => {
-        if (error) {
-            console.error(`Error starting container ${name}:`, error, stderr);
-            await AuditService.logAdminAuditEvent({
-                action: 'CONTAINER_START',
-                status: 'failed',
-                req,
-                userId: (req as any).user?.id,
-                userEmail: (req as any).user?.email,
-                details: `Failed to start container ${name}: ${stderr || error.message}`
-            });
-            return res.status(500).json({ error: stderr || 'failed to start container' });
-        }
-        await AuditService.logAdminAuditEvent({
-            action: 'CONTAINER_START',
-            status: 'success',
-            req,
-            userId: (req as any).user?.id,
-            userEmail: (req as any).user?.email,
-            details: `Container started: ${name}`
-        });
-        return res.json({ success: true, message: `Container ${name} started` });
-    });
-});
-
-// 9. POST /api/ops/containers/:name/stop
-router.post('/containers/:name/stop', authMiddleware, adminMiddleware, (req: Request, res: Response) => {
-    const { name } = req.params;
-    if (!name.startsWith('access-')) {
-        return res.status(400).json({ error: 'invalid container name' });
-    }
-    execFile('docker', ['stop', name], async (error, stdout, stderr) => {
-        if (error) {
-            console.error(`Error stopping container ${name}:`, error, stderr);
-            await AuditService.logAdminAuditEvent({
-                action: 'CONTAINER_STOP',
-                status: 'failed',
-                req,
-                userId: (req as any).user?.id,
-                userEmail: (req as any).user?.email,
-                details: `Failed to stop container ${name}: ${stderr || error.message}`
-            });
-            return res.status(500).json({ error: stderr || 'failed to stop container' });
-        }
-        await AuditService.logAdminAuditEvent({
-            action: 'CONTAINER_STOP',
-            status: 'success',
-            req,
-            userId: (req as any).user?.id,
-            userEmail: (req as any).user?.email,
-            details: `Container stopped: ${name}`
-        });
-        return res.json({ success: true, message: `Container ${name} stopped` });
-    });
-});
-
-// 10. POST /api/ops/containers/:name/restart
-router.post('/containers/:name/restart', authMiddleware, adminMiddleware, (req: Request, res: Response) => {
-    const { name } = req.params;
-    if (!name.startsWith('access-')) {
-        return res.status(400).json({ error: 'invalid container name' });
-    }
-    execFile('docker', ['restart', name], async (error, stdout, stderr) => {
-        if (error) {
-            console.error(`Error restarting container ${name}:`, error, stderr);
-            await AuditService.logAdminAuditEvent({
-                action: 'CONTAINER_RESTART',
-                status: 'failed',
-                req,
-                userId: (req as any).user?.id,
-                userEmail: (req as any).user?.email,
-                details: `Failed to restart container ${name}: ${stderr || error.message}`
-            });
-            return res.status(500).json({ error: stderr || 'failed to restart container' });
-        }
-        await AuditService.logAdminAuditEvent({
-            action: 'CONTAINER_RESTART',
-            status: 'success',
-            req,
-            userId: (req as any).user?.id,
-            userEmail: (req as any).user?.email,
-            details: `Container restarted: ${name}`
-        });
-        return res.json({ success: true, message: `Container ${name} restarted` });
-    });
-});
-
-// 11. GET /api/ops/containers/:name/logs
-router.get('/containers/:name/logs', authMiddleware, adminMiddleware, (req: Request, res: Response) => {
-    const { name } = req.params;
-    if (!name.startsWith('access-')) {
-        return res.status(400).json({ error: 'invalid container name' });
-    }
-    const tail = req.query.tail ? parseInt(req.query.tail as string) || 100 : 100;
-    execFile('docker', ['logs', '--tail', tail.toString(), name], (error, stdout, stderr) => {
-        const output = stdout || stderr;
-        return res.json({ logs: output });
-    });
-});
-
-// 12. GET /api/ops/logs
+// 8. GET /api/ops/logs — logs dos serviços Windows (WinSW roll-by-size)
+//    ?service=onliacesso-api&stream=out|err&limit=200
 router.get('/logs', authMiddleware, adminMiddleware, async (req: Request, res: Response) => {
     try {
-        const auditLogPath = path.join(__dirname, '../../../monitoring/audit.log');
-        if (!fs.existsSync(auditLogPath)) {
+        const service = (req.query.service as string) || 'onliacesso-api';
+        const stream = req.query.stream === 'err' ? 'err' : 'out';
+        const limit = Math.min(Math.max(parseInt(req.query.limit as string) || 100, 1), 1000);
+
+        // allowlist evita path traversal via nome do serviço
+        if (!isAllowedService(service)) {
+            return res.status(400).json({ error: 'serviço inválido' });
+        }
+
+        const logPath = path.join(SERVICE_LOGS_DIR, `${service}.${stream}.log`);
+        if (!fs.existsSync(logPath)) {
             return res.json([]);
         }
-        const limit = req.query.limit ? parseInt(req.query.limit as string) || 100 : 100;
-        const fileContent = fs.readFileSync(auditLogPath, 'utf8');
-        const lines = fileContent.trim().split('\n').filter(l => l.trim().length > 0);
-        
-        // Parse and return last N logs
-        const recentLines = lines.slice(-limit).reverse();
-        const parsedLogs = recentLines.map(line => {
+
+        const stat = fs.statSync(logPath);
+        // lê no máximo os últimos 512 KB (suficiente para 1000 linhas)
+        const readBytes = Math.min(stat.size, 512 * 1024);
+        const fd = fs.openSync(logPath, 'r');
+        const buf = Buffer.alloc(readBytes);
+        try {
+            fs.readSync(fd, buf, 0, readBytes, stat.size - readBytes);
+        } finally {
+            fs.closeSync(fd);
+        }
+
+        const fileMtime = stat.mtime.toISOString();
+        const lines = buf.toString('utf8').split(/\r?\n/).filter((l) => l.trim().length > 0);
+        const parsedLogs = lines.slice(-limit).reverse().map((line) => {
+            // linhas JSON estruturadas são expandidas; as demais vão como raw
             try {
-                return JSON.parse(line);
+                const obj = JSON.parse(line);
+                return typeof obj === 'object' && obj !== null
+                    ? { timestamp_utc: fileMtime, ...obj }
+                    : { raw: line, timestamp_utc: fileMtime };
             } catch {
-                return { raw: line, timestamp_utc: new Date().toISOString() };
+                return { raw: line, timestamp_utc: fileMtime };
             }
         });
         return res.json(parsedLogs);
     } catch (err: any) {
-        console.error('Error fetching audit logs:', err);
+        console.error('Error fetching service logs:', err);
         return res.status(500).json({ error: 'failed to fetch system logs' });
     }
 });
+
+// 9. GET /api/ops/update-check — compara APP_VERSION com o manifesto remoto
+router.get('/update-check', authMiddleware, adminMiddleware, async (_req: Request, res: Response) => {
+    try {
+        const settings = await prisma.systemSettings.findUnique({ where: { id: 'singleton' } });
+        const manifestUrl = settings?.updateManifestUrl?.trim() || process.env.UPDATE_MANIFEST_URL || '';
+        const currentVersion = config.APP_VERSION;
+
+        if (!manifestUrl) {
+            return res.status(400).json({
+                error: 'URL do manifesto de atualização não configurada',
+                currentVersion,
+            });
+        }
+
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 10000);
+        let manifest: any;
+        try {
+            const resp = await fetch(manifestUrl, { signal: controller.signal as any });
+            if (!resp.ok) {
+                return res.status(502).json({ error: `manifesto respondeu HTTP ${resp.status}`, currentVersion });
+            }
+            manifest = await resp.json();
+        } finally {
+            clearTimeout(timer);
+        }
+
+        const latestVersion = String(manifest?.version || '').trim();
+        if (!latestVersion) {
+            return res.status(502).json({ error: 'manifesto inválido (campo version ausente)', currentVersion });
+        }
+
+        return res.json({
+            currentVersion,
+            latestVersion,
+            updateAvailable: compareVersions(latestVersion, currentVersion) > 0,
+            downloadUrl: manifest?.url || null,
+            sha256: manifest?.sha256 || null,
+            notes: manifest?.notes || null,
+            checkedAt: new Date().toISOString(),
+        });
+    } catch (err: any) {
+        const msg = err?.name === 'AbortError' ? 'tempo esgotado ao buscar o manifesto' : (err?.message || 'erro');
+        console.error('Error checking for updates:', msg);
+        return res.status(502).json({ error: `falha ao verificar atualização: ${msg}` });
+    }
+});
+
+// Comparação semver com suporte a pré-release (2.1.0-beta.2 < 2.1.0):
+// retorna >0 se a > b, <0 se a < b, 0 se iguais.
+function compareVersions(a: string, b: string): number {
+    const parse = (v: string) => {
+        const [core, pre] = v.replace(/^v/i, '').split('-', 2);
+        const nums = core.split('.').map((n) => parseInt(n, 10) || 0);
+        while (nums.length < 3) nums.push(0);
+        return { nums, pre: pre ?? null };
+    };
+    const pa = parse(a);
+    const pb = parse(b);
+    for (let i = 0; i < 3; i++) {
+        if (pa.nums[i] !== pb.nums[i]) return pa.nums[i] - pb.nums[i];
+    }
+    if (pa.pre === pb.pre) return 0;
+    if (pa.pre === null) return 1;   // versão final > pré-release
+    if (pb.pre === null) return -1;
+    return pa.pre.localeCompare(pb.pre, undefined, { numeric: true });
+}
 
 // 13. GET /api/ops/permissions
 router.get('/permissions', authMiddleware, adminMiddleware, async (req: Request, res: Response) => {

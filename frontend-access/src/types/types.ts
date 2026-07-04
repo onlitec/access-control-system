@@ -134,12 +134,33 @@ export interface DeviceStatus {
 
 export interface DashboardStats {
   totalResidents: number;
+  totalStaff: number;
   totalVisitors: number;
   activeVisits: number;
   completedVisits: number;
   totalProviders: number;
   todayAccess: number;
+  yesterdayAccess?: number;
+  accessDeltaPct?: number | null;
   onlineDevices: number;
   offlineDevices: number;
   totalDevices: number;
+  insideResidents: number;
+  insideVisitors: number;
+  insideProviders: number;
+  insideStaff?: number;
+  occupiedUnits?: number;
+  totalUnits?: number;
+  pendingDeliveries?: number;
+  hourlyAccess: { hour: number; count: number }[];
+}
+
+export interface DashboardAlert {
+  id: string;
+  kind: 'passback' | 'denied' | 'alarm';
+  title: string;
+  description: string;
+  deviceName: string | null;
+  photoUrl: string | null;
+  occurredAt: string;
 }

@@ -10,6 +10,7 @@ const dashboardController = new DashboardController();
 
 // We'll apply authMiddleware in index.ts when using this router
 router.get('/dashboard/stats', dashboardController.getStats);
+router.get('/dashboard/alerts', dashboardController.getAlerts);
 router.get('/visitors', visitorsController.getVisitors);
 router.get('/providers', providersController.getProviders);
 

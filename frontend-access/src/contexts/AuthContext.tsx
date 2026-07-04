@@ -12,6 +12,7 @@ export interface User {
   id: string;
   email: string;
   role: string;
+  permissions?: any;
 }
 
 interface AuthContextType {

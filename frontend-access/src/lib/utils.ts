@@ -57,3 +57,12 @@ export async function urlToBase64(url: string): Promise<string> {
     reader.readAsDataURL(blob);
   });
 }
+
+/** Formata endereço no padrão: Rua X QUADRA-Y NºZ (os prefixos já vêm no dado) */
+export function formatAddress(tower?: string | null, block?: string | null, unit?: string | null): string {
+  const parts: string[] = [];
+  if (tower) parts.push(tower);
+  if (block) parts.push(block);
+  if (unit) parts.push(unit);
+  return parts.join(" ") || "-";
+}

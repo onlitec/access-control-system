@@ -162,58 +162,6 @@ export const getSystemStatus = async () => {
     }>('/system/status');
 };
 
-// ============ Dashboard ============
-export const getDashboardStats = async () => {
-    return request<{
-        totalResidents: number;
-        totalVisitors: number;
-        activeVisits: number;
-        completedVisits: number;
-        totalProviders: number;
-        todayAccess: number;
-        totalAccessEvents: number;
-    }>('/dashboard/stats');
-};
-
-// ============ Residents ============
-export const getResidents = async (page = 1, limit = 20, search = '') => {
-    return request<{ data: any[]; count: number }>(`/residents?page=${page}&limit=${limit}&search=${search}`);
-};
-
-export const createResident = async (data: any) => {
-    return request<any>('/residents', { method: 'POST', body: JSON.stringify(data) });
-};
-
-export const updateResident = async (id: string, data: any) => {
-    return request<any>(`/residents/${id}`, { method: 'PATCH', body: JSON.stringify(data) });
-};
-
-export const deleteResident = async (id: string) => {
-    return request<void>(`/residents/${id}`, { method: 'DELETE' });
-};
-
-export const syncResidentsFromHikCentral = async () => {
-    return request<{ success: boolean; count: number }>('/hikcentral/residents/sync', { method: 'POST' });
-};
-
-// ============ Visitors ============
-export const getVisitors = async (page = 1, limit = 20, search = '') => {
-    return request<{ data: any[]; count: number }>(`/visitors?page=${page}&limit=${limit}&search=${search}`);
-};
-
-export const createVisitor = async (data: any) => {
-    return request<any>('/visitors', { method: 'POST', body: JSON.stringify(data) });
-};
-
-// ============ Access Logs ============
-export const getAccessLogs = async (startTime?: string, endTime?: string, page = 1, pageSize = 50) => {
-    const start = startTime || new Date(Date.now() - 86400000).toISOString();
-    const end = endTime || new Date().toISOString();
-    return request<{ data: any[]; total: number; source: string }>(
-        `/access-logs?startTime=${start}&endTime=${end}&pageNo=${page}&pageSize=${pageSize}`
-    );
-};
-
 // ============ Users ============
 export const getUsers = async () => {
     return request<any[]>('/users');
@@ -432,183 +380,502 @@ export const getSecurityMetricsHistory = async (params?: {
     }>(`/security/metrics/history?${query.toString()}`);
 };
 
-// ============ HikCentral Visitors ============
-export interface HikCentralVisitor {
-    id: string;
-    visitor_id: string;
-    visitor_name: string;
-    visitor_group_name: string;
-    plate_no: string;
-    certificate_no: string;
-    phone_num: string;
-    appoint_status: number;
-    appoint_status_text: string;
-    appoint_start_time: string;
-    appoint_end_time: string;
-    visit_start_time: string | null;
-    visit_end_time: string | null;
+export const getOpsHealth = async () => {
+    return request<{
+        db: {
+            version: string;
+            activeConnections: number;
+            maxConnections: number;
+            sizeBytes: number;
+            lastBackupAt: string | null;
+        };
+        disk: {
+            usedBytes: number;
+            totalBytes: number;
+            uploadDirSizeBytes: number;
+        };
+        api: {
+            requestsLast5Min: number;
+            avgResponseTimeMs: number;
+            errorRatePercent: number;
+        };
+    }>('/ops/health');
+};
+
+export interface WindowsService {
+    name: string;
+    displayName: string;
+    status: string;      // Running | Stopped | StartPending | ...
+    startType: string;
+    pid: number | null;
+    memoryBytes: number | null;
+    uptimeSeconds: number | null;
 }
 
-// Pessoa do módulo ACS/departamento (não módulo visitantes)
-export interface InternalPerson {
-    id: string;
-    person_id: string;
-    person_name: string;
-    gender?: number;
-    phone_num: string;
-    certificate_no: string;
-    certificate_type?: number;
-    org_index_code: string;
-    org_name: string;
-    job_title: string;
-    email: string;
+export const getOpsServices = async () => {
+    return request<WindowsService[]>('/ops/services');
+};
+
+export const restartOpsService = async (name: string) => {
+    return request<{ success: boolean; mode: 'sync' | 'deferred'; message: string }>(
+        `/ops/services/${name}/restart`,
+        { method: 'POST' },
+    );
+};
+
+export interface SystemSettingsData {
+    smtpHost: string | null;
+    smtpPort: number | null;
+    smtpUser: string | null;
+    smtpFrom: string | null;
+    smtpFromName: string | null;
+    smtpPasswordSet: boolean;
+    updateManifestUrl: string | null;
+    appVersion: string;
+    effective: {
+        host: string;
+        port: number;
+        user: string;
+        from: string;
+        fromName: string;
+    };
 }
 
-// Todos os visitantes do grupo VISITANTES (qualquer status)
-export const getAllVisitors = async () => {
-    return request<{ data: HikCentralVisitor[]; total: number }>('/hikcentral/visitantes');
+export const getSystemSettings = async () => {
+    return request<SystemSettingsData>('/system-settings');
 };
 
-export const getActiveVisitors = async () => {
-    return request<{ data: HikCentralVisitor[]; total: number }>('/hikcentral/visitantes-atividade');
+export const updateSystemSettings = async (payload: {
+    smtpHost?: string;
+    smtpPort?: number | null;
+    smtpUser?: string;
+    smtpPassword?: string;
+    smtpFrom?: string;
+    smtpFromName?: string;
+    updateManifestUrl?: string;
+}) => {
+    return request<{ success: boolean }>('/system-settings', {
+        method: 'PUT',
+        body: JSON.stringify(payload),
+    });
 };
 
-export const getFinishedVisitors = async () => {
-    return request<{ data: HikCentralVisitor[]; total: number }>('/hikcentral/visitantes-finalizados');
+export const testSmtp = async (to?: string) => {
+    return request<{ success: boolean; messageId?: string; to?: string; error?: string }>(
+        '/system-settings/smtp-test',
+        { method: 'POST', body: JSON.stringify(to ? { to } : {}) },
+    );
 };
 
-// Todos os prestadores do grupo PRESTADORES (qualquer status - cadastrados pelos moradores como visitantes)
-export const getAllProviders = async () => {
-    return request<{ data: HikCentralVisitor[]; total: number }>('/hikcentral/prestadores');
+export const checkForUpdate = async () => {
+    return request<{
+        currentVersion: string;
+        latestVersion: string;
+        updateAvailable: boolean;
+        downloadUrl: string | null;
+        sha256: string | null;
+        notes: string | null;
+        checkedAt: string;
+    }>('/ops/update-check');
 };
 
-export const getActiveProviders = async () => {
-    return request<{ data: HikCentralVisitor[]; total: number }>('/hikcentral/prestadores-atividade');
+export interface BackupRun {
+    id: string;
+    status: 'running' | 'success' | 'failed';
+    type: 'automatic' | 'manual';
+    startedAt: string;
+    completedAt: string | null;
+    durationMs: number | null;
+    sizeBytes: string | null;
+    destination: string | null;
+    errorMessage: string | null;
+    triggeredBy: string | null;
+    createdAt: string;
+}
+
+export const getBackupStatus = async () => {
+    return request<{
+        lastBackup: BackupRun | null;
+        nextScheduled: string;
+        destination: string;
+    }>('/ops/backups/status');
 };
 
-export const getFinishedProviders = async () => {
-    return request<{ data: HikCentralVisitor[]; total: number }>('/hikcentral/prestadores-finalizados');
+export const getBackupList = async (page = 1, limit = 10) => {
+    return request<{
+        items: BackupRun[];
+        total: number;
+        page: number;
+        limit: number;
+    }>(`/ops/backups/list?page=${page}&limit=${limit}`);
 };
 
-// Prestadores Internos - cadastrados no departamento PRESTADORES (org 3), módulo de pessoas
-export const getInternalProviders = async () => {
-    return request<{ data: InternalPerson[]; total: number }>('/hikcentral/internal-providers');
+export const runBackup = async () => {
+    return request<{
+        id: string;
+        status: 'running';
+        startedAt: string;
+    }>('/ops/backups/run', {
+        method: 'POST',
+    });
 };
 
-// ============ CMS Data-Driven: Admin Entities ============
-export interface HikEntity {
+export const deleteBackup = async (id: string) => {
+    return request<{ success: boolean; message: string }>(`/ops/backups/${id}`, {
+        method: 'DELETE',
+    });
+};
+
+export const downloadBackup = async (id: string, fileName: string) => {
+    const token = getAccessToken();
+    const headers: Record<string, string> = {};
+    if (token) {
+        headers['Authorization'] = `Bearer ${token}`;
+    }
+    const response = await fetch(`${API_BASE_URL}/ops/backups/${id}/download`, {
+        headers,
+        credentials: 'include',
+    });
+    if (!response.ok) {
+        throw new Error('Download failed');
+    }
+    const blob = await response.blob();
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = fileName;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    window.URL.revokeObjectURL(url);
+};
+
+export interface SystemUser {
     id: string;
     name: string;
-    parentOrgIndexCode?: string;
-    parentIndexCode?: string;
-    type?: number;
-    description?: string;
-}
-
-export const getAdminOrganizations = async () => {
-    return request<{ success: boolean; data: HikEntity[]; total: number }>('/admin/entities/organizations');
-};
-
-export const getAdminAreas = async () => {
-    return request<{ success: boolean; data: HikEntity[]; total: number }>('/admin/entities/areas');
-};
-
-export const getAdminAccessLevels = async (type = 1) => {
-    return request<{ success: boolean; data: HikEntity[]; total: number }>(`/admin/entities/access-levels?type=${type}`);
-};
-
-export const getAdminCustomFields = async () => {
-    return request<{ success: boolean; data: HikEntity[]; total: number }>('/admin/entities/custom-fields');
-};
-
-export const getAdminFloors = async () => {
-    return request<{ success: boolean; data: HikEntity[]; total: number }>('/admin/entities/floors');
-};
-
-export const getAdminVisitorGroups = async () => {
-    return request<{ success: boolean; data: HikEntity[]; total: number }>('/admin/entities/visitor-groups');
-};
-
-// ============ Entity Mappings CRUD ============
-export interface EntityMapping {
-    id: string;
-    pageRoute: string;
-    entityType: string;
-    hikEntityId: string;
-    hikEntityName: string;
-    isActive: boolean;
-    priority: number;
-    filterConfig: any;
+    email: string;
+    role: 'admin_master' | 'operador_portaria' | 'gestor_condominio';
+    status: 'active' | 'inactive';
+    lastLoginAt: string | null;
     createdAt: string;
     updatedAt: string;
-    createdBy: string | null;
 }
 
-export const getEntityMappings = async (filters?: { pageRoute?: string; entityType?: string; isActive?: boolean }) => {
-    const params = new URLSearchParams();
-    if (filters?.pageRoute) params.set('pageRoute', filters.pageRoute);
-    if (filters?.entityType) params.set('entityType', filters.entityType);
-    if (filters?.isActive !== undefined) params.set('isActive', String(filters.isActive));
-    const query = params.toString() ? `?${params.toString()}` : '';
-    return request<{ success: boolean; data: EntityMapping[]; total: number }>(`/admin/mappings${query}`);
+export const getSystemUsers = async (role?: string) => {
+    const query = role ? `?role=${role}` : '';
+    return request<SystemUser[]>(`/system-users${query}`);
 };
 
-export const createEntityMapping = async (data: Partial<EntityMapping>) => {
-    return request<{ success: boolean; data: EntityMapping }>('/admin/mappings', {
+export const createSystemUser = async (data: Partial<SystemUser> & { password?: string }) => {
+    return request<SystemUser>('/system-users', {
         method: 'POST',
         body: JSON.stringify(data),
     });
 };
 
-export const updateEntityMapping = async (id: string, data: Partial<EntityMapping>) => {
-    return request<{ success: boolean; data: EntityMapping }>(`/admin/mappings/${id}`, {
+export const updateSystemUser = async (id: string, data: Partial<SystemUser>) => {
+    return request<SystemUser>(`/system-users/${id}`, {
         method: 'PUT',
         body: JSON.stringify(data),
     });
 };
 
-export const deleteEntityMapping = async (id: string) => {
-    return request<{ success: boolean; message: string }>(`/admin/mappings/${id}`, {
+export const deleteSystemUser = async (id: string) => {
+    return request<SystemUser>(`/system-users/${id}`, {
         method: 'DELETE',
     });
 };
 
-export const batchCreateEntityMappings = async (mappings: Partial<EntityMapping>[]) => {
-    return request<{ success: boolean; created: number }>('/admin/mappings/batch', {
+export const resetSystemUserPassword = async (id: string) => {
+    return request<{ tempPassword: string }>(`/system-users/${id}/reset-password`, {
         method: 'POST',
-        body: JSON.stringify({ mappings }),
     });
 };
 
-export const refreshAdminCache = async (entityType?: string) => {
-    return request<{ success: boolean; message: string }>('/admin/cache/refresh', {
-        method: 'POST',
-        body: JSON.stringify({ entityType }),
+export interface UserPermissionsResponse {
+    role: string;
+    rolePermissions: Record<string, boolean> | null;
+    customPermissions: Record<string, boolean>;
+    effectivePermissions: Record<string, boolean>;
+}
+
+export const getUserPermissions = async (id: string) => {
+    return request<UserPermissionsResponse>(`/system-users/${id}/permissions`);
+};
+
+export const setUserPermissions = async (id: string, overrides: Record<string, boolean | null>) => {
+    return request<{ success: boolean; customPermissions: Record<string, boolean> }>(
+        `/system-users/${id}/permissions`,
+        { method: 'PUT', body: JSON.stringify(overrides) }
+    );
+};
+
+export interface AccessEvent {
+    id: string;
+    occurredAt: string;
+    personName: string;
+    personType: 'resident' | 'visitor' | 'provider_condo' | 'provider_resident';
+    personId: string | null;
+    unit: string | null;
+    operatorId: string | null;
+    deviceName: string | null;
+    status: 'authorized' | 'denied' | 'pending';
+    photoUrl: string | null;
+    notes: string | null;
+    createdAt: string;
+}
+
+export const getAccessAudit = async (filters: {
+    from?: string;
+    to?: string;
+    search?: string;
+    type?: string;
+    status?: string;
+    page?: number;
+    limit?: number;
+}) => {
+    const params = new URLSearchParams();
+    if (filters.from) params.set('from', filters.from);
+    if (filters.to) params.set('to', filters.to);
+    if (filters.search) params.set('search', filters.search);
+    if (filters.type) params.set('type', filters.type);
+    if (filters.status) params.set('status', filters.status);
+    if (filters.page) params.set('page', String(filters.page));
+    if (filters.limit) params.set('limit', String(filters.limit));
+
+    const query = params.toString() ? `?${params.toString()}` : '';
+    return request<{
+        items: AccessEvent[];
+        total: number;
+        page: number;
+        limit: number;
+    }>(`/audit/access${query}`);
+};
+
+export const exportAccessAuditCSV = async (filters: {
+    from?: string;
+    to?: string;
+    search?: string;
+    type?: string;
+    status?: string;
+}) => {
+    const params = new URLSearchParams();
+    if (filters.from) params.set('from', filters.from);
+    if (filters.to) params.set('to', filters.to);
+    if (filters.search) params.set('search', filters.search);
+    if (filters.type) params.set('type', filters.type);
+    if (filters.status) params.set('status', filters.status);
+
+    const query = params.toString() ? `?${params.toString()}` : '';
+    const token = getAccessToken();
+    const headers: Record<string, string> = {};
+    if (token) {
+        headers['Authorization'] = `Bearer ${token}`;
+    }
+    
+    const response = await fetch(`${API_BASE_URL}/audit/access/export${query}`, {
+        headers,
+        credentials: 'include',
+    });
+    if (!response.ok) {
+        throw new Error('CSV Export failed');
+    }
+    const blob = await response.blob();
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    const dateStr = new Date().toISOString().split('T')[0];
+    a.download = `acessos-${dateStr}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    window.URL.revokeObjectURL(url);
+};
+
+export interface CondominiumSettings {
+    id: string;
+    name: string;
+    cnpj: string | null;
+    address: string | null;
+    phone: string | null;
+    email: string | null;
+    logoUrl: string | null;
+    type?: string;
+    updatedAt: string;
+}
+
+export interface Tower {
+    id: string;
+    name: string;
+    description?: string | null;
+    isActive?: boolean;
+    floors: number;
+    blocks?: Block[];
+    createdAt?: string;
+    updatedAt?: string;
+}
+
+export interface Block {
+    id: string;
+    name: string;
+    towerId: string;
+    createdAt?: string;
+}
+
+export interface Unit {
+    id: string;
+    number: string;
+    floor: number | null;
+    status: 'occupied' | 'vacant';
+    towerId: string;
+    tower?: Tower;
+    blockId: string | null;
+    block?: Block | null;
+    parkingSpaces?: number;
+    createdAt?: string;
+}
+
+export const getCondominiumSettings = async () => {
+    return request<CondominiumSettings>('/condominium/settings');
+};
+
+export const updateCondominiumSettings = async (data: Partial<CondominiumSettings>) => {
+    return request<CondominiumSettings>('/condominium/settings', {
+        method: 'PUT',
+        body: JSON.stringify(data),
     });
 };
 
-// ============ Terminals & Photo Capture ============
-export const getTerminals = async () => {
-    return request<{ success: boolean; data: any[]; total: number }>('/admin/terminals');
+export const getTowers = async () => {
+    return request<Tower[]>('/condominium/towers');
 };
 
-export const captureTerminalPhoto = async (id: string) => {
-    // A API agora espera deviceIndexCode no corpo
-    return request<{ success: boolean; data: string }>('/hikcentral/remote-capture', {
+export const createTower = async (data: Partial<Tower>) => {
+    return request<Tower>('/condominium/towers', {
         method: 'POST',
-        body: JSON.stringify({ deviceIndexCode: id }),
-    }).then(async (blob: any) => {
-        // O backend retorna um blob de imagem (buffer), precisamos converter para base64
-        if (blob instanceof Blob) {
-             return new Promise((resolve, reject) => {
-                const reader = new FileReader();
-                reader.onloadend = () => resolve({ success: true, data: reader.result as string });
-                reader.onerror = reject;
-                reader.readAsDataURL(blob);
-            });
-        }
-        // Se já vier como JSON (erro ou formato antigo)
-        return blob;
+        body: JSON.stringify(data),
+    });
+};
+
+export const updateTower = async (id: string, data: Partial<Tower>) => {
+    return request<Tower>(`/condominium/towers/${id}`, {
+        method: 'PUT',
+        body: JSON.stringify(data),
+    });
+};
+
+export const deleteTower = async (id: string) => {
+    return request<{ success: boolean; message: string }>(`/condominium/towers/${id}`, {
+        method: 'DELETE',
+    });
+};
+
+export const createBlock = async (towerId: string, name: string) => {
+    return request<Block>(`/condominium/towers/${towerId}/blocks`, {
+        method: 'POST',
+        body: JSON.stringify({ name }),
+    });
+};
+
+export const deleteBlock = async (id: string) => {
+    return request<{ success: boolean; message: string }>(`/condominium/blocks/${id}`, {
+        method: 'DELETE',
+    });
+};
+
+export const getUnits = async (towerId?: string) => {
+    const query = towerId ? `?towerId=${towerId}` : '';
+    return request<Unit[]>(`/condominium/units${query}`);
+};
+
+export const createUnit = async (data: Partial<Unit>) => {
+    return request<Unit>('/condominium/units', {
+        method: 'POST',
+        body: JSON.stringify(data),
+    });
+};
+
+export const updateUnit = async (id: string, data: Partial<Unit>) => {
+    return request<Unit>(`/condominium/units/${id}`, {
+        method: 'PUT',
+        body: JSON.stringify(data),
+    });
+};
+
+export const deleteUnit = async (id: string) => {
+    return request<{ success: boolean; message: string }>(`/condominium/units/${id}`, {
+        method: 'DELETE',
+    });
+};
+
+export const importUnitsCSV = async (csvContent: string) => {
+    return request<{ success: boolean; imported: number }>('/condominium/units/import', {
+        method: 'POST',
+        body: JSON.stringify({ csvContent }),
+    });
+};
+
+export interface RegistrationRequirement {
+    id: string;
+    category: string;
+    fieldName: string;
+    status: 'required' | 'optional' | 'hidden';
+}
+
+export interface BlacklistRecord {
+    id: string;
+    name: string;
+    document: string;
+    reason: string;
+    createdAt?: string;
+    createdBy?: string;
+}
+
+export interface AccessSchedule {
+    id?: string;
+    type: 'visitor' | 'provider';
+    dayOfWeek: number;
+    startTime: string;
+    endTime: string;
+    isActive: boolean;
+}
+
+export const getRegistrationRequirements = async () => {
+    return request<RegistrationRequirement[]>('/condominium/requirements');
+};
+
+export const updateRegistrationRequirements = async (requirements: { id: string; status: string }[]) => {
+    return request<{ success: boolean }>('/condominium/requirements', {
+        method: 'PUT',
+        body: JSON.stringify({ requirements })
+    });
+};
+
+export const getBlacklist = async () => {
+    return request<BlacklistRecord[]>('/condominium/blacklist');
+};
+
+export const addToBlacklist = async (data: { name: string; document: string; reason: string; createdBy?: string }) => {
+    return request<BlacklistRecord>('/condominium/blacklist', {
+        method: 'POST',
+        body: JSON.stringify(data)
+    });
+};
+
+export const deleteFromBlacklist = async (id: string) => {
+    return request<{ success: boolean }>(`/condominium/blacklist/${id}`, {
+        method: 'DELETE'
+    });
+};
+
+export const getAccessSchedules = async () => {
+    return request<AccessSchedule[]>('/condominium/schedules');
+};
+
+export const updateAccessSchedules = async (schedules: AccessSchedule[]) => {
+    return request<AccessSchedule[]>('/condominium/schedules', {
+        method: 'PUT',
+        body: JSON.stringify({ schedules })
     });
 };
 

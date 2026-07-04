@@ -1,0 +1,20 @@
+<service>
+  <id>onliacesso-visitor</id>
+  <name>OnliAcesso - Portal Morador/Visitante</name>
+  <description>Frontend Next.js (portal do morador e visitante) do OnliAcesso, porta 3002.</description>
+  <executable>%BASE%\..\binaries\node\node.exe</executable>
+  <arguments>frontend-visitor\server.js</arguments>
+  <workingdirectory>%BASE%\..\apps\frontend-visitor</workingdirectory>
+  <env name="NODE_ENV" value="production"/>
+  <env name="PORT" value="3002"/>
+  <env name="HOSTNAME" value="127.0.0.1"/>
+  <depend>onliacesso-api</depend>
+  <startmode>Automatic</startmode>
+  <stoptimeout>20sec</stoptimeout>
+  <log mode="roll-by-size">
+    <logpath>%BASE%\..\logs</logpath>
+    <sizeThreshold>10240</sizeThreshold>
+    <keepFiles>5</keepFiles>
+  </log>
+  <onfailure action="restart" delay="10 sec"/>
+</service>

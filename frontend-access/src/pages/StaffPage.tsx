@@ -11,14 +11,6 @@ import {
     TableRow
 } from '@/components/ui/table';
 import {
-    Dialog,
-    DialogContent,
-    DialogDescription,
-    DialogHeader,
-    DialogTitle,
-    DialogTrigger
-} from '@/components/ui/dialog';
-import {
     Form,
     FormControl,
     FormField,
@@ -37,20 +29,28 @@ import { Label } from '@/components/ui/label';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
 import { getStaff, createStaff } from '@/db/api';
-import { Search, ShieldCheck, Plus, Camera, User } from 'lucide-react';
+import { Search, Plus, Camera, Video } from 'lucide-react';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useToast } from '@/hooks/use-toast';
 import { useForm } from 'react-hook-form';
 import { uploadImage } from '@/lib/upload';
 import { CameraCapture } from '@/components/CameraCapture';
+import { TreeView, type TreeNode } from '@/components/TreeView';
+import { EntityPageShell } from '@/components/entity/EntityPageShell';
+import { StaffOverview } from '@/components/entity/StaffOverview';
+import { useEntityTab, type EntityTabValue } from '@/hooks/useEntityTab';
 
 export default function StaffPage() {
     const [staff, setStaff] = useState<any[]>([]);
     const [loading, setLoading] = useState(true);
     const [search, setSearch] = useState('');
-    const [dialogOpen, setDialogOpen] = useState(false);
+    const { tab, setTab } = useEntityTab({ canRegister: true });
     const [uploading, setUploading] = useState(false);
     const [cameraDialogOpen, setCameraDialogOpen] = useState(false);
+    const [cameraDefaultTab, setCameraDefaultTab] = useState<'webcam' | 'doorbell'>('webcam');
+    const openCameraDialog = (tab: 'webcam' | 'doorbell' = 'webcam') => {
+      setCameraDefaultTab(tab); setCameraDialogOpen(true);
+    };
     const { toast } = useToast();
 
     const form = useForm({
@@ -84,6 +84,13 @@ export default function StaffPage() {
         }
     };
 
+    const handleTabChange = (t: EntityTabValue) => {
+        if (t !== 'cadastrar') {
+            form.reset();
+        }
+        setTab(t);
+    };
+
     const onSubmit = async (data: any) => {
         try {
             setUploading(true);
@@ -92,8 +99,8 @@ export default function StaffPage() {
                 title: 'Sucesso',
                 description: 'Colaborador cadastrado com sucesso'
             });
-            setDialogOpen(false);
             form.reset();
+            setTab('lista');
             loadStaff();
         } catch (error: any) {
             toast({
@@ -126,42 +133,33 @@ export default function StaffPage() {
         return url;
     };
 
-    return (
-        <div className="space-y-6">
-            <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
-                <div>
-                    <h1 className="text-3xl font-bold tracking-tight text-primary flex items-center gap-2">
-                        <ShieldCheck className="h-8 w-8" />
-                        P. Calabasas (Staff)
-                    </h1>
-                    <p className="text-muted-foreground mt-1">
-                        Gerenciamento de colaboradores da Administração, Portaria e Condomínio
-                    </p>
-                </div>
+    const staffDepartments = Array.from(new Set(staff.map(p => p.department))).filter(Boolean);
+    const treeData: TreeNode[] = [
+        { id: 'all', name: 'Todos os Colaboradores', type: 'group' }
+    ];
+    if (staffDepartments.length > 0) {
+        treeData.push({
+            id: 'departments_root',
+            name: 'Departamentos',
+            type: 'group',
+            children: staffDepartments.map(d => ({ id: `dept_${d}`, name: d, type: 'item' }))
+        });
+    }
+    const [deptFilter, setDeptFilter] = useState('');
 
-                <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-                    <DialogTrigger asChild>
-                        <Button className="bg-primary hover:bg-primary/90">
-                            <Plus className="mr-2 h-4 w-4" />
-                            Novo Colaborador
-                        </Button>
-                    </DialogTrigger>
-                    <DialogContent
-                        className="w-[95vw] max-h-[95vh] overflow-y-auto p-0 gap-0 border-primary/20 shadow-2xl"
-                        style={{ maxWidth: '1200px' }}
-                        aria-describedby="staff-dialog-description"
-                    >
-                        <DialogHeader className="p-6 pb-2 border-b bg-muted/20">
-                            <DialogTitle className="text-xl flex items-center gap-2">
-                                <span className="p-2 bg-primary/10 text-primary rounded-lg">
-                                    <Plus className="h-5 w-5" />
-                                </span>
-                                Cadastrar Novo Colaborador
-                            </DialogTitle>
-                            <DialogDescription id="staff-dialog-description" className="ml-11 text-xs text-muted-foreground mt-1">
-                                Adicione as informações do novo colaborador para sincronização com o HikCentral.
-                            </DialogDescription>
-                        </DialogHeader>
+    const registerContent = (
+        <Card className="border-primary/20 shadow-sm rounded-2xl overflow-hidden p-0 gap-0">
+            <CardHeader className="p-6 pb-4 border-b bg-muted/20">
+                <h2 className="text-xl font-semibold flex items-center gap-2">
+                    <span className="p-2 bg-primary/10 text-primary rounded-lg">
+                        <Plus className="h-5 w-5" />
+                    </span>
+                    Cadastrar Novo Colaborador
+                </h2>
+                <p className="text-sm text-muted-foreground">
+                    Adicione as informações do novo colaborador para sincronização com o HikCentral.
+                </p>
+            </CardHeader>
 
                         <div className="p-6">
                             <Form {...form}>
@@ -178,7 +176,7 @@ export default function StaffPage() {
                                                             alt="Face capture"
                                                         />
                                                         <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 flex items-center justify-center gap-2 transition-all">
-                                                            <Button type="button" size="sm" variant="secondary" onClick={() => setCameraDialogOpen(true)} className="h-8">
+                                                            <Button type="button" size="sm" variant="secondary" onClick={() => openCameraDialog('webcam')} className="h-8">
                                                                 Trocar
                                                             </Button>
                                                         </div>
@@ -192,9 +190,13 @@ export default function StaffPage() {
                                             </div>
 
                                             <div className="flex flex-col gap-2">
-                                                <Button type="button" size="sm" onClick={() => setCameraDialogOpen(true)} className="w-full bg-primary/10 text-primary hover:bg-primary/20 border-none">
+                                                <Button type="button" size="sm" onClick={() => openCameraDialog('webcam')} className="w-full bg-primary/10 text-primary hover:bg-primary/20 border-none">
                                                     <Camera className="mr-2 h-4 w-4" />
-                                                    Capturar pela Facial
+                                                    Câmera Local
+                                                </Button>
+                                                <Button type="button" size="sm" variant="outline" onClick={() => openCameraDialog('doorbell')} className="w-full text-[11px] h-9 gap-2 border-primary/30 text-primary hover:bg-primary/5">
+                                                    <Video className="h-4 w-4" />
+                                                    Videoporteiro
                                                 </Button>
                                                 <div className="relative">
                                                     <div className="absolute inset-0 flex items-center">
@@ -303,7 +305,7 @@ export default function StaffPage() {
                                     </div>
 
                                     <div className="flex justify-end gap-2 p-6 border-t bg-muted/20">
-                                        <Button type="button" variant="outline" onClick={() => setDialogOpen(false)}>
+                                        <Button type="button" variant="outline" onClick={() => handleTabChange('lista')}>
                                             Cancelar
                                         </Button>
                                         <Button type="submit" disabled={uploading}>
@@ -313,23 +315,36 @@ export default function StaffPage() {
                                 </form>
                             </Form>
                         </div>
-                    </DialogContent>
-                </Dialog>
-            </div>
+        </Card>
+    );
 
-            <Card className="border-primary/10 shadow-sm">
-                <CardHeader className="pb-3 text-xl font-semibold bg-muted/10">
+    const filtersContent = (
+        <div className="h-[calc(100vh-360px)] min-h-[300px] overflow-y-auto">
+            <TreeView
+                data={treeData}
+                selectedId={deptFilter || 'all'}
+                onSelect={(id) => {
+                    if (id === 'all') setDeptFilter('');
+                    else if (!id.endsWith('_root')) setDeptFilter(id.replace('dept_', ''));
+                }}
+            />
+        </div>
+    );
+
+    const listContent = (
+            <Card className="border-primary/10 shadow-sm rounded-2xl overflow-hidden w-full">
+                <CardHeader className="bg-white border-b border-zinc-100 p-6">
                     <div className="flex items-center gap-2">
                         <Search className="h-4 w-4 text-muted-foreground" />
                         <Input
                             placeholder="Buscar por nome, e-mail ou departamento..."
                             value={search}
                             onChange={(e) => setSearch(e.target.value)}
-                            className="max-w-sm"
+                            className="max-w-sm h-12 bg-zinc-50 border-zinc-200 rounded-xl shadow-none focus:ring-primary focus:bg-white transition-all text-base"
                         />
                     </div>
                 </CardHeader>
-                <CardContent className="p-0">
+                <CardContent className="p-0 bg-white">
                     <Table>
                         <TableHeader>
                             <TableRow className="bg-muted/30">
@@ -360,7 +375,9 @@ export default function StaffPage() {
                                     </TableCell>
                                 </TableRow>
                             ) : (
-                                staff.map((p) => (
+                                staff
+                                .filter(p => !deptFilter || p.department === deptFilter)
+                                .map((p) => (
                                     <TableRow key={p.id} className="hover:bg-muted/20 transition-colors">
                                         <TableCell className="pl-6 py-4">
                                             <Avatar className="h-10 w-10 border-2 border-primary/5">
@@ -410,13 +427,29 @@ export default function StaffPage() {
                     </Table>
                 </CardContent>
             </Card>
+    );
+
+    return (
+        <>
+            <EntityPageShell
+                title="P. Condominio (Staff)"
+                description="Gerenciamento de colaboradores da Administração, Portaria e Condomínio"
+                tab={tab}
+                onTabChange={handleTabChange}
+                canRegister
+                overview={<StaffOverview staff={staff} loading={loading} />}
+                list={listContent}
+                register={registerContent}
+                filters={filtersContent}
+            />
 
             <CameraCapture
                 open={cameraDialogOpen}
                 onOpenChange={setCameraDialogOpen}
                 cameraType="facial"
                 onCapture={handleCameraCapture}
+                defaultTab={cameraDefaultTab}
             />
-        </div>
+        </>
     );
 }
