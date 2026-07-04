@@ -96,9 +96,14 @@ export class ResidentsController {
                             cpf: r.certificateNo || '',
                             phone: r.phone || null,
                             email: r.email || null,
-                            unit_number: r.orgIndexCode || '',
-                            block: null,
-                            tower: r.orgName || null,
+                            // ✓ FIXED: Building location comes from separate unit management, NOT from HikCentral org
+                            unit_number: null,  // Use unit.number after Person is linked to Unit
+                            block: null,        // Use unit.block.name after Person is linked to Unit
+                            tower: null,        // Use unit.tower.name after Person is linked to Unit
+                            // ✓ NEW: Expose organization/department separately
+                            org_index_code: r.orgIndexCode || null,
+                            org_name: r.orgName || null,
+                            role: r.role || null,
                             photo_url: localPhotos[r.hikPersonId] || (r.hikPersonId ? `/api/hikcentral/person-photo/${r.hikPersonId}${r.personPhoto ? `?picUri=${encodeURIComponent(r.personPhoto)}` : ''}` : null),
                             is_owner: true,
                             hikcentral_person_id: r.hikPersonId || null,
@@ -109,6 +114,7 @@ export class ResidentsController {
                         })),
                         count: filtered.length,
                         source: 'hikcentral',
+                        info: 'Building location (unit/tower/block) must be set separately via condominium structure management'
                     });
                 }
             } catch (hikError: any) {
@@ -128,7 +134,18 @@ export class ResidentsController {
                 skip,
                 take: limitNum,
                 orderBy: { createdAt: 'desc' },
-                include: { department: { select: { id: true, name: true, color: true } } }
+                include: {
+                    department: { select: { id: true, name: true, color: true } },
+                    unit: {  // ✓ NEW: Include unit relation after unitId migration
+                        select: {
+                            id: true,
+                            number: true,
+                            floor: true,
+                            tower: { select: { id: true, name: true } },
+                            block: { select: { id: true, name: true } }
+                        }
+                    }
+                }
             });
             const count = await prisma.person.count({ where });
             const localMapped = data.map((p: any) => ({
@@ -138,9 +155,13 @@ export class ResidentsController {
                 rg: p.rg || '',
                 phone: p.phone || null,
                 email: p.email || null,
-                unit_number: p.unit_number || p.orgIndexCode || '',
-                block: p.block || null,
-                tower: p.tower || HIK_ORG_NAMES[p.orgIndexCode] || null,
+                // ✓ FIXED: Use unitId FK if available (new path), fallback to string fields (migration period)
+                unit_number: p.unit?.number || p.unit_number || null,
+                block: p.unit?.block?.name || p.block || null,
+                tower: p.unit?.tower?.name || p.tower || null,
+                // ✓ NEW: Expose organization separately (not location!)
+                org_index_code: p.orgIndexCode || null,
+                org_name: HIK_ORG_NAMES[p.orgIndexCode] || null,
                 photo_url: p.photoUrl || (p.hikPersonId ? `/api/hikcentral/person-photo/${p.hikPersonId}` : null),
                 is_owner: p.is_owner !== null ? p.is_owner : true,
                 hikcentral_person_id: p.hikPersonId || null,
