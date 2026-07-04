@@ -38,9 +38,17 @@ model Person {
   externalId         String?           @map("external_id")
   departmentId       String?           @map("department_id")
   department         Department?       @relation(fields: [departmentId], references: [id], onDelete: SetNull)
+
+  // NEW: FK to Unit (building structure — primary path going forward)
+  unitId             String?           @map("unit_id")
+  unit               Unit?             @relation("PersonToUnit", fields: [unitId], references: [id], onDelete: SetNull)
+
   photoUrl           String?           @map("photo_url")
   createdAt          DateTime          @default(now()) @map("created_at")
   updatedAt          DateTime?         @updatedAt @map("updated_at")
+
+  // DEPRECATED fields: Keep during migration for backward compat (2 release cycles)
+  // Use unit.block.name instead
   block              String?
   cpf                String?
   rg                 String?
@@ -49,15 +57,18 @@ model Person {
   document_photo_url String?
   is_owner           Boolean?          @default(true)
   notes              String?
+  // Use unit.tower.name instead
   tower              String?
   txSerial           String?           @map("tx_serial")
   cardSerial         String?           @map("card_serial")
+  // Use unit.number instead
   unit_number        String?
   portalPassword     String?           @map("portal_password")
   residentSessions   ResidentSession[]
   accessAreas        ResidentAccessArea[]
   passbackState      GuaritaPassbackState?
 
+  @@index([unitId])
   @@map("persons")
 }
 
@@ -416,6 +427,9 @@ model Unit {
   block         Block?   @relation(fields: [blockId], references: [id], onDelete: Cascade)
   parkingSpaces Int      @default(0) @map("parking_spaces")
   createdAt     DateTime @default(now()) @map("created_at")
+
+  // Residents in this unit
+  persons       Person[] @relation("PersonToUnit")
 
   @@map("units")
 }

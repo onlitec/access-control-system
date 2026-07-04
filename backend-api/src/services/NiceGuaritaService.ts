@@ -307,7 +307,7 @@ export class NiceGuaritaService {
             firstName,
             lastName,
             unit_number: d.unit ? d.unit.toString() : null,
-            tower: d.block ? d.block.toString() : null
+            block: d.block ? d.block.toString() : null  // ✓ FIX: block field, not tower
           }
         });
       }
@@ -319,7 +319,7 @@ export class NiceGuaritaService {
             firstName,
             lastName,
             unit_number: d.unit ? d.unit.toString() : null,
-            tower: d.block ? d.block.toString() : null,
+            block: d.block ? d.block.toString() : null,  // ✓ FIX: block field, not tower
             cardSerial: isCard ? serialHex : null,
             txSerial: isControl ? serialHex : null,
             orgIndexCode: '7', // default for Residents
@@ -332,10 +332,10 @@ export class NiceGuaritaService {
         const updateData: any = {};
         if (isCard && existing.cardSerial !== serialHex) updateData.cardSerial = serialHex;
         if (isControl && existing.txSerial !== serialHex) updateData.txSerial = serialHex;
-        
-        // Optionally update unit/tower if missing locally
+
+        // Optionally update unit/block if missing locally
         if (!existing.unit_number && d.unit) updateData.unit_number = d.unit.toString();
-        if (!existing.tower && d.block) updateData.tower = d.block.toString();
+        if (!existing.block && d.block) updateData.block = d.block.toString();  // ✓ FIX: block field, not tower
 
         if (Object.keys(updateData).length > 0) {
           await prisma.person.update({
