@@ -52,6 +52,8 @@ cp "$WIN_DIR/assets/nginx/nginx.conf" "$STAGE_DIR/binaries/nginx/conf/nginx.conf
 # Serviços WinSW e scripts
 cp "$WIN_DIR/assets/services/"*.xml "$STAGE_DIR/services/"
 cp "$WIN_DIR/scripts/"*.ps1 "$STAGE_DIR/scripts/"
+# smtp-defaults.env: gitignored (segredo real), só empacota se existir localmente
+[ -f "$WIN_DIR/scripts/smtp-defaults.env" ] && cp "$WIN_DIR/scripts/smtp-defaults.env" "$STAGE_DIR/scripts/"
 
 # ---- backend-api: dist + prisma + node_modules de produção (alvo Windows)
 log "Staging do backend-api (npm install de produção + engines Prisma p/ Windows)..."
