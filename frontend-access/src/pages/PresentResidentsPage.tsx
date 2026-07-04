@@ -2,8 +2,7 @@ import DashboardListPage, { type ListColumn } from '@/components/DashboardListPa
 import { getPresentPeople, type PresentPersonRow } from '@/db/api';
 
 const columns: ListColumn<PresentPersonRow>[] = [
-  { header: 'Prestador', render: r => <span className="font-medium">{r.personName || 'Desconhecido'}</span> },
-  { header: 'Vínculo', render: r => r.personType === 'provider_resident' ? 'Prestador do morador' : 'Prestador do condomínio' },
+  { header: 'Morador', render: r => <span className="font-medium">{r.personName || 'Desconhecido'}</span> },
   { header: 'Unidade', render: r => r.unit || '—' },
   {
     header: 'Última entrada',
@@ -13,15 +12,15 @@ const columns: ListColumn<PresentPersonRow>[] = [
   { header: 'Ponto de acesso', render: r => r.deviceName || '—' },
 ];
 
-export default function ActiveProvidersPage() {
+export default function PresentResidentsPage() {
   return (
     <DashboardListPage
-      title="Prestadores Presentes"
-      subtitle="Prestadores dentro do condomínio agora (entrada autorizada hoje sem registro de saída)."
+      title="Moradores Presentes"
+      subtitle="Moradores dentro do condomínio agora (entrada autorizada hoje sem registro de saída)."
       columns={columns}
-      fetchRows={async () => (await getPresentPeople('provider')).list}
+      fetchRows={async () => (await getPresentPeople('resident')).list}
       rowKey={(r, i) => r.personId || String(i)}
-      emptyMessage="Nenhum prestador presente no momento"
+      emptyMessage="Nenhum morador presente no momento"
     />
   );
 }

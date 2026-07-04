@@ -5,6 +5,121 @@ import { EntityMappingService } from '../services/EntityMappingService';
 import { prisma } from '../index';
 
 export class DashboardController extends BaseController {
+    /**
+     * Pessoas presentes agora: para cada personId com evento autorizado hoje,
+     * pega o evento mais recente e mantém só quem NÃO saiu (eventType !== 'EXIT').
+     * Usado tanto pelas contagens do getStats quanto pelas listas dos cards —
+     * os dois lados precisam usar exatamente o mesmo critério.
+     */
+    private async getInsideEvents(startOfDay: Date) {
+        const todayAccessEvents = await prisma.accessEvent.findMany({
+            where: {
+                occurredAt: { gte: startOfDay },
+                status: 'authorized',
+                personId: { not: null },
+            },
+            select: {
+                personId: true, personType: true, eventType: true,
+                occurredAt: true, unit: true, personName: true, deviceName: true,
+            },
+            orderBy: { occurredAt: 'desc' },
+        });
+        const lastEventByPerson = new Map<string, (typeof todayAccessEvents)[number]>();
+        for (const ev of todayAccessEvents) {
+            if (ev.personId && !lastEventByPerson.has(ev.personId)) {
+                lastEventByPerson.set(ev.personId, ev);
+            }
+        }
+        return [...lastEventByPerson.values()].filter(e => e.eventType !== 'EXIT');
+    }
+
+    private startOfToday() {
+        const now = new Date();
+        return new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    }
+
+    /** Lista de acessos de hoje — mesmo critério do contador todayAccess (qualquer status). */
+    public getTodayAccesses = async (req: Request, res: Response) => {
+        try {
+            const events = await prisma.accessEvent.findMany({
+                where: { occurredAt: { gte: this.startOfToday() } },
+                select: {
+                    id: true, personName: true, personType: true, eventType: true,
+                    deviceName: true, unit: true, status: true, occurredAt: true, photoUrl: true,
+                },
+                orderBy: { occurredAt: 'desc' },
+                take: 500,
+            });
+            return this.success(res, { total: events.length, list: events });
+        } catch (error: any) {
+            console.error('[DashboardController] TodayAccesses error:', error);
+            return this.error(res, error.message);
+        }
+    };
+
+    /** Lista de presentes por tipo — mesmo critério dos contadores insideResidents/insideProviders/insideStaff. */
+    public getPresentPeople = async (req: Request, res: Response) => {
+        try {
+            const type = String(req.query.type || 'resident');
+            const typeFilters: Record<string, string[]> = {
+                resident: ['resident'],
+                provider: ['provider_condo', 'provider_resident'],
+                staff: ['staff'],
+            };
+            const personTypes = typeFilters[type];
+            if (!personTypes) return this.badRequest(res, `Tipo inválido: ${type}`);
+
+            const insideEvents = await this.getInsideEvents(this.startOfToday());
+            const list = insideEvents
+                .filter(e => personTypes.includes(e.personType))
+                .map(e => ({
+                    personId: e.personId,
+                    personName: e.personName,
+                    personType: e.personType,
+                    unit: e.unit,
+                    deviceName: e.deviceName,
+                    enteredAt: e.occurredAt,
+                }));
+            return this.success(res, { total: list.length, list });
+        } catch (error: any) {
+            console.error('[DashboardController] PresentPeople error:', error);
+            return this.error(res, error.message);
+        }
+    };
+
+    /** Lista de visitantes presentes — mesmo critério do contador insideVisitors (janela da visita contém agora). */
+    public getPresentVisitors = async (req: Request, res: Response) => {
+        try {
+            const now = new Date();
+            const visitors = await prisma.visitor.findMany({
+                where: { visitStartTime: { lte: now }, visitEndTime: { gte: now } },
+                select: {
+                    id: true, name: true, surname: true, full_name: true, document: true,
+                    phone: true, purpose: true, status: true,
+                    visiting_resident: true, visiting_unit: true, visiting_block: true, tower: true,
+                    visitStartTime: true, visitEndTime: true,
+                },
+                orderBy: { visitStartTime: 'desc' },
+            });
+            const list = visitors.map(v => ({
+                id: v.id,
+                name: v.full_name || [v.name, v.surname].filter(Boolean).join(' '),
+                document: v.document,
+                phone: v.phone,
+                purpose: v.purpose,
+                status: v.status,
+                host: v.visiting_resident,
+                unit: [v.tower, v.visiting_block, v.visiting_unit].filter(Boolean).join(' / '),
+                visitStartTime: v.visitStartTime,
+                visitEndTime: v.visitEndTime,
+            }));
+            return this.success(res, { total: list.length, list });
+        } catch (error: any) {
+            console.error('[DashboardController] PresentVisitors error:', error);
+            return this.error(res, error.message);
+        }
+    };
+
     public getStats = async (req: Request, res: Response) => {
         try {
             const now = new Date();
@@ -52,24 +167,7 @@ export class DashboardController extends BaseController {
             });
 
             // Presença no interior: último evento de acesso autorizado por pessoa hoje
-            const todayAccessEvents = await prisma.accessEvent.findMany({
-                where: {
-                    occurredAt: { gte: startOfDay },
-                    status: 'authorized',
-                    personId: { not: null },
-                },
-                select: { personId: true, personType: true, eventType: true, occurredAt: true, unit: true },
-                orderBy: { occurredAt: 'desc' },
-            });
-
-            // Para cada personId, o primeiro resultado (mais recente) é o estado atual
-            const lastEventByPerson = new Map<string, { personType: string; eventType: string | null; unit: string | null }>();
-            for (const ev of todayAccessEvents) {
-                if (ev.personId && !lastEventByPerson.has(ev.personId)) {
-                    lastEventByPerson.set(ev.personId, { personType: ev.personType, eventType: ev.eventType, unit: ev.unit });
-                }
-            }
-            const insideEvents = [...lastEventByPerson.values()].filter(e => e.eventType !== 'EXIT');
+            const insideEvents = await this.getInsideEvents(startOfDay);
             const insideResidents = insideEvents.filter(e => e.personType === 'resident').length;
             const insideProviders = insideEvents.filter(e => ['provider_condo', 'provider_resident'].includes(e.personType)).length;
             const insideStaff = insideEvents.filter(e => e.personType === 'staff').length;

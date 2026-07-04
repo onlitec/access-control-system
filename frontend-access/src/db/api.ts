@@ -205,6 +205,56 @@ export const getDashboardAlerts = async (limit = 10) => {
   return response.data || (response as any);
 };
 
+// ============ Dashboard drill-down lists (mesmos critérios dos contadores) ============
+export interface TodayAccessRow {
+  id: string;
+  personName: string | null;
+  personType: string;
+  eventType: string | null;
+  deviceName: string | null;
+  unit: string | null;
+  status: string | null;
+  occurredAt: string;
+  photoUrl: string | null;
+}
+
+export const getTodayAccesses = async () => {
+  const response = await request<{ success: boolean; data: { total: number; list: TodayAccessRow[] } }>(`/dashboard/today-accesses`);
+  return response.data || (response as any);
+};
+
+export interface PresentPersonRow {
+  personId: string;
+  personName: string | null;
+  personType: string;
+  unit: string | null;
+  deviceName: string | null;
+  enteredAt: string;
+}
+
+export const getPresentPeople = async (type: 'resident' | 'provider' | 'staff') => {
+  const response = await request<{ success: boolean; data: { total: number; list: PresentPersonRow[] } }>(`/dashboard/present-people?type=${type}`);
+  return response.data || (response as any);
+};
+
+export interface PresentVisitorRow {
+  id: string;
+  name: string;
+  document: string | null;
+  phone: string | null;
+  purpose: string | null;
+  status: string | null;
+  host: string | null;
+  unit: string | null;
+  visitStartTime: string;
+  visitEndTime: string;
+}
+
+export const getPresentVisitors = async () => {
+  const response = await request<{ success: boolean; data: { total: number; list: PresentVisitorRow[] } }>(`/dashboard/present-visitors`);
+  return response.data || (response as any);
+};
+
 // ============ Deliveries (Entregas) ============
 export const getDeliveries = async (page = 1, limit = 50, filters: any = {}) => {
   const queryParams = new URLSearchParams({ page: page.toString(), limit: limit.toString() });

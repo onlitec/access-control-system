@@ -178,6 +178,15 @@ export default function ResidentsPage() {
   const selectedDepartment = departments.find(d => d.id === selectedDepartmentId);
   const showAddresses = selectedDepartment ? selectedDepartment.hasAddresses !== false : true;
 
+  // Campos de endereço ocultos precisam ser desregistrados: o react-hook-form
+  // mantém validação (required) de campos desmontados e travaria o submit
+  // com erro invisível para o operador.
+  useEffect(() => {
+    if (!showAddresses) {
+      form.unregister(['tower', 'block', 'unit_number']);
+    }
+  }, [showAddresses, form]);
+
   const [accessAreas, setAccessAreas] = useState<AccessArea[]>([]);
   const [uploading, setUploading] = useState(false);
 
@@ -841,12 +850,19 @@ export default function ResidentsPage() {
                               )}
                             />
 
+                            {!showAddresses && (
+                              <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+                                Este departamento não possui endereços vinculados ({labels.tower}/{labels.block}/{labels.unit}).
+                                Isso é configurável no painel administrativo, em <strong>Departamentos</strong>.
+                              </div>
+                            )}
+
                             {showAddresses && (
                               <>
                                 <FormField
                               control={form.control}
                               name="tower"
-                              rules={{ required: `${labels.tower} é obrigatória` }}
+                              rules={{ required: showAddresses ? `${labels.tower} é obrigatória` : false }}
                               render={({ field }) => (
                                 <FormItem>
                                   <FormLabel className="text-zinc-800 font-bold text-sm">{labels.tower} *</FormLabel>
@@ -898,7 +914,7 @@ export default function ResidentsPage() {
                               <FormField
                                 control={form.control}
                                 name="unit_number"
-                                rules={{ required: `${labels.unit} é obrigatória` }}
+                                rules={{ required: showAddresses ? `${labels.unit} é obrigatória` : false }}
                                 render={({ field }) => (
                                   <FormItem>
                                     <FormLabel className="text-zinc-800 font-bold text-sm">{labels.unit} *</FormLabel>
@@ -1109,21 +1125,6 @@ export default function ResidentsPage() {
                               )}
                             />
                           </div>
-                          {departments.length > 0 && (
-                            <div className="mt-4">
-                              <label className="text-zinc-800 font-bold text-sm block mb-1">Departamento</label>
-                              <select
-                                className="w-full border border-zinc-200 rounded-xl px-3 py-2 text-base bg-white focus:outline-none focus:ring-2 focus:ring-red-500"
-                                value={form.watch('department_id')}
-                                onChange={e => form.setValue('department_id', e.target.value)}
-                              >
-                                <option value="">Sem departamento</option>
-                                {departments.map(d => (
-                                  <option key={d.id} value={d.id}>{d.name}</option>
-                                ))}
-                              </select>
-                            </div>
-                          )}
                         </TabsContent>
                       </div>
                     </Tabs>
