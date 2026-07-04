@@ -1,11 +1,11 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { KeyRound, Eye, EyeOff, CheckCircle, Camera, Clock, IdCard } from "lucide-react";
+import { KeyRound, Eye, EyeOff, CheckCircle, Camera, Clock, IdCard, LogIn, RefreshCcw } from "lucide-react";
 import SelfieCapture from "@/components/SelfieCapture";
 import { formatCpf, isValidCpf } from "@/lib/cpf";
 
-type Step = "greeting" | "cpf" | "password" | "selfie" | "done" | "pending";
+type Step = "greeting" | "choice" | "cpf" | "password" | "selfie" | "done" | "pending";
 
 export default function FirstAccess() {
   const [token, setToken] = useState<string | null>(null);
@@ -14,6 +14,9 @@ export default function FirstAccess() {
   const [morador, setMorador] = useState<any>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [step, setStep] = useState<Step>("greeting");
+  // true quando um morador já cadastrado escolheu refazer o acesso
+  // (nova senha + nova verificação facial)
+  const [recovery, setRecovery] = useState(false);
 
   const [cpf, setCpf] = useState("");
   const [cpfError, setCpfError] = useState("");
@@ -50,7 +53,9 @@ export default function FirstAccess() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.message || "Erro ao validar link de acesso");
       setMorador(data);
-      setStep("cpf");
+      // Cadastro completo + link novo = caso de recuperação: o morador
+      // escolhe entre logar com os dados atuais ou refazer o acesso.
+      setStep(data.alreadyRegistered ? "choice" : "cpf");
     } catch (err: any) {
       setErrorMsg(err.message || "Falha na validação do token.");
     } finally {
@@ -225,6 +230,40 @@ export default function FirstAccess() {
   return (
     <div className="flex min-h-screen flex-col items-center justify-center bg-zinc-950 text-zinc-100 p-4">
       <div className="w-full max-w-sm rounded-2xl bg-zinc-900 border border-zinc-800 shadow-2xl p-6 sm:p-8">
+        {step === "choice" && (
+          <>
+            <div className="text-center mb-6">
+              <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-xl bg-blue-600/10 border border-blue-500/20 text-blue-500 mb-4">
+                <KeyRound className="w-6 h-6" />
+              </div>
+              <h1 className="text-xl font-bold text-white mb-1">Você já tem cadastro!</h1>
+              <p className="text-sm text-zinc-400">
+                Olá, <span className="font-semibold text-zinc-200">{morador?.name}</span>!<br />
+                Seu acesso ao portal já está ativo. O que deseja fazer?
+              </p>
+            </div>
+            <div className="space-y-3">
+              <a
+                href="/login/auth"
+                className="flex w-full items-center justify-center gap-2 rounded-xl bg-blue-600 hover:bg-blue-500 h-12 text-sm font-semibold transition-all"
+              >
+                <LogIn className="w-4 h-4" /> Entrar com meus dados
+              </a>
+              <button
+                type="button"
+                onClick={() => { setRecovery(true); setStep("cpf"); }}
+                className="flex w-full items-center justify-center gap-2 rounded-xl border border-zinc-700 hover:border-zinc-500 h-12 text-sm font-semibold text-zinc-300 transition-all"
+              >
+                <RefreshCcw className="w-4 h-4" /> Recuperar acesso
+              </button>
+              <p className="text-xs text-zinc-500 text-center leading-relaxed">
+                A recuperação redefine sua senha e exige uma nova verificação
+                facial. Use se esqueceu a senha ou não consegue mais entrar.
+              </p>
+            </div>
+          </>
+        )}
+
         {step === "cpf" && (
           <>
             <div className="text-center mb-6">
@@ -271,8 +310,12 @@ export default function FirstAccess() {
               <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-xl bg-blue-600/10 border border-blue-500/20 text-blue-500 mb-4">
                 <KeyRound className="w-6 h-6" />
               </div>
-              <h1 className="text-xl font-bold text-white mb-1">Criar Senha de Acesso</h1>
-              <p className="text-sm text-zinc-400">Crie sua senha para acessar o portal do morador.</p>
+              <h1 className="text-xl font-bold text-white mb-1">{recovery ? "Redefinir Senha" : "Criar Senha de Acesso"}</h1>
+              <p className="text-sm text-zinc-400">
+                {recovery
+                  ? "Crie uma nova senha. Depois, uma nova verificação facial será solicitada."
+                  : "Crie sua senha para acessar o portal do morador."}
+              </p>
             </div>
             <form onSubmit={handlePasswordSubmit} className="space-y-4">
               <div className="space-y-1">

@@ -29,9 +29,13 @@ function verifyOnboardingToken(token: string): OnboardingTokenPayload {
 }
 
 /**
- * Gera um novo link de onboarding para um morador, resetando o estado de
- * verificação facial (usado tanto na criação do morador quanto em
- * "reenviar link" / reset após rejeição do admin).
+ * Gera um novo link de onboarding para um morador (criação do morador,
+ * "reenviar link" ou recuperação de acesso pela portaria/admin).
+ *
+ * Cadastro já APROVADO não é invalidado só porque um link novo foi gerado:
+ * o morador decide na página se entra com os dados atuais ou refaz o fluxo
+ * (o reset só acontece quando ele inicia a recuperação de fato, em
+ * POST /complete, que redefine a senha e exige nova verificação facial).
  */
 export async function createOnboardingLink(personId: string, hikPersonId?: string | null): Promise<string> {
   const onboardingToken = jwt.sign(
@@ -40,20 +44,26 @@ export async function createOnboardingLink(personId: string, hikPersonId?: strin
     { expiresIn: '48h' }
   );
 
-  await prisma.onboardingFaceVerification.upsert({
-    where: { personId },
-    create: { personId, status: 'awaiting_selfie', attempts: 0 },
-    update: {
-      status: 'awaiting_selfie',
-      attempts: 0,
-      lastSelfieUrl: null,
-      lastSimilarity: null,
-      lastAttemptAt: null,
-      resolvedBy: null,
-      resolvedAt: null,
-      resolutionNotes: null,
-    },
-  });
+  const existing = await prisma.onboardingFaceVerification.findUnique({ where: { personId } });
+  if (!existing) {
+    await prisma.onboardingFaceVerification.create({
+      data: { personId, status: 'awaiting_selfie', attempts: 0 },
+    });
+  } else if (existing.status !== 'approved') {
+    await prisma.onboardingFaceVerification.update({
+      where: { personId },
+      data: {
+        status: 'awaiting_selfie',
+        attempts: 0,
+        lastSelfieUrl: null,
+        lastSimilarity: null,
+        lastAttemptAt: null,
+        resolvedBy: null,
+        resolvedAt: null,
+        resolutionNotes: null,
+      },
+    });
+  }
 
   const appUrl = await AccessUrlService.getEffectiveAppUrl();
   return `${appUrl}/login/first-access?token=${onboardingToken}`;
@@ -67,13 +77,20 @@ router.post('/validate', async (req: Request, res: Response) => {
     if (!token) return res.status(400).json({ message: 'Token não fornecido' });
 
     const decoded = verifyOnboardingToken(token);
-    const person = await prisma.person.findUnique({ where: { id: decoded.personId } });
+    const person = await prisma.person.findUnique({
+      where: { id: decoded.personId },
+      include: { faceVerification: true },
+    });
     if (!person) return res.status(404).json({ message: 'Morador não encontrado' });
 
     res.json({
       id: person.id,
       name: `${person.firstName} ${person.lastName}`.trim(),
       photoUrl: person.photoUrl,
+      // Morador com cadastro completo (senha + facial aprovada) recebendo um
+      // link novo: a página oferece "entrar com meus dados" ou "recuperar
+      // acesso" em vez de forçar o fluxo de primeiro cadastro.
+      alreadyRegistered: Boolean(person.portalPassword && person.faceVerification?.status === 'approved'),
     });
   } catch (error: any) {
     console.error('Onboarding Validate Error:', error);
