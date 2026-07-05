@@ -33,7 +33,7 @@ export default function DeviceStatusPage() {
                 <div>
                     <h1 className="text-3xl font-bold tracking-tight">Status dos Dispositivos</h1>
                     <p className="text-muted-foreground">
-                        Monitoramento em tempo real dos terminais faciais de controle de acesso.
+                        Monitoramento em tempo real dos dispositivos integrados: módulo Guarita (MG3000), vídeo porteiro e terminais de acesso.
                     </p>
                 </div>
                 <Button
@@ -65,7 +65,7 @@ export default function DeviceStatusPage() {
                     <div className="col-span-full flex flex-col items-center justify-center p-12 border-2 border-dashed rounded-lg bg-muted/50">
                         <Monitor className="h-12 w-12 text-muted-foreground mb-4" />
                         <p className="text-lg font-medium">Nenhum dispositivo encontrado</p>
-                        <p className="text-sm text-muted-foreground">Verifique a configuração da integração HikCentral.</p>
+                        <p className="text-sm text-muted-foreground">Cadastre dispositivos em Integrações (módulo Guarita, vídeo porteiro) ou configure o HikCentral.</p>
                     </div>
                 ) : (
                     devices.map((device) => (
@@ -101,6 +101,12 @@ export default function DeviceStatusPage() {
                                         <div className="flex items-center justify-between">
                                             <span className="text-xs text-muted-foreground">Tipo:</span>
                                             <span className="text-xs">{device.type}</span>
+                                        </div>
+                                    )}
+                                    {device.location && (
+                                        <div className="flex items-center justify-between">
+                                            <span className="text-xs text-muted-foreground">Local:</span>
+                                            <span className="text-xs">{device.location}</span>
                                         </div>
                                     )}
                                     <div className="flex items-center justify-between pt-2">

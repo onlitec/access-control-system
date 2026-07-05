@@ -4,6 +4,8 @@ import dotenv from 'dotenv';
 import { Prisma, PrismaClient } from '@prisma/client';
 import { HikCentralService } from './services/HikCentralService';
 import { NiceGuaritaService } from './services/NiceGuaritaService';
+import { NiceGuaritaProtocol } from './services/NiceGuaritaProtocol';
+import { VideoDoorbellService } from './services/VideoDoorbellService';
 import { EntityMappingService } from './services/EntityMappingService';
 import { HikCentralSyncService } from './services/HikCentralSyncService';
 import {
@@ -1496,21 +1498,56 @@ app.get('/api/dashboard/stats', authMiddleware, async (req, res) => {
     }
 });
 
+// Agrega todos os dispositivos integrados: módulos Nice Guarita (MG3000),
+// vídeo porteiros e, quando configurado, terminais do HikCentral. A instalação
+// pode rodar standalone — cada fonte é best-effort e nunca derruba as demais.
 app.get('/api/devices/status', authMiddleware, async (req, res) => {
     try {
-        const deviceResult = await HikCentralService.getAcsDeviceList(1, 100);
-        const devices = deviceResult?.data?.list || [];
+        const withTimeout = <T,>(p: Promise<T>, ms: number, fallback: T): Promise<T> =>
+            Promise.race([p, new Promise<T>(resolve => setTimeout(() => resolve(fallback), ms))]);
 
-        // Return a clean list of devices with their status
-        const formattedDevices = devices.map((d: any) => ({
-            id: d.acsDevIndexCode || d.acsDeviceIndexCode,
-            name: d.acsDevName || d.acsDeviceName,
-            status: d.status === 1 ? 'online' : 'offline',
-            ip: d.acsDevIp || d.acsDeviceIp,
-            type: d.treatyType || d.acsDeviceType
-        }));
+        const [guaritaDevices, doorbellDevices] = await Promise.all([
+            prisma.guaritaDevice.findMany({ where: { enabled: true }, orderBy: { name: 'asc' } }).catch(() => []),
+            prisma.doorbellDevice.findMany({ where: { enabled: true }, orderBy: { name: 'asc' } }).catch(() => []),
+        ]);
 
-        res.json(formattedDevices);
+        const [guaritaStatuses, doorbellStatuses, hikDevices] = await Promise.all([
+            Promise.all(guaritaDevices.map(async d => ({
+                id: `guarita-${d.id}`,
+                name: d.name,
+                status: (await NiceGuaritaProtocol.ping(d.ip, d.port).catch(() => false)) ? 'online' : 'offline',
+                ip: d.ip,
+                type: 'Módulo Guarita (Nice MG3000)',
+                location: d.location || undefined,
+            }))),
+            Promise.all(doorbellDevices.map(async d => ({
+                id: `doorbell-${d.id}`,
+                name: d.name,
+                status: (await withTimeout(
+                    VideoDoorbellService.testConnection(d.ip, d.port, d.username, d.password).catch(() => false),
+                    5000, false,
+                )) ? 'online' : 'offline',
+                ip: d.ip,
+                type: 'Vídeo Porteiro',
+                location: d.location || undefined,
+            }))),
+            (async () => {
+                try {
+                    const deviceResult = await HikCentralService.getAcsDeviceList(1, 100);
+                    return (deviceResult?.data?.list || []).map((d: any) => ({
+                        id: d.acsDevIndexCode || d.acsDeviceIndexCode,
+                        name: d.acsDevName || d.acsDeviceName,
+                        status: d.status === 1 ? 'online' : 'offline',
+                        ip: d.acsDevIp || d.acsDeviceIp,
+                        type: d.treatyType || d.acsDeviceType || 'HikCentral',
+                    }));
+                } catch {
+                    return []; // standalone: HikCentral não configurado
+                }
+            })(),
+        ]);
+
+        res.json([...guaritaStatuses, ...doorbellStatuses, ...hikDevices]);
     } catch (error: any) {
         console.error('Devices Status Error:', error);
         res.status(500).json({ error: error.message });
