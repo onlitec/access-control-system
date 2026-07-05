@@ -203,6 +203,13 @@ router.post('/devices/:id/unenroll', portariaMiddleware, async (req: Request, re
   }
 });
 
+// ── GET /api/guarita/recent-serials ───────────────────────────────────────
+// Últimos serials vistos pelo listener de eventos (mais novo primeiro) -
+// usado pela UI de "capturar serial" (apertar o controle pra preencher).
+router.get('/recent-serials', portariaMiddleware, async (_req: Request, res: Response): Promise<void> => {
+  res.json({ serials: NiceGuaritaService.getRecentSerials() });
+});
+
 // ── POST /api/guarita/devices/:id/sync-clock ─────────────────────────────
 // Sync the module clock to system time
 router.post('/devices/:id/sync-clock', portariaMiddleware, async (req: Request, res: Response): Promise<void> => {

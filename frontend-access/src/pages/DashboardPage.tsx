@@ -119,6 +119,7 @@ export default function DashboardPage() {
           value={insideResidents}
           icon={<Users className="h-5 w-5 text-red-600" />}
           loading={loading}
+          linkTo="/moradores-presentes"
           subtitle={stats?.occupiedUnits ? `Unidades: ${stats.occupiedUnits}` : undefined}
         />
         <EntityStatCard

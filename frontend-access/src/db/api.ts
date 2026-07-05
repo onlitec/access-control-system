@@ -50,6 +50,19 @@ export const importGuaritaResidents = async (deviceId: string) => {
   });
 };
 
+export interface GuaritaRecentSerial {
+  serial: string;
+  deviceKind: string;
+  dateTime: string;
+  knownPerson: string | null;
+}
+
+// Últimos serials vistos pelo listener do módulo Guarita (captura de serial
+// pelo acionamento: operador aperta o botão do controle e vincula na tela)
+export const getGuaritaRecentSerials = async () => {
+  return request<{ serials: GuaritaRecentSerial[] }>(`/guarita/recent-serials`);
+};
+
 export const getResident = async (id: string) => {
   return request<Resident>(`/residents/${id}`);
 };
@@ -189,6 +202,56 @@ export const getDashboardStats = async (): Promise<DashboardStats> => {
 
 export const getDashboardAlerts = async (limit = 10) => {
   const response = await request<{ success: boolean; data: import('@/types').DashboardAlert[] }>(`/dashboard/alerts?limit=${limit}`);
+  return response.data || (response as any);
+};
+
+// ============ Dashboard drill-down lists (mesmos critérios dos contadores) ============
+export interface TodayAccessRow {
+  id: string;
+  personName: string | null;
+  personType: string;
+  eventType: string | null;
+  deviceName: string | null;
+  unit: string | null;
+  status: string | null;
+  occurredAt: string;
+  photoUrl: string | null;
+}
+
+export const getTodayAccesses = async () => {
+  const response = await request<{ success: boolean; data: { total: number; list: TodayAccessRow[] } }>(`/dashboard/today-accesses`);
+  return response.data || (response as any);
+};
+
+export interface PresentPersonRow {
+  personId: string;
+  personName: string | null;
+  personType: string;
+  unit: string | null;
+  deviceName: string | null;
+  enteredAt: string;
+}
+
+export const getPresentPeople = async (type: 'resident' | 'provider' | 'staff') => {
+  const response = await request<{ success: boolean; data: { total: number; list: PresentPersonRow[] } }>(`/dashboard/present-people?type=${type}`);
+  return response.data || (response as any);
+};
+
+export interface PresentVisitorRow {
+  id: string;
+  name: string;
+  document: string | null;
+  phone: string | null;
+  purpose: string | null;
+  status: string | null;
+  host: string | null;
+  unit: string | null;
+  visitStartTime: string;
+  visitEndTime: string;
+}
+
+export const getPresentVisitors = async () => {
+  const response = await request<{ success: boolean; data: { total: number; list: PresentVisitorRow[] } }>(`/dashboard/present-visitors`);
   return response.data || (response as any);
 };
 

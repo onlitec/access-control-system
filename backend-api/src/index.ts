@@ -4,6 +4,8 @@ import dotenv from 'dotenv';
 import { Prisma, PrismaClient } from '@prisma/client';
 import { HikCentralService } from './services/HikCentralService';
 import { NiceGuaritaService } from './services/NiceGuaritaService';
+import { NiceGuaritaProtocol } from './services/NiceGuaritaProtocol';
+import { VideoDoorbellService } from './services/VideoDoorbellService';
 import { EntityMappingService } from './services/EntityMappingService';
 import { HikCentralSyncService } from './services/HikCentralSyncService';
 import {
@@ -45,6 +47,7 @@ import condominiumRoutes from './routes/condominium.routes';
 import accessAreasRoutes from './routes/access-areas.routes';
 import guaritaPassbackRoutes from './routes/guarita-passback.routes';
 import { eventsRoutes } from './routes/events.routes';
+import onboardingRoutes, { createOnboardingLink } from './routes/onboarding.routes';
 
 dotenv.config();
 
@@ -229,6 +232,7 @@ app.use(healthMetricsMiddleware);
 // setup (cadastro do primeiro admin) é público e precisa vir antes do
 // middleware de autenticação que cobre /api
 app.use('/api/setup', setupRoutes);
+app.use('/api/onboarding', onboardingRoutes);
 app.use('/api', coreRoutes);
 app.use('/api/residents', residentsRoutes);
 app.use('/api/staff', staffRoutes);
@@ -239,7 +243,11 @@ app.use('/api/events', eventsRoutes);
 app.use('/api/hikcentral', hikcentralVisitorsRouter);
 app.use('/api', (req: any, res: any, next: any) => {
     // Basic health check and AUTH bypass
-    if (req.path === '/health' || req.path.startsWith('/auth/') || req.path.startsWith('/onboarding/') || req.path.startsWith('/resident/')) return next();
+    // /invites/validate e /invites/complete são o fluxo público do link de
+    // convite (visitante sem conta) - /invites/send-link continua exigindo
+    // login porque já tem seu próprio authMiddleware na definição da rota.
+    if (req.path === '/health' || req.path.startsWith('/auth/') || req.path.startsWith('/onboarding/') || req.path.startsWith('/resident/')
+        || req.path === '/invites/validate' || req.path === '/invites/complete') return next();
     // Injetar token do query param no header para endpoints de foto
     const queryToken = req.query.token as string;
     if (queryToken && !req.headers.authorization) {
@@ -667,6 +675,70 @@ app.get('/api/residents/select', authMiddleware, async (req, res) => {
     }
 });
 
+/**
+ * Sincroniza os seriais de tag/controle do morador com o módulo Guarita
+ * habilitado (Cmd 67 + 29). `previous` traz os seriais anteriores para
+ * remover registros que mudaram/foram limpos (evita órfão na memória do
+ * módulo). Nunca lança: o cadastro local não pode falhar por causa do
+ * hardware - o resultado volta em `guaritaSync` na resposta da API.
+ */
+async function syncPersonToGuarita(
+    person: {
+        firstName: string; lastName: string;
+        unit_number: string | null; block: string | null;
+        cardSerial: string | null; txSerial: string | null;
+        vehiclePlate: string | null;
+    },
+    previous?: { cardSerial?: string | null; txSerial?: string | null },
+): Promise<{ attempted: boolean; ok: boolean; message: string }> {
+    try {
+        const guaritaDevice = await prisma.guaritaDevice.findFirst({ where: { enabled: true } });
+        if (!guaritaDevice) return { attempted: false, ok: true, message: 'Nenhum módulo Guarita habilitado' };
+
+        const identity = NiceGuaritaService.buildModuleIdentity(person);
+        const msgs: string[] = [];
+        let ok = true;
+
+        const stale: Array<{ serial: string; type: number }> = [];
+        if (previous?.cardSerial && previous.cardSerial !== person.cardSerial) stale.push({ serial: previous.cardSerial, type: 0x03 });
+        if (previous?.txSerial && previous.txSerial !== person.txSerial) stale.push({ serial: previous.txSerial, type: 0x01 });
+        for (const s of stale) {
+            try {
+                await NiceGuaritaService.unenrollResident(guaritaDevice.id, s.serial, s.type);
+                msgs.push(`serial antigo ${s.serial} removido do módulo`);
+            } catch (err: any) { ok = false; msgs.push(`falha ao remover ${s.serial}: ${err.message}`); }
+        }
+
+        const targets: Array<{ serial: string; type: number; label: string }> = [];
+        if (person.cardSerial) targets.push({ serial: person.cardSerial, type: 0x03, label: 'tag/cartão' });
+        if (person.txSerial) targets.push({ serial: person.txSerial, type: 0x01, label: 'controle' });
+        if (targets.length === 0 && stale.length === 0) {
+            return { attempted: false, ok: true, message: 'Sem seriais para sincronizar' };
+        }
+
+        for (const t of targets) {
+            try {
+                const r = await NiceGuaritaService.enrollResident(guaritaDevice.id, {
+                    serial: t.serial,
+                    deviceType: t.type,
+                    name: identity.name,
+                    unit: identity.unit,
+                    block: identity.block,
+                    vehiclePlate: person.vehiclePlate || undefined,
+                });
+                if (r.success) msgs.push(`${t.label} ${t.serial} gravado no módulo${r.receiversUpdated ? '' : ' (atualização dos receptores pendente)'}`);
+                else { ok = false; msgs.push(`${t.label} ${t.serial}: ${r.message}`); }
+            } catch (err: any) { ok = false; msgs.push(`${t.label} ${t.serial}: ${err.message}`); }
+        }
+
+        console.log(`[NiceGuarita] Sync morador "${identity.name}": ${msgs.join('; ')}`);
+        return { attempted: true, ok, message: msgs.join('; ') };
+    } catch (err: any) {
+        console.error('[NiceGuarita] Sync morador falhou:', err.message);
+        return { attempted: true, ok: false, message: err.message };
+    }
+}
+
 app.post('/api/residents', authMiddleware, async (req, res) => {
     try {
         const body = { ...req.body };
@@ -745,43 +817,11 @@ app.post('/api/residents', authMiddleware, async (req, res) => {
         const person = await prisma.person.create({ data: prismaData });
 
         // 2.8 Sincronizar com Nice Guarita (Controles e Tags)
-        if (person.cardSerial || person.txSerial) {
-            try {
-                // Fetch the first enabled Guarita device
-                const guaritaDevice = await prisma.guaritaDevice.findFirst({ where: { enabled: true } });
-                if (guaritaDevice) {
-                    if (person.cardSerial) {
-                        await NiceGuaritaService.enrollResident(guaritaDevice.id, {
-                            serial: person.cardSerial,
-                            deviceType: 0x03, // CARD
-                            name: `${person.firstName} ${person.lastName}`.trim(),
-                            unit: person.unit_number ? parseInt(person.unit_number) : undefined,
-                            vehiclePlate: person.vehiclePlate || undefined,
-                        });
-                    }
-                    if (person.txSerial) {
-                        await NiceGuaritaService.enrollResident(guaritaDevice.id, {
-                            serial: person.txSerial,
-                            deviceType: 0x01, // CONTROL
-                            name: `${person.firstName} ${person.lastName}`.trim(),
-                            unit: person.unit_number ? parseInt(person.unit_number) : undefined,
-                            vehiclePlate: person.vehiclePlate || undefined,
-                        });
-                    }
-                    console.log(`[NiceGuarita] Dispositivos de acesso (Card/TX) sincronizados para morador ${person.id}`);
-                }
-            } catch (guaritaErr: any) {
-                console.error(`[NiceGuarita] Erro ao sincronizar morador ${person.id}:`, guaritaErr.message);
-            }
-        }
+        const guaritaSync = await syncPersonToGuarita(person);
 
-        // 3. Gerar Link Único para o App Visitor
-        const onboardingToken = jwt.sign(
-            { personId: person.id, hikPersonId: person.hikPersonId, type: 'onboarding' },
-            JWT_SECRET as string,
-            { expiresIn: '48h' }
-        );
-        const onboardingUrl = `${APP_URL}/login/first-access?token=${onboardingToken}`;
+        // 3. Gerar Link Único para o App Visitor (cria/reseta o estado de
+        //    verificação facial para "awaiting_selfie")
+        const onboardingUrl = await createOnboardingLink(person.id, person.hikPersonId);
 
         // 4. Simular Envio de E-mail (Placeholder)
         if (person.email) {
@@ -794,6 +834,7 @@ app.post('/api/residents', authMiddleware, async (req, res) => {
             full_name: `${person.firstName} ${person.lastName}`.trim(),
             hikcentral_person_id: person.hikPersonId,
             onboarding_url: onboardingUrl,
+            guaritaSync,
             data: person
         });
     } catch (error: any) {
@@ -869,37 +910,19 @@ app.patch('/api/residents/:id', authMiddleware, async (req, res) => {
             data: updateData
         });
 
-        // 4. Atualizar Dispositivos Nice Guarita
+        // 4. Atualizar Dispositivos Nice Guarita (remove serial antigo que
+        // mudou/foi limpo e grava o atual, com feedback pro operador)
+        let guaritaSync: { attempted: boolean; ok: boolean; message: string } | undefined;
         if (body.cardSerial !== undefined || body.txSerial !== undefined) {
-            try {
-                const guaritaDevice = await prisma.guaritaDevice.findFirst({ where: { enabled: true } });
-                if (guaritaDevice) {
-                    if (person.cardSerial) {
-                        await NiceGuaritaService.enrollResident(guaritaDevice.id, {
-                            serial: person.cardSerial,
-                            deviceType: 0x03,
-                            name: `${person.firstName} ${person.lastName}`.trim(),
-                            unit: person.unit_number ? parseInt(person.unit_number) : undefined,
-                            vehiclePlate: person.vehiclePlate || undefined,
-                        });
-                    }
-                    if (person.txSerial) {
-                        await NiceGuaritaService.enrollResident(guaritaDevice.id, {
-                            serial: person.txSerial,
-                            deviceType: 0x01,
-                            name: `${person.firstName} ${person.lastName}`.trim(),
-                            unit: person.unit_number ? parseInt(person.unit_number) : undefined,
-                            vehiclePlate: person.vehiclePlate || undefined,
-                        });
-                    }
-                }
-            } catch (err: any) {
-                console.error(`[NiceGuarita] Erro ao atualizar morador ${existing.id}:`, err.message);
-            }
+            guaritaSync = await syncPersonToGuarita(person, {
+                cardSerial: existing.cardSerial,
+                txSerial: existing.txSerial,
+            });
         }
 
         res.json({
             success: true,
+            guaritaSync,
             id: person.id,
             full_name: `${person.firstName} ${person.lastName}`.trim(),
             cpf: '',
@@ -925,17 +948,22 @@ app.patch('/api/residents/:id', authMiddleware, async (req, res) => {
 app.delete('/api/residents/:id', authMiddleware, async (req, res) => {
     try {
         const { id } = req.params;
-        try {
-            await prisma.person.delete({ where: { id } });
-        } catch (uuidErr: any) {
-            if (uuidErr?.code === 'P2025' || uuidErr?.code === 'P2023') {
-                const existing = await prisma.person.findFirst({ where: { hikPersonId: id } });
-                if (!existing) return res.status(404).json({ error: 'Morador não encontrado' });
-                await prisma.person.delete({ where: { id: existing.id } });
-            } else {
-                throw uuidErr;
-            }
+        // Resolve o morador antes (por id ou hikPersonId) pra poder remover
+        // os seriais dele da memória do módulo Guarita antes de apagar.
+        let existing = await prisma.person.findUnique({ where: { id } }).catch(() => null);
+        if (!existing) {
+            existing = await prisma.person.findFirst({ where: { hikPersonId: id } });
         }
+        if (!existing) return res.status(404).json({ error: 'Morador não encontrado' });
+
+        if (existing.cardSerial || existing.txSerial) {
+            await syncPersonToGuarita(
+                { ...existing, cardSerial: null, txSerial: null },
+                { cardSerial: existing.cardSerial, txSerial: existing.txSerial },
+            );
+        }
+
+        await prisma.person.delete({ where: { id: existing.id } });
         res.status(204).send();
     } catch (error: any) {
         res.status(500).json({ error: error.message });
@@ -964,15 +992,8 @@ app.post('/api/residents/:id/recovery-link', adminMiddleware, async (req, res) =
             });
         }
 
-        // 2. Gerar Token JWT com validade de 48h
-        const onboardingToken = jwt.sign(
-            { personId: person.id, hikPersonId: person.hikPersonId, type: 'onboarding' },
-            JWT_SECRET as string,
-            { expiresIn: '48h' }
-        );
-
-        // 3. Montar a URL de onboarding (adaptada para testes locais conforme registro anterior)
-        const onboardingUrl = `${APP_URL}/login/first-access?token=${onboardingToken}`;
+        // 2. Gerar Token JWT (48h) e resetar o estado de verificação facial
+        const onboardingUrl = await createOnboardingLink(person.id, person.hikPersonId);
 
         res.status(200).json({
             message: 'Link de acesso gerado com sucesso.',
@@ -1138,63 +1159,8 @@ app.post('/api/invites/send-link', authMiddleware, async (req, res) => {
     }
 });
 
-app.post('/api/onboarding/validate', async (req, res) => {
-    try {
-        const { token } = req.body;
-        if (!token) return res.status(400).json({ message: "Token não fornecido" });
-
-        const decoded = jwt.verify(token, JWT_SECRET as string) as { personId: string; hikPersonId: string; type: string };
-        if (decoded.type !== 'onboarding') {
-            return res.status(400).json({ message: "Token inválido para onboarding" });
-        }
-
-        const person = await prisma.person.findUnique({
-            where: { id: decoded.personId }
-        });
-
-        if (!person) {
-            return res.status(404).json({ message: "Morador não encontrado" });
-        }
-
-        res.json({
-            id: person.id,
-            name: `${person.firstName} ${person.lastName}`.trim(),
-            email: person.email,
-            phone: person.phone,
-            photoUrl: person.photoUrl
-        });
-    } catch (error: any) {
-        console.error('Onboarding Validate Error:', error);
-        res.status(400).json({ message: "Token inválido ou expirado" });
-    }
-});
-
-app.post('/api/onboarding/complete', async (req, res) => {
-    try {
-        const { token, password } = req.body;
-        if (!token) return res.status(400).json({ message: "Token não fornecido" });
-        if (!password || password.length < 6) return res.status(400).json({ message: "Senha deve ter ao menos 6 caracteres" });
-
-        const decoded = jwt.verify(token, JWT_SECRET as string) as { personId: string; type: string };
-        if (decoded.type !== 'onboarding') {
-            return res.status(400).json({ message: "Token inválido para onboarding" });
-        }
-
-        const person = await prisma.person.findUnique({ where: { id: decoded.personId } });
-        if (!person) return res.status(404).json({ message: "Morador não encontrado" });
-
-        const hashed = await bcrypt.hash(password, 10);
-        await prisma.person.update({
-            where: { id: person.id },
-            data: { portalPassword: hashed }
-        });
-
-        res.json({ success: true });
-    } catch (error: any) {
-        console.error('Onboarding Complete Error:', error);
-        res.status(500).json({ message: error.message || "Erro ao concluir onboarding" });
-    }
-});
+// Endpoints de onboarding (validate/confirm-cpf/complete/selfie/pending-reviews)
+// migraram para routes/onboarding.routes.ts, montado em /api/onboarding acima.
 
 app.post('/api/invites/validate', async (req, res) => {
     try {
@@ -1253,18 +1219,34 @@ app.post('/api/invites/complete', async (req, res) => {
             });
             hikVisitorId = hikResult?.data?.visitorId;
 
-            // Tentar aplicar herança de níveis de acesso do Morador
-            const hostHikPersonId = visitor.accessLevelId;
-            if (hostHikPersonId && hikVisitorId) {
+            // Autoriza só os níveis que o morador selecionou no pré-cadastro,
+            // dentre o pool aprovado pelo admin (substitui a herança total do
+            // acesso do morador anfitrião que existia antes). Revalida contra
+            // o pool ATIVO agora, caso o admin tenha desativado algum nível
+            // entre o pré-cadastro e esta conclusão.
+            const selected = Array.isArray(visitor.selectedAccessLevels) ? visitor.selectedAccessLevels as any[] : [];
+            if (selected.length > 0 && hikVisitorId) {
                 try {
-                    const accessLevelsRes: any = await HikCentralService.getPersonAccessLevels(hostHikPersonId);
-                    const accessLevels = accessLevelsRes?.data?.list?.map((a: any) => a.accessLevelIndexCode || a.privilegeGroupId) || [];
+                    const stillApproved = await prisma.grantableAccessLevel.findMany({
+                        where: {
+                            appliesTo: 'visitor',
+                            isActive: true,
+                            hikAccessLevelId: { in: selected.map((s: any) => s.hikAccessLevelId) },
+                        },
+                    });
+                    // Níveis "local-*" e "area-*" são da própria plataforma
+                    // (níveis avulsos e Áreas de Acesso do condomínio) - o
+                    // HikCentral não os conhece, então só os códigos vindos
+                    // de lá entram na autorização remota.
+                    const accessLevels = stillApproved
+                        .map((g) => g.hikAccessLevelId)
+                        .filter((code) => !code.startsWith('local-') && !code.startsWith('area-'));
                     if (accessLevels.length > 0) {
                         await HikCentralService.authorizePerson(hikVisitorId, accessLevels, '2');
-                        console.log(`[HikCentral] Direitos do host ${hostHikPersonId} passados para vis. ${hikVisitorId}`);
+                        console.log(`[HikCentral] Níveis selecionados aplicados ao visitante ${hikVisitorId}: ${accessLevels.join(', ')}`);
                     }
                 } catch (err: any) {
-                    console.error('[HikCentral] Erro ao herdar níveis de acesso para visitante:', err.message);
+                    console.error('[HikCentral] Erro ao aplicar níveis de acesso selecionados ao visitante:', err.message);
                 }
             }
         } catch (hikErr: any) {
@@ -1516,21 +1498,56 @@ app.get('/api/dashboard/stats', authMiddleware, async (req, res) => {
     }
 });
 
+// Agrega todos os dispositivos integrados: módulos Nice Guarita (MG3000),
+// vídeo porteiros e, quando configurado, terminais do HikCentral. A instalação
+// pode rodar standalone — cada fonte é best-effort e nunca derruba as demais.
 app.get('/api/devices/status', authMiddleware, async (req, res) => {
     try {
-        const deviceResult = await HikCentralService.getAcsDeviceList(1, 100);
-        const devices = deviceResult?.data?.list || [];
+        const withTimeout = <T,>(p: Promise<T>, ms: number, fallback: T): Promise<T> =>
+            Promise.race([p, new Promise<T>(resolve => setTimeout(() => resolve(fallback), ms))]);
 
-        // Return a clean list of devices with their status
-        const formattedDevices = devices.map((d: any) => ({
-            id: d.acsDevIndexCode || d.acsDeviceIndexCode,
-            name: d.acsDevName || d.acsDeviceName,
-            status: d.status === 1 ? 'online' : 'offline',
-            ip: d.acsDevIp || d.acsDeviceIp,
-            type: d.treatyType || d.acsDeviceType
-        }));
+        const [guaritaDevices, doorbellDevices] = await Promise.all([
+            prisma.guaritaDevice.findMany({ where: { enabled: true }, orderBy: { name: 'asc' } }).catch(() => []),
+            prisma.doorbellDevice.findMany({ where: { enabled: true }, orderBy: { name: 'asc' } }).catch(() => []),
+        ]);
 
-        res.json(formattedDevices);
+        const [guaritaStatuses, doorbellStatuses, hikDevices] = await Promise.all([
+            Promise.all(guaritaDevices.map(async d => ({
+                id: `guarita-${d.id}`,
+                name: d.name,
+                status: (await NiceGuaritaProtocol.ping(d.ip, d.port).catch(() => false)) ? 'online' : 'offline',
+                ip: d.ip,
+                type: 'Módulo Guarita (Nice MG3000)',
+                location: d.location || undefined,
+            }))),
+            Promise.all(doorbellDevices.map(async d => ({
+                id: `doorbell-${d.id}`,
+                name: d.name,
+                status: (await withTimeout(
+                    VideoDoorbellService.testConnection(d.ip, d.port, d.username, d.password).catch(() => false),
+                    5000, false,
+                )) ? 'online' : 'offline',
+                ip: d.ip,
+                type: 'Vídeo Porteiro',
+                location: d.location || undefined,
+            }))),
+            (async () => {
+                try {
+                    const deviceResult = await HikCentralService.getAcsDeviceList(1, 100);
+                    return (deviceResult?.data?.list || []).map((d: any) => ({
+                        id: d.acsDevIndexCode || d.acsDeviceIndexCode,
+                        name: d.acsDevName || d.acsDeviceName,
+                        status: d.status === 1 ? 'online' : 'offline',
+                        ip: d.acsDevIp || d.acsDeviceIp,
+                        type: d.treatyType || d.acsDeviceType || 'HikCentral',
+                    }));
+                } catch {
+                    return []; // standalone: HikCentral não configurado
+                }
+            })(),
+        ]);
+
+        res.json([...guaritaStatuses, ...doorbellStatuses, ...hikDevices]);
     } catch (error: any) {
         console.error('Devices Status Error:', error);
         res.status(500).json({ error: error.message });

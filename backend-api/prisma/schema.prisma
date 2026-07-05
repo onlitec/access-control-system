@@ -38,9 +38,17 @@ model Person {
   externalId         String?           @map("external_id")
   departmentId       String?           @map("department_id")
   department         Department?       @relation(fields: [departmentId], references: [id], onDelete: SetNull)
+
+  // NEW: FK to Unit (building structure — primary path going forward)
+  unitId             String?           @map("unit_id")
+  unit               Unit?             @relation("PersonToUnit", fields: [unitId], references: [id], onDelete: SetNull)
+
   photoUrl           String?           @map("photo_url")
   createdAt          DateTime          @default(now()) @map("created_at")
   updatedAt          DateTime?         @updatedAt @map("updated_at")
+
+  // DEPRECATED fields: Keep during migration for backward compat (2 release cycles)
+  // Use unit.block.name instead
   block              String?
   cpf                String?
   rg                 String?
@@ -49,16 +57,46 @@ model Person {
   document_photo_url String?
   is_owner           Boolean?          @default(true)
   notes              String?
+  // Use unit.tower.name instead
   tower              String?
   txSerial           String?           @map("tx_serial")
   cardSerial         String?           @map("card_serial")
+  // Use unit.number instead
   unit_number        String?
   portalPassword     String?           @map("portal_password")
   residentSessions   ResidentSession[]
   accessAreas        ResidentAccessArea[]
   passbackState      GuaritaPassbackState?
+  faceVerification   OnboardingFaceVerification?
 
+  @@index([unitId])
   @@map("persons")
+}
+
+// ============ Onboarding: confirmação de CPF + verificação facial ============
+
+model OnboardingFaceVerification {
+  id              String    @id @default(uuid())
+  personId        String    @unique @map("person_id")
+  person          Person    @relation(fields: [personId], references: [id], onDelete: Cascade)
+
+  status          String    @default("awaiting_selfie") @map("status")
+  // "awaiting_selfie" | "approved" | "pending_admin_review" | "rejected"
+
+  attempts        Int       @default(0) @map("attempts")
+  lastSelfieUrl   String?   @map("last_selfie_url") // data:image/jpeg;base64,... (só a última tentativa)
+  lastSimilarity  Float?    @map("last_similarity")
+  lastAttemptAt   DateTime? @map("last_attempt_at")
+
+  resolvedBy      String?   @map("resolved_by") // User.id do admin que aprovou/rejeitou
+  resolvedAt      DateTime? @map("resolved_at")
+  resolutionNotes String?   @map("resolution_notes")
+
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
+
+  @@index([status])
+  @@map("onboarding_face_verifications")
 }
 
 model Visitor {
@@ -77,7 +115,11 @@ model Visitor {
   externalId         String?   @map("external_id")
   status             String?   @default("ACTIVE")
   inviteToken        String?   @map("invite_token")
+  // DEPRECATED: guardava o hikPersonId do morador anfitrião p/ herança total
+  // de acesso (comportamento antigo). Não recebe mais gravações novas — ver
+  // selectedAccessLevels, que é o que o morador realmente escolheu conceder.
   accessLevelId      String?   @map("access_level_id")
+  selectedAccessLevels Json?   @map("selected_access_levels")
   createdAt          DateTime  @default(now()) @map("created_at")
   document           String?
   document_photo_url String?
@@ -217,6 +259,10 @@ model ServiceProvider {
   validFrom          String?  @map("valid_from")
   validUntil         String?  @map("valid_until")
   authorizedUnits    Json?    @map("authorized_units")
+  // Níveis de acesso do pool aprovado pelo admin que o morador selecionou
+  // para este prestador (ver GrantableAccessLevel). Ainda não é enviado
+  // automaticamente ao HikCentral - hoje é só visível pra portaria.
+  selectedAccessLevels Json?  @map("selected_access_levels")
   notes              String?
   hikcentralPersonId String?  @map("hikcentral_person_id")
   createdBy          String?  @map("created_by")
@@ -417,6 +463,9 @@ model Unit {
   parkingSpaces Int      @default(0) @map("parking_spaces")
   createdAt     DateTime @default(now()) @map("created_at")
 
+  // Residents in this unit
+  persons       Person[] @relation("PersonToUnit")
+
   @@map("units")
 }
 
@@ -446,6 +495,13 @@ model SystemSettings {
   smtpFrom          String?  @map("smtp_from")
   smtpFromName      String?  @map("smtp_from_name")
   updateManifestUrl String?  @map("update_manifest_url")
+  // Acesso remoto (WAN): qual URL base entra nos links enviados a moradores
+  // e visitantes (onboarding, pré-cadastro). O instalador grava o IP local
+  // da rede em APP_URL (.env), que raramente é alcançável de fora - accessMode
+  // escolhe entre o IP (LAN/WAN com IP fixo) e um domínio público (DNS/proxy).
+  accessMode        String   @default("ip") @map("access_mode") // "ip" | "domain"
+  accessUrlIp       String?  @map("access_url_ip")
+  accessUrlDomain   String?  @map("access_url_domain")
   updatedAt         DateTime @updatedAt @map("updated_at")
 
   @@map("system_settings")
@@ -533,6 +589,26 @@ model ResidentAccessArea {
 
   @@unique([personId, areaId])
   @@map("resident_access_areas")
+}
+
+// ============ Pools de níveis de acesso HikCentral aprovados p/ visitantes/prestadores ============
+// O admin cura, no painel de Permissões, quais níveis de acesso do HikCentral
+// podem ser concedidos a visitantes e a prestadores (pools separados, únicos
+// para o condomínio inteiro). O morador só pode escolher, no pré-cadastro,
+// dentre o que estiver aqui como isActive=true - substitui a herança total
+// do acesso do próprio morador que existia antes.
+
+model GrantableAccessLevel {
+  id               String   @id @default(cuid())
+  hikAccessLevelId String   @map("hik_access_level_id") // privilegeGroupId do HikCentral
+  name             String
+  appliesTo        String   @map("applies_to") // "visitor" | "provider"
+  isActive         Boolean  @default(true) @map("is_active")
+  createdAt        DateTime @default(now()) @map("created_at")
+  updatedAt        DateTime @updatedAt @map("updated_at")
+
+  @@unique([hikAccessLevelId, appliesTo])
+  @@map("grantable_access_levels")
 }
 
 model RegistrationRequirement {

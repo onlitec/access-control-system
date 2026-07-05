@@ -3,7 +3,10 @@ backups/
 letsencrypt/
 certbot/
 certs/
-auth/
+# só a pasta auth/ da RAIZ (sem a âncora, "auth/" ignorava qualquer diretório
+# auth em qualquer nível - ex.: frontend-visitor/src/app/login/auth nunca
+# entrou no git por causa disso)
+/auth/
 .env
 backend-api/dist/
 

@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { Shield, ShieldAlert, Check, X, Users, Save, Loader2 } from 'lucide-react';
+import { Shield, ShieldAlert, Check, X, Users, Save, Loader2, KeyRound } from 'lucide-react';
 import { apiFetch } from '@/services/api';
+import AccessLevelPoolsPanel from './AccessLevelPoolsPanel';
 
 interface RolePermissions {
   role: string;
@@ -21,10 +22,11 @@ interface RolePermissions {
 }
 
 export default function PermissionsPage() {
+  const [outerTab, setOuterTab] = useState<'modules' | 'access-pools'>('modules');
   const [rolePermsList, setRolePermsList] = useState<RolePermissions[]>([]);
   const [loading, setLoading] = useState(true);
   const [savingRole, setSavingRole] = useState<string | null>(null);
-  
+
   // Selection of active role for configuration
   const [activeRoleIndex, setActiveRoleIndex] = useState<number>(0);
 
@@ -120,11 +122,31 @@ export default function PermissionsPage() {
     <div className="page" style={{ minHeight: 'calc(100vh - 120px)' }}>
       {/* Page Header */}
       <div className="page-header" style={{ marginBottom: '25px' }}>
-        <h1><Shield size={24} /> Matriz de Permissões</h1>
-        <p>Configuração e gestão dinâmica de papéis de acesso e diretivas de segurança de rede do sistema.</p>
+        <h1><Shield size={24} /> Permissões</h1>
+        <p>Configuração e gestão dinâmica de papéis de acesso, diretivas de segurança e níveis de acesso concedíveis a visitantes/prestadores.</p>
       </div>
 
-      {loading && rolePermsList.length === 0 ? (
+      {/* Outer tabs: RBAC do painel x pools de acesso de visitante/prestador */}
+      <div style={{ display: 'flex', gap: '10px', marginBottom: '25px' }}>
+        <button
+          onClick={() => setOuterTab('modules')}
+          className={outerTab === 'modules' ? 'btn btn-primary' : 'btn btn-secondary'}
+          style={{ display: 'flex', alignItems: 'center', gap: '8px' }}
+        >
+          <Shield size={16} /> Módulos do Painel
+        </button>
+        <button
+          onClick={() => setOuterTab('access-pools')}
+          className={outerTab === 'access-pools' ? 'btn btn-primary' : 'btn btn-secondary'}
+          style={{ display: 'flex', alignItems: 'center', gap: '8px' }}
+        >
+          <KeyRound size={16} /> Acessos de Visitantes e Prestadores
+        </button>
+      </div>
+
+      {outerTab === 'access-pools' ? (
+        <AccessLevelPoolsPanel />
+      ) : loading && rolePermsList.length === 0 ? (
         <div style={{ padding: '40px', display: 'flex', justifyContent: 'center', alignItems: 'center', color: 'var(--text-muted)' }}>
           <Loader2 className="animate-spin" size={24} style={{ marginRight: '10px' }} /> Carregando diretivas de segurança...
         </div>

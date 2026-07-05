@@ -124,6 +124,15 @@ try {
         New-Item -ItemType Directory -Force -Path (Join-Path $TargetDir $d) | Out-Null
     }
 
+    # NOTA: TLS/HTTPS (nginx ssl_certificate + ssl_certificate_key em PEM) foi
+    # planejado mas revertido nesta versao - New-SelfSignedCertificate gera o
+    # certificado, mas exportar a chave privada em PEM a partir dele exige
+    # OpenSSL ou codificacao ASN.1/PKCS#1 manual, que nao tem suporte nativo
+    # confiavel no `powershell.exe` (PowerShell 5.1) usado pelo Inno Setup.
+    # O proxy permanece em HTTP simples ate isso ser resolvido corretamente
+    # (empacotar um openssl.exe, ou emitir via ACME/Let's Encrypt quando
+    # houver dominio publico).
+
     $Bin     = Join-Path $TargetDir "binaries"
     $Apps    = Join-Path $TargetDir "apps"
     $PgBin   = Join-Path $Bin "pgsql\bin"

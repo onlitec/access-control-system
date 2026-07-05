@@ -19,6 +19,7 @@ import CompletedVisitsPage from './pages/CompletedVisitsPage';
 import ActiveProvidersPage from './pages/ActiveProvidersPage';
 import FinishedProvidersPage from './pages/FinishedProvidersPage';
 import TodayAccessesPage from './pages/TodayAccessesPage';
+import PresentResidentsPage from './pages/PresentResidentsPage';
 import DeviceStatusPage from './pages/DeviceStatusPage';
 
 export interface RouteConfig {
@@ -81,6 +82,7 @@ const routes: RouteConfig[] = [
   { name: 'Prestadores em Atividade', path: '/prestadores-atividade', element: <ActiveProvidersPage /> },
   { name: 'Prestadores Finalizados', path: '/prestadores-finalizados', element: <FinishedProvidersPage /> },
   { name: 'Acessos Hoje', path: '/acessos-hoje', element: <TodayAccessesPage /> },
+  { name: 'Moradores Presentes', path: '/moradores-presentes', element: <PresentResidentsPage /> },
   { name: 'Status Dispositivos', path: '/devices-status', element: <DeviceStatusPage /> },
   { name: 'Configuração Hikcentral', path: '/hikcentral-config', element: <HikcentralConfigPage /> },
   {

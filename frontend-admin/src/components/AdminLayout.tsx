@@ -23,6 +23,7 @@ import {
     KeyRound,
     Layers,
     Settings,
+    UserCheck,
 } from 'lucide-react';
 import { avatarGradient } from '@/utils/avatarColor';
 
@@ -57,6 +58,7 @@ const menuSections = [
     {
         title: 'Auditoria',
         items: [
+            { to: '/admin/onboarding-review', icon: UserCheck, label: 'Aprovação Facial', end: false },
             { to: '/admin/audit-access', icon: ClipboardList, label: 'Logs de acesso', end: false },
             { to: '/admin/audit-admin', icon: List, label: 'Logs administrativos', end: false },
             { to: '/admin/reports', icon: BarChart3, label: 'Relatórios', end: false },

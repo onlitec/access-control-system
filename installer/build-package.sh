@@ -52,6 +52,8 @@ cp "$WIN_DIR/assets/nginx/nginx.conf" "$STAGE_DIR/binaries/nginx/conf/nginx.conf
 # Serviços WinSW e scripts
 cp "$WIN_DIR/assets/services/"*.xml "$STAGE_DIR/services/"
 cp "$WIN_DIR/scripts/"*.ps1 "$STAGE_DIR/scripts/"
+# smtp-defaults.env: gitignored (segredo real), só empacota se existir localmente
+[ -f "$WIN_DIR/scripts/smtp-defaults.env" ] && cp "$WIN_DIR/scripts/smtp-defaults.env" "$STAGE_DIR/scripts/"
 
 # ---- backend-api: dist + prisma + node_modules de produção (alvo Windows)
 log "Staging do backend-api (npm install de produção + engines Prisma p/ Windows)..."
@@ -74,8 +76,17 @@ delete pkg.scripts;
 fs.writeFileSync(dest, JSON.stringify(pkg, null, 2));
 EOF
 
+
+# npm_config_target_* força o node-pre-gyp/prebuild-install do pacote `canvas`
+# (dependência nativa do FaceMatchService) a baixar o prebuilt do Windows
+# mesmo rodando este `npm install` sob WSL/Linux - sem isso, o binário
+# instalado é um .node ELF (Linux), que não carrega no node.exe Windows
+# empacotado, quebrando a verificação facial silenciosamente em produção.
 (cd "$BACKEND_STAGE" && \
     PRISMA_CLI_BINARY_TARGETS="native,windows" \
+    npm_config_target_platform=win32 \
+    npm_config_target_arch=x64 \
+    npm_config_target_libc=unknown \
     npm install --omit=dev --no-audit --no-fund --loglevel=error)
 
 log "Gerando Prisma Client (binaryTargets: native + windows)..."

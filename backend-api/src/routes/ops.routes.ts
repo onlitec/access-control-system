@@ -4,11 +4,13 @@ import fetch from 'node-fetch';
 import { prisma } from '../database';
 import { authMiddleware, adminMiddleware } from '../middleware/auth';
 import { AuditService } from '../services/AuditService';
+import { HikCentralService } from '../services/HikCentralService';
 import { listServices, restartService, isAllowedService, ALLOWED_SERVICES } from '../services/WindowsServiceControl';
 import { config } from '../config/unifiedConfig';
 import { statfs } from 'fs/promises';
 import path from 'path';
 import fs from 'fs';
+import crypto from 'crypto';
 
 const router = Router();
 
@@ -766,6 +768,223 @@ router.post('/permissions', authMiddleware, adminMiddleware, async (req: Request
             details: `Failed to update permissions for role ${role}: ${err.message}`
         });
         return res.status(500).json({ error: 'failed to update role permissions' });
+    }
+});
+
+// ============ Pools de níveis de acesso p/ visitantes/prestadores ============
+// Curadoria do admin: quais níveis de acesso podem ser concedidos a
+// visitantes e a prestadores. Os níveis são da PRÓPRIA plataforma (criados
+// aqui pelo admin, prefixo "local-"); quando há integração HikCentral
+// configurada, o catálogo de lá aparece como opção adicional. Pool único por
+// tipo, vale pro condomínio inteiro. Ver GrantableAccessLevel no schema.
+
+const LOCAL_LEVEL_PREFIX = 'local-';
+const AREA_LEVEL_PREFIX = 'area-';
+const isLocalLevel = (code: string) => code.startsWith(LOCAL_LEVEL_PREFIX);
+const isPlatformLevel = (code: string) => code.startsWith(LOCAL_LEVEL_PREFIX) || code.startsWith(AREA_LEVEL_PREFIX);
+
+// 15. GET /api/ops/access-level-pools?appliesTo=visitor|provider
+router.get('/access-level-pools', authMiddleware, adminMiddleware, async (req: Request, res: Response) => {
+    const appliesTo = req.query.appliesTo as string;
+    if (appliesTo !== 'visitor' && appliesTo !== 'provider') {
+        return res.status(400).json({ error: 'appliesTo deve ser "visitor" ou "provider"' });
+    }
+    try {
+        // Locais entram sempre (ativos e inativos, pro admin poder reativar);
+        // "approved" = ativos, de qualquer origem.
+        const allRows = await prisma.grantableAccessLevel.findMany({
+            where: { appliesTo },
+            orderBy: { name: 'asc' },
+        });
+        const approved = allRows.filter((r) => r.isActive);
+        const approvedIds = new Set(approved.map((a) => a.hikAccessLevelId));
+
+        // Catálogo do HikCentral é "best effort": em instalações standalone
+        // (sem HikCentral configurado, ver HikCentralService.hikRequest) não
+        // há catálogo pra listar - segue só com o que já está aprovado, em
+        // vez de derrubar a página inteira com 500.
+        let hikAvailable = true;
+        let catalogList: any[] = [];
+        try {
+            const [general, visitorGroups] = await Promise.all([
+                HikCentralService.getPrivilegeGroups(1, 1, 500),
+                HikCentralService.getPrivilegeGroups(2, 1, 500),
+            ]);
+            catalogList = [
+                ...(general?.data?.list || []).map((l: any) => ({ ...l, type: 1 })),
+                ...(visitorGroups?.data?.list || []).map((l: any) => ({ ...l, type: 2 })),
+            ];
+        } catch (hikErr: any) {
+            hikAvailable = false;
+            console.warn('[Ops] HikCentral indisponível ao listar catálogo de níveis de acesso:', hikErr.message);
+        }
+
+        // Áreas de Acesso do condomínio (mesmas já usadas pelos moradores em
+        // /admin/access-areas) entram como opções reutilizáveis do pool.
+        const seen = new Set<string>();
+        const data: any[] = [];
+        const areas = await prisma.accessArea.findMany({ where: { isActive: true }, orderBy: { order: 'asc' } });
+        for (const area of areas) {
+            const code = `${AREA_LEVEL_PREFIX}${area.id}`;
+            seen.add(code);
+            data.push({
+                hikAccessLevelId: code,
+                name: `${area.icon ? area.icon + ' ' : ''}${area.name}`,
+                type: 0,
+                source: 'area',
+                approved: approvedIds.has(code),
+            });
+        }
+
+        // Níveis criados avulsos aqui na página (prefixo "local-").
+        for (const row of allRows.filter((r) => isLocalLevel(r.hikAccessLevelId))) {
+            seen.add(row.hikAccessLevelId);
+            data.push({
+                id: row.id,
+                hikAccessLevelId: row.hikAccessLevelId,
+                name: row.name,
+                type: 0,
+                source: 'local',
+                approved: row.isActive,
+            });
+        }
+
+        // Catálogo HikCentral (quando existir) como opções adicionais.
+        for (const level of catalogList) {
+            const code = String(level.privilegeGroupId || level.id);
+            if (seen.has(code)) continue;
+            seen.add(code);
+            data.push({
+                hikAccessLevelId: code,
+                name: level.privilegeGroupName || level.name || '(sem nome)',
+                type: level.type,
+                source: 'hikcentral',
+                approved: approvedIds.has(code),
+            });
+        }
+
+        // Aprovados cuja origem sumiu (HikCentral fora do ar, nível removido
+        // lá, ou área desativada) continuam visíveis - senão o admin acha
+        // que "desmarcou" algo que só não carregou.
+        for (const a of approved) {
+            if (!seen.has(a.hikAccessLevelId)) {
+                const source = a.hikAccessLevelId.startsWith(AREA_LEVEL_PREFIX) ? 'area' : 'hikcentral';
+                data.push({ hikAccessLevelId: a.hikAccessLevelId, name: a.name, type: 0, source, approved: true });
+            }
+        }
+
+        return res.json({ success: true, hikAvailable, data });
+    } catch (err: any) {
+        console.error('[Ops] Error fetching access-level pool:', err);
+        return res.status(500).json({ success: false, error: err.message || 'falha ao carregar níveis de acesso' });
+    }
+});
+
+// 16. POST /api/ops/access-level-pools
+router.post('/access-level-pools', authMiddleware, adminMiddleware, async (req: Request, res: Response) => {
+    const { appliesTo, items } = req.body as {
+        appliesTo?: string;
+        items?: { hikAccessLevelId: string; name: string }[];
+    };
+    if (appliesTo !== 'visitor' && appliesTo !== 'provider') {
+        return res.status(400).json({ error: 'appliesTo deve ser "visitor" ou "provider"' });
+    }
+    const desired = Array.isArray(items) ? items.filter((i) => i && i.hikAccessLevelId) : [];
+    try {
+        await prisma.$transaction([
+            prisma.grantableAccessLevel.updateMany({
+                where: { appliesTo, hikAccessLevelId: { notIn: desired.map((i) => String(i.hikAccessLevelId)) } },
+                data: { isActive: false },
+            }),
+            ...desired.map((i) =>
+                prisma.grantableAccessLevel.upsert({
+                    where: { hikAccessLevelId_appliesTo: { hikAccessLevelId: String(i.hikAccessLevelId), appliesTo } },
+                    update: { isActive: true, name: i.name || '(sem nome)' },
+                    create: { hikAccessLevelId: String(i.hikAccessLevelId), appliesTo, name: i.name || '(sem nome)', isActive: true },
+                })
+            ),
+        ]);
+
+        await AuditService.logAdminAuditEvent({
+            action: 'ACCESS_LEVEL_POOL_UPDATE',
+            status: 'success',
+            req,
+            userId: (req as any).user?.id,
+            userEmail: (req as any).user?.email,
+            details: `Pool de acesso para "${appliesTo}" atualizado com ${desired.length} nível(is).`,
+        });
+
+        return res.json({ success: true });
+    } catch (err: any) {
+        console.error('[Ops] Error saving access-level pool:', err);
+        await AuditService.logAdminAuditEvent({
+            action: 'ACCESS_LEVEL_POOL_UPDATE',
+            status: 'failed',
+            req,
+            userId: (req as any).user?.id,
+            userEmail: (req as any).user?.email,
+            details: `Falha ao atualizar pool "${appliesTo}": ${err.message}`,
+        });
+        return res.status(500).json({ error: 'falha ao salvar níveis de acesso' });
+    }
+});
+
+// 17. POST /api/ops/access-level-pools/custom - cria um nível de acesso da
+// própria plataforma (independente de HikCentral).
+router.post('/access-level-pools/custom', authMiddleware, adminMiddleware, async (req: Request, res: Response) => {
+    const { appliesTo, name } = req.body as { appliesTo?: string; name?: string };
+    if (appliesTo !== 'visitor' && appliesTo !== 'provider') {
+        return res.status(400).json({ error: 'appliesTo deve ser "visitor" ou "provider"' });
+    }
+    const cleanName = typeof name === 'string' ? name.trim() : '';
+    if (!cleanName) {
+        return res.status(400).json({ error: 'Informe o nome do nível de acesso' });
+    }
+    try {
+        const code = `${LOCAL_LEVEL_PREFIX}${crypto.randomUUID()}`;
+        const created = await prisma.grantableAccessLevel.create({
+            data: { hikAccessLevelId: code, appliesTo, name: cleanName, isActive: true },
+        });
+
+        await AuditService.logAdminAuditEvent({
+            action: 'ACCESS_LEVEL_CREATE',
+            status: 'success',
+            req,
+            userId: (req as any).user?.id,
+            userEmail: (req as any).user?.email,
+            details: `Nível de acesso local "${cleanName}" criado para "${appliesTo}".`,
+        });
+
+        return res.status(201).json({ success: true, level: { id: created.id, hikAccessLevelId: created.hikAccessLevelId, name: created.name } });
+    } catch (err: any) {
+        console.error('[Ops] Error creating custom access level:', err);
+        return res.status(500).json({ error: 'falha ao criar nível de acesso' });
+    }
+});
+
+// 18. DELETE /api/ops/access-level-pools/custom/:id - remove um nível LOCAL.
+// Níveis vindos do HikCentral não são apagáveis aqui (só desmarcados).
+router.delete('/access-level-pools/custom/:id', authMiddleware, adminMiddleware, async (req: Request, res: Response) => {
+    try {
+        const level = await prisma.grantableAccessLevel.findUnique({ where: { id: req.params.id } });
+        if (!level || !isLocalLevel(level.hikAccessLevelId)) {
+            return res.status(404).json({ error: 'Nível de acesso local não encontrado' });
+        }
+        await prisma.grantableAccessLevel.delete({ where: { id: level.id } });
+
+        await AuditService.logAdminAuditEvent({
+            action: 'ACCESS_LEVEL_DELETE',
+            status: 'success',
+            req,
+            userId: (req as any).user?.id,
+            userEmail: (req as any).user?.email,
+            details: `Nível de acesso local "${level.name}" (${level.appliesTo}) removido.`,
+        });
+
+        return res.json({ success: true });
+    } catch (err: any) {
+        console.error('[Ops] Error deleting custom access level:', err);
+        return res.status(500).json({ error: 'falha ao remover nível de acesso' });
     }
 });
 

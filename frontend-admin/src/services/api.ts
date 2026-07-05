@@ -431,6 +431,9 @@ export interface SystemSettingsData {
     smtpFromName: string | null;
     smtpPasswordSet: boolean;
     updateManifestUrl: string | null;
+    accessMode: 'ip' | 'domain';
+    accessUrlIp: string | null;
+    accessUrlDomain: string | null;
     appVersion: string;
     effective: {
         host: string;
@@ -439,6 +442,7 @@ export interface SystemSettingsData {
         from: string;
         fromName: string;
     };
+    effectiveAccessUrl: string;
 }
 
 export const getSystemSettings = async () => {
@@ -453,6 +457,9 @@ export const updateSystemSettings = async (payload: {
     smtpFrom?: string;
     smtpFromName?: string;
     updateManifestUrl?: string;
+    accessMode?: 'ip' | 'domain';
+    accessUrlIp?: string;
+    accessUrlDomain?: string;
 }) => {
     return request<{ success: boolean }>('/system-settings', {
         method: 'PUT',
@@ -877,6 +884,75 @@ export const updateAccessSchedules = async (schedules: AccessSchedule[]) => {
         method: 'PUT',
         body: JSON.stringify({ schedules })
     });
+};
+
+// ============ Onboarding: revisão de verificação facial pendente ============
+export interface OnboardingPendingReview {
+    personId: string;
+    name: string;
+    unit: string | null;
+    tower: string | null;
+    block: string | null;
+    referencePhotoUrl: string | null;
+    lastSelfieUrl: string | null;
+    lastSimilarity: number | null;
+    attempts: number;
+    lastAttemptAt: string | null;
+}
+
+export const getOnboardingPendingReviews = async () => {
+    return request<{ data: OnboardingPendingReview[] }>('/onboarding/pending-reviews');
+};
+
+export const approveOnboardingReview = async (personId: string) => {
+    return request<{ success: boolean }>(`/onboarding/pending-reviews/${personId}/approve`, {
+        method: 'POST',
+    });
+};
+
+export const rejectOnboardingReview = async (personId: string, notes?: string) => {
+    return request<{ success: boolean; message: string }>(`/onboarding/pending-reviews/${personId}/reject`, {
+        method: 'POST',
+        body: JSON.stringify({ notes }),
+    });
+};
+
+// ============ Pools de níveis de acesso p/ visitantes/prestadores ============
+
+export interface GrantableAccessLevelItem {
+    id?: string; // presente nos níveis locais (criados na plataforma)
+    hikAccessLevelId: string;
+    name: string;
+    type: number;
+    source: 'area' | 'local' | 'hikcentral';
+    approved: boolean;
+}
+
+export const getAccessLevelPool = async (appliesTo: 'visitor' | 'provider') => {
+    return request<{ success: boolean; hikAvailable: boolean; data: GrantableAccessLevelItem[] }>(
+        `/ops/access-level-pools?appliesTo=${appliesTo}`,
+    );
+};
+
+export const saveAccessLevelPool = async (
+    appliesTo: 'visitor' | 'provider',
+    items: { hikAccessLevelId: string; name: string }[],
+) => {
+    return request<{ success: boolean }>('/ops/access-level-pools', {
+        method: 'POST',
+        body: JSON.stringify({ appliesTo, items }),
+    });
+};
+
+export const createCustomAccessLevel = async (appliesTo: 'visitor' | 'provider', name: string) => {
+    return request<{ success: boolean; level: { id: string; hikAccessLevelId: string; name: string } }>(
+        '/ops/access-level-pools/custom',
+        { method: 'POST', body: JSON.stringify({ appliesTo, name }) },
+    );
+};
+
+export const deleteCustomAccessLevel = async (id: string) => {
+    return request<{ success: boolean }>(`/ops/access-level-pools/custom/${id}`, { method: 'DELETE' });
 };
 
 export const apiFetch = request;

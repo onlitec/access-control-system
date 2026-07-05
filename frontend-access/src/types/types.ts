@@ -130,6 +130,7 @@ export interface DeviceStatus {
   status: 'online' | 'offline';
   ip?: string;
   type?: string;
+  location?: string;
 }
 
 export interface DashboardStats {
