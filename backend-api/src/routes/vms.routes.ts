@@ -927,6 +927,26 @@ function rcloneArgs(extra: string[]): string[] {
   return RCLONE_CONFIG ? [...extra, '--config', RCLONE_CONFIG] : extra;
 }
 
+/**
+ * Enfileira as gravações que JÁ existem no disco para um destino recém-criado.
+ *
+ * Sem isto, um destino só recebe o que for gravado dali para frente — tudo que
+ * já estava no servidor ficaria fora da nuvem para sempre, sem nenhum aviso.
+ */
+async function enqueueExistingRecordings(destinationId: string): Promise<number> {
+  const segments = await prisma.recordingSegment.findMany({
+    where: { status: 'closed' }, // só o que ainda está no disco
+    select: { id: true },
+  });
+  if (segments.length === 0) return 0;
+
+  const { count } = await prisma.recordingUpload.createMany({
+    data: segments.map((s) => ({ segmentId: s.id, destinationId })),
+    skipDuplicates: true,
+  });
+  return count;
+}
+
 async function uniqueRcloneRemote(base: string): Promise<string> {
   let candidate = base;
   for (let i = 2; ; i++) {
@@ -1000,7 +1020,9 @@ router.post('/storage', adminMiddleware, async (req: Request, res: Response): Pr
         configJson: shown,
       },
     });
-    res.status(201).json({ success: true, destination });
+    // as gravações que já estão no disco também sobem para o novo destino
+    const queued = await enqueueExistingRecordings(destination.id);
+    res.status(201).json({ success: true, destination, queued });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
@@ -1110,7 +1132,22 @@ router.post('/storage/oauth/token', adminMiddleware, async (req: Request, res: R
       },
     });
     if (sessionId) oauthSessions.delete(sessionId);
-    res.status(201).json({ success: true, destination });
+    // as gravações que já estão no disco também sobem para o novo destino
+    const queued = await enqueueExistingRecordings(destination.id);
+    res.status(201).json({ success: true, destination, queued });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── POST /api/vms/storage/:id/backfill — enviar as gravações já existentes ───
+router.post('/storage/:id/backfill', adminMiddleware, async (req: Request, res: Response): Promise<void> => {
+  try {
+    const destination = await prisma.storageDestination.findUnique({ where: { id: req.params.id } });
+    if (!destination) { res.status(404).json({ error: 'Destino não encontrado' }); return; }
+
+    const queued = await enqueueExistingRecordings(destination.id);
+    res.json({ success: true, queued });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }

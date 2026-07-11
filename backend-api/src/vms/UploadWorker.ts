@@ -10,6 +10,9 @@ const execFileAsync = promisify(execFile);
 const MAX_ATTEMPTS = 8;
 const UPLOAD_TIMEOUT_MS = 30 * 60 * 1000;
 
+/** Arquivo tocado há menos que isto pode ainda estar sendo gravado. */
+const STILL_RECORDING_MS = 90_000;
+
 /**
  * Fila de upload das gravações para destinos remotos via rclone
  * (Google Drive, OneDrive, SMB, FTP...). A fila vive na tabela
@@ -59,6 +62,19 @@ export class UploadWorker {
     const localFile = path.join(VMS_RECORDINGS_DIR, upload.segment.filePath);
     const base = (upload.destination.remoteBasePath || 'onliacesso-vms').replace(/\/+$/, '');
     const remote = `${upload.destination.rcloneRemote}:${base}/${upload.segment.filePath}`;
+
+    // Se o arquivo foi tocado há segundos, a gravação dele ainda pode estar
+    // rolando: o rclone abortaria no meio ("source file is being updated").
+    // Deixa para o próximo ciclo, sem contar como falha.
+    const st = await fs.stat(localFile).catch(() => null);
+    if (!st) {
+      await prisma.recordingUpload.update({
+        where: { id: upload.id },
+        data: { status: 'failed', lastError: 'Arquivo não encontrado no disco', attempts: MAX_ATTEMPTS },
+      });
+      return;
+    }
+    if (Date.now() - st.mtimeMs < STILL_RECORDING_MS) return;
 
     await prisma.recordingUpload.update({ where: { id: upload.id }, data: { status: 'uploading' } });
 

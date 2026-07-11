@@ -9,6 +9,17 @@ function channelPathOf(mtxPath: string): string {
   return mtxPath.endsWith('-sub') ? mtxPath.slice(0, -4) : mtxPath;
 }
 
+/**
+ * Um arquivo tocado há poucos segundos provavelmente AINDA ESTÁ SENDO GRAVADO.
+ * Indexá-lo como "fechado" faria o upload tentar enviar um arquivo que cresce
+ * durante a transferência — o rclone aborta com "source file is being updated".
+ */
+const STILL_RECORDING_MS = 90_000;
+
+function isProbablyOpen(mtimeMs: number): boolean {
+  return Date.now() - mtimeMs < STILL_RECORDING_MS;
+}
+
 /** Extrai o início da gravação do nome `%Y-%m-%d_%H-%M-%S-%f.mp4` (hora local). */
 function parseStartFromFilename(fileName: string): Date | null {
   const m = fileName.match(/(\d{4})-(\d{2})-(\d{2})_(\d{2})-(\d{2})-(\d{2})/);
@@ -108,6 +119,12 @@ export class SegmentIndexer {
       for (const absFile of files) {
         const relPath = path.relative(VMS_RECORDINGS_DIR, absFile).split(path.sep).join('/');
         if (known.has(relPath)) continue;
+
+        // o arquivo da gravação EM ANDAMENTO ainda está crescendo — indexá-lo
+        // agora faria o upload tentar enviar um arquivo em movimento
+        const st = await fs.stat(absFile).catch(() => null);
+        if (!st || isProbablyOpen(st.mtimeMs)) continue;
+
         // usa o motivo real da gravação daquele path (manual, motion, agenda...)
         await this.indexFile(channel.id, absFile, this.scheduler.triggerForPath(dir));
         console.log(`[VMS] Segmento órfão indexado: ${relPath}`);

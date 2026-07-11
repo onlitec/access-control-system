@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { apiFetch } from '@/services/api';
 import {
   HardDrive, Cloud, Plus, Trash2, X, Loader2, CheckCircle2,
-  AlertTriangle, RefreshCw, ExternalLink,
+  AlertTriangle, RefreshCw, ExternalLink, UploadCloud,
 } from 'lucide-react';
 
 // ── Types ──────────────────────────────────────────────────────────────────
@@ -176,6 +176,24 @@ export default function VmsStoragePage() {
     if (!confirm('Remover este destino? Os uploads pendentes serão descartados (arquivos já enviados permanecem no destino).')) return;
     await apiFetch(`/vms/storage/${id}`, { method: 'DELETE' });
     await load();
+  }
+
+  /**
+   * Enfileira as gravações que já estão no disco. Necessário porque o upload é
+   * criado no momento em que a gravação é indexada — um destino cadastrado hoje
+   * não receberia nada do que já foi gravado antes.
+   */
+  async function backfill(dest: StorageDestination) {
+    if (!confirm(`Enviar para "${dest.name}" todas as gravações que já estão no servidor?`)) return;
+    try {
+      const data = await apiFetch<{ queued: number }>(`/vms/storage/${dest.id}/backfill`, { method: 'POST' });
+      alert(data.queued > 0
+        ? `${data.queued} gravação(ões) na fila de envio. O upload acontece em segundo plano.`
+        : 'Nenhuma gravação nova para enviar (todas já estão na fila ou enviadas).');
+      await load();
+    } catch (err: any) {
+      setError(err.message || 'Erro ao enfileirar gravações');
+    }
   }
 
   async function testDestination(dest: StorageDestination) {
@@ -393,6 +411,14 @@ export default function VmsStoragePage() {
                 ) : null}
                 <button onClick={() => testDestination(dest)} className="btn btn-secondary" style={{ padding: '4px 10px', fontSize: '0.75rem', minWidth: 'auto', display: 'flex', alignItems: 'center', gap: '4px' }}>
                   <RefreshCw size={12} /> Testar
+                </button>
+                <button
+                  onClick={() => backfill(dest)}
+                  className="btn btn-secondary"
+                  title="Enviar as gravações que já estão no servidor (o envio automático só vale para as novas)"
+                  style={{ padding: '4px 10px', fontSize: '0.75rem', minWidth: 'auto', display: 'flex', alignItems: 'center', gap: '4px' }}
+                >
+                  <UploadCloud size={12} /> Enviar existentes
                 </button>
                 <StatusBadge enabled={dest.enabled} enabledLabel="Ativo" disabledLabel="Pausado" />
                 <button onClick={() => toggleDestination(dest)} className="btn btn-secondary" style={{ padding: '4px 10px', fontSize: '0.75rem', minWidth: 'auto' }}>{dest.enabled ? 'Pausar' : 'Ativar'}</button>
