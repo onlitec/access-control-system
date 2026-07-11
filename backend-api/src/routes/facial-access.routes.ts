@@ -213,6 +213,19 @@ router.put('/readers/:readerId', adminMiddleware, async (req: Request, res: Resp
   }
 });
 
+// ── GET /api/facial-access/devices/:id/snapshot ───────────────────────────
+// JPEG da câmera do terminal (captura de foto de cadastro pelo operador).
+router.get('/devices/:id/snapshot', async (req: Request, res: Response): Promise<void> => {
+  try {
+    const buffer = await FacialAccessService.getSnapshot(req.params.id);
+    res.set('Content-Type', 'image/jpeg');
+    res.set('Content-Length', buffer.length.toString());
+    res.send(buffer);
+  } catch (err: any) {
+    res.status(502).json({ error: `Falha na captura: ${err.message}` });
+  }
+});
+
 // ── POST /api/facial-access/devices/:id/sync-persons (admin only) ─────────
 // Sincroniza todas as pessoas relevantes (áreas ↔ portas) com o equipamento.
 router.post('/devices/:id/sync-persons', adminMiddleware, async (req: Request, res: Response): Promise<void> => {

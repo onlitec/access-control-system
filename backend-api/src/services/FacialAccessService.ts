@@ -347,6 +347,26 @@ export class FacialAccessService {
     return results;
   }
 
+  // ── Snapshot da câmera do terminal ────────────────────────────────────────
+
+  /**
+   * Captura um JPEG da câmera do terminal facial (validado no DS-K1T673:
+   * canal 101; o canal 1 responde `invalidID`). Usado pelo painel do operador
+   * para capturar a foto de cadastro direto no equipamento.
+   */
+  static async getSnapshot(deviceId: string): Promise<Buffer> {
+    const device = await this.getDevice(deviceId);
+    const url = `http://${device.ip}:${device.port}/ISAPI/Streaming/channels/101/picture`;
+    const res = await digestFetch(url, device.username, device.password, 'GET', undefined, undefined, { timeoutMs: 10000 });
+    const buffer = Buffer.from(await res.arrayBuffer());
+    // JPEG começa com FF D8 — se vier XML é erro ISAPI (ex.: invalidID)
+    if (!res.ok || buffer.length < 2 || buffer[0] !== 0xff || buffer[1] !== 0xd8) {
+      const msg = buffer.toString('utf-8', 0, 300).match(/<statusString>([^<]+)<\/statusString>/)?.[1] ?? `HTTP ${res.status}`;
+      throw new Error(`Snapshot indisponível: ${msg}`);
+    }
+    return buffer;
+  }
+
   // ── Acionamento remoto de porta ───────────────────────────────────────────
 
   static async controlDoor(deviceId: string, doorNo: number, cmd: 'open' | 'close' | 'alwaysOpen' | 'alwaysClose'): Promise<void> {
