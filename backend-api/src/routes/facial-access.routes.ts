@@ -213,6 +213,66 @@ router.put('/readers/:readerId', adminMiddleware, async (req: Request, res: Resp
   }
 });
 
+// ── POST /api/facial-access/devices/:id/sync-persons (admin only) ─────────
+// Sincroniza todas as pessoas relevantes (áreas ↔ portas) com o equipamento.
+router.post('/devices/:id/sync-persons', adminMiddleware, async (req: Request, res: Response): Promise<void> => {
+  try {
+    const results = await FacialAccessService.syncAllToDevice(req.params.id);
+    res.json({ success: true, results });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── POST /api/facial-access/persons/:personId/sync ────────────────────────
+// Sincroniza um morador (cadastro + face + portas) com todos os equipamentos.
+router.post('/persons/:personId/sync', async (req: Request, res: Response): Promise<void> => {
+  try {
+    const results = await FacialAccessService.syncPersonEverywhere(req.params.personId);
+    res.json({ success: true, results });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── POST /api/facial-access/doors/:doorId/control ─────────────────────────
+// Aciona a porta remotamente: { cmd: "open" | "close" | "alwaysOpen" | "alwaysClose" }
+router.post('/doors/:doorId/control', async (req: Request, res: Response): Promise<void> => {
+  try {
+    const cmd = req.body?.cmd ?? 'open';
+    if (!['open', 'close', 'alwaysOpen', 'alwaysClose'].includes(cmd)) {
+      res.status(400).json({ error: 'cmd deve ser open, close, alwaysOpen ou alwaysClose' });
+      return;
+    }
+    const door = await prisma.facialAccessDoor.findUnique({ where: { id: req.params.doorId } });
+    if (!door) { res.status(404).json({ error: 'Porta não encontrada' }); return; }
+    await FacialAccessService.controlDoor(door.deviceId, door.doorNo, cmd);
+    res.json({ success: true });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── POST /api/facial-access/devices/:id/import-events (admin only) ────────
+// Importa o histórico de eventos do equipamento (job em segundo plano, idempotente).
+router.post('/devices/:id/import-events', adminMiddleware, async (req: Request, res: Response): Promise<void> => {
+  try {
+    const device = await prisma.facialAccessDevice.findUnique({ where: { id: req.params.id } });
+    if (!device) { res.status(404).json({ error: 'Dispositivo não encontrado' }); return; }
+    const progress = FacialAccessService.startImportEvents(device.id);
+    res.status(202).json({ success: true, progress });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── GET /api/facial-access/devices/:id/import-events ──────────────────────
+router.get('/devices/:id/import-events', async (req: Request, res: Response): Promise<void> => {
+  const progress = FacialAccessService.importJobs.get(req.params.id);
+  if (!progress) { res.status(404).json({ error: 'Nenhuma importação iniciada para este dispositivo' }); return; }
+  res.json({ progress });
+});
+
 // ── DELETE /api/facial-access/readers/:readerId (admin only) ──────────────
 router.delete('/readers/:readerId', adminMiddleware, async (req: Request, res: Response): Promise<void> => {
   try {

@@ -9,6 +9,7 @@ import {
 import { guaritaEventServer } from './services/NiceGuaritaProtocol';
 import { NiceGuaritaService, setPassbackBroadcast } from './services/NiceGuaritaService';
 import { broadcastPassbackAlert } from './routes/guarita-passback.routes';
+import { facialAccessEventWatcher } from './services/FacialAccessEventWatcher';
 
 const port = process.env.PORT || 3001;
 
@@ -33,6 +34,15 @@ app.listen(Number(port), '0.0.0.0', () => {
     guaritaEventServer.on('server_error', (err: Error) => {
         console.error('[NiceGuarita] Event server error:', err.message);
     });
+    // ─────────────────────────────────────────────────────────────────────
+
+    // ── Terminais/controladoras faciais Hikvision: alertStream por device ─
+    void facialAccessEventWatcher.sync().catch((err: any) =>
+        console.error('[FacialAccess] Falha ao iniciar event watchers:', err?.message || err));
+    setInterval(() => {
+        void facialAccessEventWatcher.sync().catch((err: any) =>
+            console.error('[FacialAccess] Falha ao reconciliar event watchers:', err?.message || err));
+    }, 60_000);
     // ─────────────────────────────────────────────────────────────────────
 
     if (SESSION_AUDIT_PRUNE_INTERVAL_MINUTES === 0) {

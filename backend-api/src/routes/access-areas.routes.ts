@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { prisma } from '../database';
 import { authMiddleware } from '../middleware/auth';
+import { FacialAccessService } from '../services/FacialAccessService';
 
 const router = Router();
 router.use(authMiddleware);
@@ -115,6 +116,10 @@ router.put('/resident/:personId', async (req: Request, res: Response) => {
             ),
         ]);
 
+        // Best-effort: reflete o novo nível de acesso nos terminais faciais
+        void FacialAccessService.syncPersonEverywhere(person.id).catch((err: any) =>
+            console.warn(`[FacialAccess] Re-sync do morador ${person.id} falhou:`, err?.message || err));
+
         res.json({ success: true, areaIds });
     } catch (error: any) {
         res.status(500).json({ error: error.message });
@@ -145,6 +150,11 @@ router.put('/:id/doors', async (req: Request, res: Response) => {
         const area = await prisma.accessArea.findUnique({ where: { id } });
         if (!area) return res.status(404).json({ error: 'Área não encontrada' });
 
+        const affectedDoors = await prisma.facialAccessDoor.findMany({
+            where: { OR: [{ id: { in: doorIds } }, { areas: { some: { areaId: id } } }] },
+            select: { deviceId: true },
+        });
+
         await prisma.$transaction([
             prisma.accessAreaDoor.deleteMany({ where: { areaId: id } }),
             ...doorIds.map(doorId =>
@@ -153,6 +163,15 @@ router.put('/:id/doors', async (req: Request, res: Response) => {
                 })
             ),
         ]);
+
+        // Best-effort: re-sincroniza os equipamentos cujas portas entraram/saíram do nível
+        const affectedDeviceIds = [...new Set(affectedDoors.map(d => d.deviceId))];
+        void (async () => {
+            for (const deviceId of affectedDeviceIds) {
+                await FacialAccessService.syncAllToDevice(deviceId).catch((err: any) =>
+                    console.warn(`[FacialAccess] Re-sync do dispositivo ${deviceId} falhou:`, err?.message || err));
+            }
+        })();
 
         res.json({ success: true, doorIds });
     } catch (error: any) {

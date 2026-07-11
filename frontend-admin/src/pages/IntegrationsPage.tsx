@@ -135,6 +135,8 @@ export default function IntegrationsPage() {
   const [facialTesting, setFacialTesting] = useState(false);
   const [facialTestResult, setFacialTestResult] = useState<boolean | null>(null);
   const [expandedFacialId, setExpandedFacialId] = useState<string | null>(null);
+  const [facialSyncBusy, setFacialSyncBusy] = useState<string | null>(null);
+  const [facialActionMsg, setFacialActionMsg] = useState<Record<string, string>>({});
   const [newDoor, setNewDoor] = useState({ doorNo: '', name: '', actuatorType: 'door', direction: '' });
   const [newReader, setNewReader] = useState<Record<string, { readerNo: string; type: string; wiring: string; busAddress: string }>>({});
 
@@ -514,6 +516,52 @@ export default function IntegrationsPage() {
   async function removeReader(readerId: string) {
     await apiFetch(`/facial-access/readers/${readerId}`, { method: 'DELETE' });
     await loadFacialDevices();
+  }
+
+  async function syncFacialPersons(deviceId: string) {
+    setFacialSyncBusy(deviceId);
+    setFacialActionMsg(prev => ({ ...prev, [deviceId]: '' }));
+    try {
+      const data = await apiFetch<any>(`/facial-access/devices/${deviceId}/sync-persons`, { method: 'POST' });
+      const results: any[] = data.results ?? [];
+      const enrolled = results.filter(r => r.action === 'enrolled').length;
+      const removed = results.filter(r => r.action === 'removed').length;
+      const noPhoto = results.filter(r => r.faceStatus === 'no_photo').length;
+      const errors = results.filter(r => r.action === 'error' || r.faceStatus === 'modeling_failed' || r.faceStatus === 'error');
+      let msg = `${enrolled} morador(es) sincronizado(s), ${removed} removido(s)`;
+      if (noPhoto > 0) msg += `, ${noPhoto} sem foto (facial não funcionará até enviar a foto)`;
+      if (errors.length > 0) msg += ` — ${errors.length} erro(s): ${errors.map(e => `${e.personName || e.personId}: ${e.detail || 'erro'}`).join('; ')}`;
+      setFacialActionMsg(prev => ({ ...prev, [deviceId]: msg }));
+    } catch (err: any) {
+      setFacialActionMsg(prev => ({ ...prev, [deviceId]: err.message || 'Erro na sincronização' }));
+    } finally { setFacialSyncBusy(null); }
+  }
+
+  async function importFacialEvents(deviceId: string) {
+    setFacialActionMsg(prev => ({ ...prev, [deviceId]: 'Importando histórico…' }));
+    try {
+      await apiFetch(`/facial-access/devices/${deviceId}/import-events`, { method: 'POST' });
+      const poll = async () => {
+        try {
+          const data = await apiFetch<any>(`/facial-access/devices/${deviceId}/import-events`);
+          const p = data.progress;
+          if (p?.running) {
+            setFacialActionMsg(prev => ({ ...prev, [deviceId]: `Importando… ${p.processed}${p.total ? `/${p.total}` : ''} eventos lidos` }));
+            setTimeout(poll, 1500);
+          } else {
+            setFacialActionMsg(prev => ({
+              ...prev,
+              [deviceId]: p?.error
+                ? `Importação falhou: ${p.error}`
+                : `Importação concluída: ${p?.imported ?? 0} evento(s) novo(s) de ${p?.processed ?? 0} lidos`,
+            }));
+          }
+        } catch { /* servidor pode ter reiniciado — para de acompanhar */ }
+      };
+      setTimeout(poll, 1000);
+    } catch (err: any) {
+      setFacialActionMsg(prev => ({ ...prev, [deviceId]: err.message || 'Erro ao importar histórico' }));
+    }
   }
 
   // ── Discovery ─────────────────────────────────────────────────────────────
@@ -1132,6 +1180,21 @@ export default function IntegrationsPage() {
                           <button onClick={() => addDoor(device.id)} className="btn btn-primary" style={{ padding: '6px 12px', fontSize: '0.8rem', minWidth: 'auto', display: 'flex', alignItems: 'center', gap: 4 }}>
                             <Plus size={13} /> Adicionar porta
                           </button>
+                        </div>
+
+                        <div style={{ marginTop: 14, paddingTop: 12, borderTop: '1px solid var(--border-primary)' }}>
+                          <p style={{ margin: '0 0 8px', fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-muted)' }}>Sincronização com o equipamento</p>
+                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
+                            <button onClick={() => syncFacialPersons(device.id)} disabled={facialSyncBusy === device.id} className="btn btn-secondary" style={{ padding: '6px 12px', fontSize: '0.8rem', minWidth: 'auto', display: 'flex', alignItems: 'center', gap: 6 }}>
+                              {facialSyncBusy === device.id ? <Loader2 size={13} className="animate-spin" /> : <RefreshCw size={13} />} Sincronizar moradores
+                            </button>
+                            <button onClick={() => importFacialEvents(device.id)} className="btn btn-secondary" style={{ padding: '6px 12px', fontSize: '0.8rem', minWidth: 'auto' }}>
+                              Importar histórico de eventos
+                            </button>
+                          </div>
+                          {facialActionMsg[device.id] && (
+                            <p style={{ margin: '8px 0 0', fontSize: '0.78rem', color: 'var(--text-muted)' }}>{facialActionMsg[device.id]}</p>
+                          )}
                         </div>
                       </div>
                     )}

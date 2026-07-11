@@ -4,6 +4,7 @@ import dotenv from 'dotenv';
 import { Prisma, PrismaClient } from '@prisma/client';
 import { HikCentralService } from './services/HikCentralService';
 import { NiceGuaritaService } from './services/NiceGuaritaService';
+import { FacialAccessService } from './services/FacialAccessService';
 import { EntityMappingService } from './services/EntityMappingService';
 import { DeviceStatusService } from './services/DeviceStatusService';
 import { HikCentralSyncService } from './services/HikCentralSyncService';
@@ -874,6 +875,13 @@ app.patch('/api/residents/:id', authMiddleware, async (req, res) => {
             }
         }
 
+        // 5. Re-sincronizar terminais faciais quando foto ou nome mudam
+        // (o vínculo de áreas dispara o próprio re-sync em access-areas.routes.ts)
+        if (body.photo_url !== undefined || body.full_name !== undefined) {
+            void FacialAccessService.syncPersonEverywhere(person.id).catch((err: any) =>
+                console.warn(`[FacialAccess] Re-sync do morador ${person.id} falhou:`, err?.message || err));
+        }
+
         res.json({
             success: true,
             id: person.id,
@@ -901,17 +909,34 @@ app.patch('/api/residents/:id', authMiddleware, async (req, res) => {
 app.delete('/api/residents/:id', authMiddleware, async (req, res) => {
     try {
         const { id } = req.params;
+        let deletedCardNo: string | null = null;
         try {
+            const target = await prisma.person.findUnique({ where: { id }, select: { facialAccessCardNo: true } });
+            deletedCardNo = target?.facialAccessCardNo ?? null;
             await prisma.person.delete({ where: { id } });
         } catch (uuidErr: any) {
             if (uuidErr?.code === 'P2025' || uuidErr?.code === 'P2023') {
                 const existing = await prisma.person.findFirst({ where: { hikPersonId: id } });
                 if (!existing) return res.status(404).json({ error: 'Morador não encontrado' });
+                deletedCardNo = existing.facialAccessCardNo ?? null;
                 await prisma.person.delete({ where: { id: existing.id } });
             } else {
                 throw uuidErr;
             }
         }
+
+        // Best-effort: remove o cadastro (pessoa + face) dos terminais faciais
+        if (deletedCardNo) {
+            const cardNo = deletedCardNo;
+            void (async () => {
+                const devices = await prisma.facialAccessDevice.findMany({ where: { enabled: true } });
+                for (const device of devices) {
+                    await FacialAccessService.deletePersonFromDevice(device, cardNo).catch((err: any) =>
+                        console.warn(`[FacialAccess] Falha ao remover ${cardNo} de ${device.name}:`, err?.message || err));
+                }
+            })();
+        }
+
         res.status(204).send();
     } catch (error: any) {
         res.status(500).json({ error: error.message });
