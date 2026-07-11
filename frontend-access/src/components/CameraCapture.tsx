@@ -19,16 +19,33 @@ interface CameraCaptureProps {
 }
 
 interface CameraDevice { id: string; name: string; }
-interface DoorbellDevice { id: string; name: string; location?: string; }
+interface CaptureDevice {
+  key: string; // `${source}:${id}` — único entre videoporteiros e terminais faciais
+  id: string;
+  name: string;
+  location?: string;
+  source: 'doorbell' | 'facial';
+}
 
 const API_BASE = (typeof window !== 'undefined' ? window.location.origin : '') + '/api';
+
+const SOURCE_LABEL: Record<CaptureDevice['source'], string> = {
+  doorbell: 'Videoporteiro',
+  facial: 'Terminal Facial',
+};
+
+function deviceBasePath(device: CaptureDevice) {
+  return device.source === 'facial'
+    ? `${API_BASE}/facial-access/devices/${device.id}`
+    : `${API_BASE}/doorbell/devices/${device.id}`;
+}
 
 function getToken() {
   return localStorage.getItem('token') || localStorage.getItem('auth_token') || '';
 }
 
-function mjpegUrl(deviceId: string) {
-  return `${API_BASE}/doorbell/devices/${deviceId}/stream?token=${encodeURIComponent(getToken())}`;
+function mjpegUrl(device: CaptureDevice) {
+  return `${deviceBasePath(device)}/stream?token=${encodeURIComponent(getToken())}`;
 }
 
 export function CameraCapture({
@@ -55,8 +72,8 @@ export function CameraCapture({
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
 
-  // ── Doorbell state ────────────────────────────────────────────────────────
-  const [doorbells, setDoorbells] = useState<DoorbellDevice[]>([]);
+  // ── Doorbell state (videoporteiros + terminais faciais) ──────────────────
+  const [doorbells, setDoorbells] = useState<CaptureDevice[]>([]);
   const [selectedDoorbell, setSelectedDoorbell] = useState('');
   const [doorbellOnline, setDoorbellOnline] = useState<boolean | null>(null);
   const [doorbellError, setDoorbellError] = useState<string | null>(null);
@@ -113,23 +130,37 @@ export function CameraCapture({
     setDoorbellLoading(true);
     setDoorbellError(null);
     try {
-      const res = await authRequest<any>('/doorbell/devices');
-      const list: DoorbellDevice[] = res.devices || [];
+      const [doorbellList, facialList] = await Promise.all([
+        authRequest<any>('/doorbell/devices')
+          .then((res) => (res.devices || []).map((d: any): CaptureDevice => ({
+            key: `doorbell:${d.id}`, id: d.id, name: d.name, location: d.location, source: 'doorbell',
+          })))
+          .catch(() => [] as CaptureDevice[]),
+        authRequest<any>('/facial-access/devices')
+          .then((res) => (res.devices || [])
+            .filter((d: any) => d.enabled !== false)
+            .map((d: any): CaptureDevice => ({
+              key: `facial:${d.id}`, id: d.id, name: d.name, location: d.location, source: 'facial',
+            })))
+          .catch(() => [] as CaptureDevice[]),
+      ]);
+      const list = [...doorbellList, ...facialList];
       setDoorbells(list);
-      if (list.length > 0 && !selectedDoorbell) setSelectedDoorbell(list[0].id);
-      if (list.length === 0) setDoorbellError('Nenhum videoporteiro configurado.');
+      if (list.length > 0 && !selectedDoorbell) setSelectedDoorbell(list[0].key);
+      if (list.length === 0) setDoorbellError('Nenhum dispositivo configurado.');
     } catch {
-      setDoorbellError('Erro ao carregar videoporteiros.');
+      setDoorbellError('Erro ao carregar dispositivos.');
     } finally {
       setDoorbellLoading(false);
     }
   };
 
-  const startMjpeg = (deviceId: string) => {
+  const startMjpeg = (deviceKey: string) => {
     const img = mjpegImgRef.current;
-    if (!img) return;
+    const device = doorbells.find((d) => d.key === deviceKey);
+    if (!img || !device) return;
     setDoorbellOnline(null);
-    img.src = mjpegUrl(deviceId);
+    img.src = mjpegUrl(device);
   };
 
   const stopMjpeg = () => {
@@ -187,7 +218,9 @@ export function CameraCapture({
       } else {
         // Capture current frame from MJPEG <img>
         // Fetch the current snapshot directly (avoids crossOrigin taint from live stream)
-        const res = await fetch(`${API_BASE}/doorbell/devices/${selectedDoorbell}/snapshot`, {
+        const device = doorbells.find((d) => d.key === selectedDoorbell);
+        if (!device) throw new Error('Dispositivo não selecionado');
+        const res = await fetch(`${deviceBasePath(device)}/snapshot`, {
           headers: { Authorization: `Bearer ${getToken()}` },
           signal: AbortSignal.timeout(6000),
         });
@@ -213,7 +246,7 @@ export function CameraCapture({
       setTimeout(() => onOpenChange(false), 300);
     } catch (err: any) {
       if (source === 'webcam') setWebcamError(err.message || 'Erro ao capturar.');
-      else setDoorbellError(err.message || 'Erro ao capturar frame do videoporteiro.');
+      else setDoorbellError(err.message || 'Erro ao capturar frame do dispositivo.');
     } finally {
       setCapturing(false);
     }
@@ -321,8 +354,8 @@ export function CameraCapture({
                         <SelectTrigger><SelectValue placeholder="Selecione o equipamento" /></SelectTrigger>
                         <SelectContent>
                           {doorbells.map(d => (
-                            <SelectItem key={d.id} value={d.id}>
-                              {d.name}{d.location ? ` — ${d.location}` : ''}
+                            <SelectItem key={d.key} value={d.key}>
+                              {SOURCE_LABEL[d.source]} — {d.name}{d.location ? ` (${d.location})` : ''}
                             </SelectItem>
                           ))}
                         </SelectContent>
@@ -338,15 +371,16 @@ export function CameraCapture({
                     {/* Hidden until online, avoids broken-image icon */}
                     <img
                       ref={mjpegImgRef}
-                      alt="stream videoporteiro"
+                      alt="stream do dispositivo"
                       className="w-full h-full object-contain"
                       style={{ display: doorbellOnline === false ? 'none' : 'block' }}
                       onLoad={() => setDoorbellOnline(true)}
                       onError={() => {
                         setDoorbellOnline(false);
                         setTimeout(() => {
-                          if (mjpegImgRef.current && selectedDoorbell)
-                            mjpegImgRef.current.src = mjpegUrl(selectedDoorbell);
+                          const device = doorbells.find((d) => d.key === selectedDoorbell);
+                          if (mjpegImgRef.current && device)
+                            mjpegImgRef.current.src = mjpegUrl(device);
                         }, 3000);
                       }}
                     />
@@ -354,7 +388,7 @@ export function CameraCapture({
                     {doorbellOnline === null && selectedDoorbell && (
                       <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-muted-foreground">
                         <Loader2 className="h-7 w-7 animate-spin" />
-                        <span className="text-xs">Conectando ao videoporteiro...</span>
+                        <span className="text-xs">Conectando ao dispositivo...</span>
                       </div>
                     )}
 
@@ -366,7 +400,7 @@ export function CameraCapture({
                     )}
 
                     {!selectedDoorbell && !doorbellLoading && doorbells.length === 0 && (
-                      <span className="text-xs text-muted-foreground">Nenhum videoporteiro configurado</span>
+                      <span className="text-xs text-muted-foreground">Nenhum dispositivo configurado</span>
                     )}
 
                     {doorbellOnline === true && (

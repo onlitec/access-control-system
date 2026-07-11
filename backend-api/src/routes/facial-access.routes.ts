@@ -2,9 +2,105 @@ import { Router, Request, Response } from 'express';
 import { PrismaClient } from '@prisma/client';
 import { FacialAccessService } from '../services/FacialAccessService';
 import { authMiddleware, adminMiddleware } from '../middleware/auth';
+import jwt from 'jsonwebtoken';
+import { config } from '../config/unifiedConfig';
+import { spawn, execFile } from 'child_process';
+import { promisify } from 'util';
+
+const execFileAsync = promisify(execFile);
 
 const router = Router();
 const prisma = new PrismaClient();
+
+/** Checks if ffmpeg is available in PATH */
+async function hasFfmpeg(): Promise<boolean> {
+  try { await execFileAsync('ffmpeg', ['-version']); return true; } catch { return false; }
+}
+const ffmpegAvailable = hasFfmpeg();
+
+// ── GET /api/facial-access/devices/:id/stream  (MJPEG — auth via ?token=) ──
+// Preview ao vivo da câmera do terminal para a captura de foto no painel do
+// operador. Mesmo desenho do stream do videoporteiro (doorbell.routes.ts):
+// registrado ANTES do authMiddleware porque <img src> não envia header —
+// o JWT vem por query param. RTSP → FFmpeg quando disponível; fallback para
+// polling de snapshots ISAPI.
+router.get('/devices/:id/stream', async (req: Request, res: Response): Promise<void> => {
+  const token = (req.query.token as string) || '';
+  if (!token) { res.status(401).end(); return; }
+  try { jwt.verify(token, config.JWT.SECRET); } catch { res.status(401).end(); return; }
+
+  const device = await prisma.facialAccessDevice.findUnique({ where: { id: req.params.id } }).catch(() => null);
+  if (!device || !device.enabled) { res.status(404).end(); return; }
+
+  if (await ffmpegAvailable) {
+    // ── RTSP path (low latency, H.264 → MJPEG via FFmpeg) ──────────────────
+    const pass = encodeURIComponent(device.password);
+    // Sub-stream (102) por padrão — validado no DS-K1T673 (640x480), latência
+    // bem menor que o main stream 101 (1280x720). Sobreponível por ?channel=.
+    const rawChannel = (req.query.channel as string) || process.env.FACIAL_STREAM_CHANNEL || '102';
+    const channel = /^\d{1,3}$/.test(rawChannel) ? rawChannel : '102';
+    const rtspUrl = `rtsp://${device.username}:${pass}@${device.ip}:554/Streaming/Channels/${channel}`;
+
+    res.setHeader('Content-Type', 'multipart/x-mixed-replace; boundary=ffmpeg');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('X-Accel-Buffering', 'no');
+
+    const proc = spawn('ffmpeg', [
+      '-loglevel',   'error',
+      '-fflags',     'nobuffer',
+      '-flags',      'low_delay',
+      '-probesize',  '65536',
+      '-analyzeduration', '0',
+      '-max_delay',  '0',
+      '-reorder_queue_size', '0',
+      '-use_wallclock_as_timestamps', '1',
+      '-rtsp_transport', 'tcp',
+      '-i',          rtspUrl,
+      '-an',
+      '-f',          'mpjpeg',
+      '-q:v',        '4',
+      '-vf',         'scale=w=min(iw\\,960):h=-2',
+      '-fps_mode',   'passthrough',
+      '-flush_packets', '1',
+      'pipe:1',
+    ]);
+
+    proc.stdout.pipe(res, { end: true });
+    proc.stderr.on('data', () => {});
+
+    const cleanup = () => { try { proc.kill('SIGTERM'); } catch {} };
+    req.on('close', cleanup);
+    req.on('error', cleanup);
+    proc.on('exit', () => { if (!res.writableEnded) res.end(); });
+    proc.on('error', () => { if (!res.writableEnded) res.end(); });
+    return;
+  }
+
+  // ── Fallback: ISAPI snapshot polling ────────────────────────────────────
+  const BOUNDARY = 'hikframe';
+  res.setHeader('Content-Type', `multipart/x-mixed-replace; boundary=${BOUNDARY}`);
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('X-Accel-Buffering', 'no');
+
+  let active = true;
+
+  const sendFrame = async () => {
+    if (!active || res.destroyed) return;
+    try {
+      const buf = await FacialAccessService.getSnapshot(req.params.id);
+      if (!active || res.destroyed) return;
+      res.write(`--${BOUNDARY}\r\nContent-Type: image/jpeg\r\nContent-Length: ${buf.length}\r\n\r\n`);
+      res.write(buf);
+      res.write('\r\n');
+    } catch { /* skip frame */ }
+  };
+
+  await sendFrame();
+  const timer = setInterval(sendFrame, 200); // 5 FPS fallback
+
+  req.on('close', () => { active = false; clearInterval(timer); });
+  req.on('error', () => { active = false; clearInterval(timer); });
+});
 
 router.use(authMiddleware);
 
