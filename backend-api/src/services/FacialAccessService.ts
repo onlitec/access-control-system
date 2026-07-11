@@ -367,6 +367,48 @@ export class FacialAccessService {
     return buffer;
   }
 
+  // ── Captura assistida de face no terminal ────────────────────────────────
+
+  /**
+   * Captura assistida (mesmo fluxo que o HikCentral usa): coloca o terminal em
+   * modo de cadastro — a tela do equipamento exibe o círculo de posicionamento —
+   * e o motor facial do próprio terminal captura uma foto com qualidade
+   * garantida para cadastro.
+   *
+   * Semântica validada no DS-K1T673DX (fw V3.18.0): cada POST em
+   * /ISAPI/AccessControl/CaptureFaceData mantém o modo captura ativo e retorna
+   * na hora — XML com <captureProgress>0</captureProgress> enquanto não há
+   * rosto; quando o terminal captura, a resposta vem multipart com o JPEG
+   * embutido. DELETE não é suportado (methodNotAllowed); o modo expira sozinho
+   * quando o polling cessa.
+   */
+  static async captureFaceFromTerminal(deviceId: string, timeoutMs = 45000): Promise<Buffer> {
+    const device = await this.getDevice(deviceId);
+    const url = `http://${device.ip}:${device.port}/ISAPI/AccessControl/CaptureFaceData`;
+    const cond =
+      '<CaptureFaceDataCond version="2.0" xmlns="http://www.isapi.org/ver20/XMLSchema">' +
+      '<captureInfrared>false</captureInfrared><dataType>binary</dataType></CaptureFaceDataCond>';
+
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      const res = await digestFetch(url, device.username, device.password, 'POST', cond, {
+        'Content-Type': 'application/xml',
+      }, { timeoutMs: 15000 });
+      const buf = Buffer.from(await res.arrayBuffer());
+
+      // Rosto capturado: multipart com JPEG binário (FF D8 ... FF D9)
+      const start = buf.indexOf(Buffer.from([0xff, 0xd8, 0xff]));
+      if (start !== -1) {
+        const end = buf.lastIndexOf(Buffer.from([0xff, 0xd9]));
+        if (end > start) return buf.subarray(start, end + 2);
+      }
+
+      // Sem rosto ainda (XML de progresso) — segue em modo captura
+      await new Promise((r) => setTimeout(r, 800));
+    }
+    throw new Error('Tempo esgotado — nenhum rosto foi capturado no terminal');
+  }
+
   // ── Acionamento remoto de porta ───────────────────────────────────────────
 
   static async controlDoor(deviceId: string, doorNo: number, cmd: 'open' | 'close' | 'alwaysOpen' | 'alwaysClose'): Promise<void> {

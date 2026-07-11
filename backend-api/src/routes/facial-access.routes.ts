@@ -322,6 +322,23 @@ router.get('/devices/:id/snapshot', async (req: Request, res: Response): Promise
   }
 });
 
+// ── POST /api/facial-access/devices/:id/capture-face ──────────────────────
+// Captura assistida: o terminal entra em modo de cadastro (círculo na tela)
+// e devolve a foto capturada pelo motor facial do equipamento.
+// Body opcional: { timeoutSec } (5–60, padrão 45).
+router.post('/devices/:id/capture-face', async (req: Request, res: Response): Promise<void> => {
+  try {
+    const timeoutSec = Math.min(60, Math.max(5, Number(req.body?.timeoutSec) || 45));
+    const buffer = await FacialAccessService.captureFaceFromTerminal(req.params.id, timeoutSec * 1000);
+    res.set('Content-Type', 'image/jpeg');
+    res.set('Content-Length', buffer.length.toString());
+    res.send(buffer);
+  } catch (err: any) {
+    const timeout = /Tempo esgotado/.test(err.message);
+    res.status(timeout ? 408 : 502).json({ error: err.message });
+  }
+});
+
 // ── POST /api/facial-access/devices/:id/sync-persons (admin only) ─────────
 // Sincroniza todas as pessoas relevantes (áreas ↔ portas) com o equipamento.
 router.post('/devices/:id/sync-persons', adminMiddleware, async (req: Request, res: Response): Promise<void> => {

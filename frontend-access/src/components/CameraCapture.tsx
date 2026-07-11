@@ -3,7 +3,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Label } from '@/components/ui/label';
-import { Camera as CameraIcon, Loader2, AlertCircle, Video } from 'lucide-react';
+import { Camera as CameraIcon, Loader2, AlertCircle, Video, ScanFace } from 'lucide-react';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { authRequest } from '@/services/authApi';
@@ -82,6 +82,51 @@ export function CameraCapture({
 
   // ── Capture state ─────────────────────────────────────────────────────────
   const [capturing, setCapturing] = useState(false);
+
+  // ── Captura assistida no terminal facial ─────────────────────────────────
+  // O terminal entra em modo de cadastro (círculo na tela do equipamento) e o
+  // motor facial dele captura a foto; o operador acompanha pelo preview com a
+  // máscara de posicionamento (mesmo fluxo do HikCentral).
+  const [assistedCapturing, setAssistedCapturing] = useState(false);
+  const assistedAbortRef = useRef<AbortController | null>(null);
+
+  const selectedDevice = doorbells.find((d) => d.key === selectedDoorbell);
+
+  const captureOnTerminal = async () => {
+    const device = selectedDevice;
+    if (!device || device.source !== 'facial') return;
+    setAssistedCapturing(true);
+    setDoorbellError(null);
+    const ctrl = new AbortController();
+    assistedAbortRef.current = ctrl;
+    try {
+      const res = await fetch(`${deviceBasePath(device)}/capture-face`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${getToken()}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ timeoutSec: 45 }),
+        signal: ctrl.signal,
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || `Falha na captura (${res.status})`);
+      }
+      const blob = await res.blob();
+      const dataUrl = await new Promise<string>((resolve) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result as string);
+        reader.readAsDataURL(blob);
+      });
+      onCapture(dataUrl);
+      setTimeout(() => onOpenChange(false), 300);
+    } catch (err: any) {
+      if (err?.name !== 'AbortError') {
+        setDoorbellError(err.message || 'Erro na captura assistida.');
+      }
+    } finally {
+      setAssistedCapturing(false);
+      assistedAbortRef.current = null;
+    }
+  };
 
   // ─────────────────────────────────────────────────────────────────────────
   // Webcam lifecycle
@@ -176,16 +221,18 @@ export function CameraCapture({
     if (!open) {
       stopWebcam();
       stopMjpeg();
+      assistedAbortRef.current?.abort();
       return;
     }
     if (source === 'webcam') {
       stopMjpeg();
+      assistedAbortRef.current?.abort();
       loadCameras();
     } else {
       stopWebcam();
       loadDoorbells();
     }
-    return () => { stopWebcam(); stopMjpeg(); };
+    return () => { stopWebcam(); stopMjpeg(); assistedAbortRef.current?.abort(); };
   }, [open, source]);
 
   useEffect(() => {
@@ -254,6 +301,7 @@ export function CameraCapture({
 
   const canCapture =
     !capturing &&
+    !assistedCapturing &&
     (source === 'webcam'
       ? !!selectedCamera && cameras.length > 0
       : !!selectedDoorbell && doorbellOnline === true);
@@ -409,6 +457,27 @@ export function CameraCapture({
                         AO VIVO
                       </div>
                     )}
+
+                    {/* Máscara de posicionamento durante a captura assistida */}
+                    {assistedCapturing && (
+                      <div className="absolute inset-0 pointer-events-none">
+                        <svg className="w-full h-full" viewBox="0 0 160 90" preserveAspectRatio="xMidYMid slice">
+                          <defs>
+                            <mask id="face-align-mask">
+                              <rect width="160" height="90" fill="white" />
+                              <ellipse cx="80" cy="45" rx="21" ry="30" fill="black" />
+                            </mask>
+                          </defs>
+                          <rect width="160" height="90" fill="rgba(0,0,0,0.55)" mask="url(#face-align-mask)" />
+                          <ellipse cx="80" cy="45" rx="21" ry="30" fill="none" stroke="#22c55e" strokeWidth="0.8" strokeDasharray="4 3" />
+                        </svg>
+                        <div className="absolute bottom-8 inset-x-0 text-center">
+                          <span className="bg-black/70 text-white text-xs px-3 py-1 rounded-full">
+                            Encaixe o rosto na máscara — o terminal captura sozinho
+                          </span>
+                        </div>
+                      </div>
+                    )}
                   </div>
 
                   {doorbellOnline === true && (
@@ -425,6 +494,19 @@ export function CameraCapture({
               <Button variant="outline" onClick={() => onOpenChange(false)} disabled={capturing}>
                 Cancelar
               </Button>
+              {source === 'doorbell' && selectedDevice?.source === 'facial' && (
+                <Button
+                  variant="secondary"
+                  onClick={assistedCapturing ? () => assistedAbortRef.current?.abort() : captureOnTerminal}
+                  disabled={capturing || doorbellOnline !== true}
+                >
+                  {assistedCapturing ? (
+                    <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Aguardando rosto... (cancelar)</>
+                  ) : (
+                    <><ScanFace className="mr-2 h-4 w-4" />Capturar no Terminal</>
+                  )}
+                </Button>
+              )}
               <Button onClick={captureImage} disabled={!canCapture}>
                 {capturing ? (
                   <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Capturando...</>
