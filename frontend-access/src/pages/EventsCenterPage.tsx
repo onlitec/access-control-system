@@ -18,7 +18,7 @@ export default function EventsCenterPage() {
         </div>
       </div>
 
-      <EventFeed pageSize={50} />
+      <EventFeed pageSize={50} showDateFilters />
     </div>
   );
 }

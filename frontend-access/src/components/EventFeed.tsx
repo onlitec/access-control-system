@@ -111,8 +111,15 @@ interface EventFeedProps {
   maxItems?: number;       // limite de itens mantidos na lista (tempo real)
   showFilters?: boolean;
   showSearch?: boolean;
+  showDateFilters?: boolean; // filtros por ano, data e faixa de horário
   className?: string;
   onSeeAllHref?: string;   // link "Ver todos os eventos" (para o feed embutido)
+}
+
+/** Data local de hoje em YYYY-MM-DD (sem cair no fuso UTC do toISOString) */
+function localToday(): string {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
 export function EventFeed({
@@ -120,6 +127,7 @@ export function EventFeed({
   maxItems = 200,
   showFilters = true,
   showSearch = true,
+  showDateFilters = false,
   className = '',
   onSeeAllHref
 }: EventFeedProps) {
@@ -131,8 +139,33 @@ export function EventFeed({
   const [debouncedSearch, setDebouncedSearch] = useState('');
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
+  const [year, setYear] = useState('');
+  const [date, setDate] = useState('');
+  const [timeFrom, setTimeFrom] = useState('');
+  const [timeTo, setTimeTo] = useState('');
   const filterRef = useRef(filter);
   filterRef.current = filter;
+
+  // Faixa [início, fim] derivada dos filtros de ano/data/horário:
+  //  - data escolhida → aquele dia (recortado pela faixa de horário, se houver)
+  //  - só horário → hoje, naquela faixa
+  //  - só ano → o ano inteiro
+  const dateRange = useMemo((): { start?: Date; end?: Date } => {
+    if (date || timeFrom || timeTo) {
+      const day = date || localToday();
+      return {
+        start: new Date(`${day}T${timeFrom || '00:00'}:00`),
+        end: new Date(`${day}T${timeTo || '23:59'}:59.999`),
+      };
+    }
+    if (year) {
+      const y = Number(year);
+      return { start: new Date(y, 0, 1), end: new Date(y, 11, 31, 23, 59, 59, 999) };
+    }
+    return {};
+  }, [year, date, timeFrom, timeTo]);
+  const dateRangeRef = useRef(dateRange);
+  dateRangeRef.current = dateRange;
 
   useEffect(() => {
     const t = setTimeout(() => setDebouncedSearch(search), 350);
@@ -144,6 +177,9 @@ export function EventFeed({
       if (append) setLoadingMore(true); else setLoading(true);
       const filters: any = { ...filterToParams(filterRef.current) };
       if (debouncedSearch) filters.q = debouncedSearch;
+      const range = dateRangeRef.current;
+      if (range.start) filters.startDate = range.start.toISOString();
+      if (range.end) filters.endDate = range.end.toISOString();
       const result = await getAccessEvents(targetPage, pageSize, filters);
       setTotalPages(result.totalPages || 1);
       setEvents(prev => append ? [...prev, ...(result.data || [])] : (result.data || []));
@@ -158,18 +194,34 @@ export function EventFeed({
   useEffect(() => {
     setPage(1);
     load(1, false);
-  }, [filter, debouncedSearch, load]);
+  }, [filter, debouncedSearch, dateRange, load]);
 
   // Tempo real: prepend de eventos novos que casam com o filtro ativo
   useEventStream(useCallback((event: SystemEvent) => {
     if (!eventMatchesFilter(event, filterRef.current)) return;
+    const range = dateRangeRef.current;
+    const at = new Date(event.occurredAt);
+    if (range.start && at < range.start) return;
+    if (range.end && at > range.end) return;
     setEvents(prev => {
       if (prev.some(e => e.id === event.id)) return prev;
       return [event, ...prev].slice(0, maxItems);
     });
   }, [maxItems]));
 
-  const visibleEvents = useMemo(() => events, [events]);
+  // Sempre do mais recente para o mais antigo, mesmo misturando página + tempo real
+  const visibleEvents = useMemo(
+    () => [...events].sort((a, b) => new Date(b.occurredAt).getTime() - new Date(a.occurredAt).getTime()),
+    [events]
+  );
+
+  const yearOptions = useMemo(() => {
+    const current = new Date().getFullYear();
+    const list: string[] = [];
+    for (let y = current; y >= 2024; y--) list.push(String(y));
+    return list;
+  }, []);
+  const hasDateFilter = !!(year || date || timeFrom || timeTo);
 
   return (
     <div className={className}>
@@ -202,6 +254,58 @@ export function EventFeed({
                 onChange={(e) => setSearch(e.target.value)}
                 className="pl-9 h-10 bg-zinc-50 border-zinc-200 rounded-xl shadow-none focus:bg-white transition-all"
               />
+            </div>
+          )}
+          {showDateFilters && (
+            <div className="flex flex-wrap items-end gap-3">
+              <div className="space-y-1">
+                <label className="text-[11px] font-semibold text-zinc-500 uppercase tracking-wider block">Ano</label>
+                <select
+                  value={year}
+                  onChange={(e) => { setYear(e.target.value); if (e.target.value) setDate(''); }}
+                  className="h-10 px-3 bg-zinc-50 border border-zinc-200 rounded-xl text-sm text-zinc-700 focus:bg-white transition-all"
+                >
+                  <option value="">Todos</option>
+                  {yearOptions.map(y => <option key={y} value={y}>{y}</option>)}
+                </select>
+              </div>
+              <div className="space-y-1">
+                <label className="text-[11px] font-semibold text-zinc-500 uppercase tracking-wider block">Data</label>
+                <Input
+                  type="date"
+                  value={date}
+                  onChange={(e) => { setDate(e.target.value); if (e.target.value) setYear(''); }}
+                  className="h-10 w-40 bg-zinc-50 border-zinc-200 rounded-xl"
+                />
+              </div>
+              <div className="space-y-1">
+                <label className="text-[11px] font-semibold text-zinc-500 uppercase tracking-wider block">Das</label>
+                <Input
+                  type="time"
+                  value={timeFrom}
+                  onChange={(e) => setTimeFrom(e.target.value)}
+                  className="h-10 w-28 bg-zinc-50 border-zinc-200 rounded-xl"
+                />
+              </div>
+              <div className="space-y-1">
+                <label className="text-[11px] font-semibold text-zinc-500 uppercase tracking-wider block">Até</label>
+                <Input
+                  type="time"
+                  value={timeTo}
+                  onChange={(e) => setTimeTo(e.target.value)}
+                  className="h-10 w-28 bg-zinc-50 border-zinc-200 rounded-xl"
+                />
+              </div>
+              {hasDateFilter && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => { setYear(''); setDate(''); setTimeFrom(''); setTimeTo(''); }}
+                  className="h-10 text-zinc-500 font-semibold"
+                >
+                  Limpar período
+                </Button>
+              )}
             </div>
           )}
         </div>

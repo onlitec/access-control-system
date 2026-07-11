@@ -36,7 +36,9 @@ import {
   Shield,
   ShieldCheck,
   LogOut,
-  UserCog
+  UserCog,
+  Camera,
+  Film
 } from 'lucide-react';
 
 interface AppLayoutProps {
@@ -63,6 +65,13 @@ const menuSections = [
     title: 'Operações',
     items: [
       { title: 'Entregas', icon: Package, path: '/entregas' }
+    ]
+  },
+  {
+    title: 'Câmeras',
+    items: [
+      { title: 'Câmeras ao Vivo', icon: Camera, path: '/cameras' },
+      { title: 'Gravações', icon: Film, path: '/gravacoes' }
     ]
   },
   {

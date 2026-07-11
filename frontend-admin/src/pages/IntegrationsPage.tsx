@@ -4,6 +4,7 @@ import {
   Settings2, Plus, Trash2, Wifi, WifiOff, DoorOpen, Camera, Save,
   Loader2, CheckCircle, AlertTriangle, X, Eye, EyeOff,
   CheckCircle2, RefreshCw, Search, Signal, SignalZero, Clock,
+  ScanFace, ChevronDown, ChevronUp,
 } from 'lucide-react';
 
 // ── Types ──────────────────────────────────────────────────────────────────
@@ -42,6 +43,35 @@ interface DiscoveredGuarita {
   ip: string;
   deviceCount: number | null;
   clock: string | null;
+}
+
+interface FacialReader {
+  id: string;
+  readerNo: number;
+  type: string;
+  wiring: string;
+  busAddress?: number | null;
+}
+
+interface FacialDoor {
+  id: string;
+  doorNo: number;
+  name: string;
+  actuatorType: string;
+  direction?: string | null;
+  readers: FacialReader[];
+}
+
+interface FacialDevice {
+  id: string;
+  name: string;
+  role: string;
+  ip: string;
+  port: number;
+  location?: string | null;
+  enabled: boolean;
+  doors: FacialDoor[];
+  _pingStatus?: 'checking' | 'online' | 'offline';
 }
 
 interface HikConfig {
@@ -96,12 +126,25 @@ export default function IntegrationsPage() {
   const [discoveryResults, setDiscoveryResults] = useState<DiscoveredGuarita[]>([]);
   const [discoveryDone, setDiscoveryDone] = useState(false);
 
+  // Facial Access (Hikvision — terminais standalone e controladoras)
+  const [facialDevices, setFacialDevices] = useState<FacialDevice[]>([]);
+  const [facialLoading, setFacialLoading] = useState(true);
+  const [newFacial, setNewFacial] = useState({ name: '', role: 'standalone_terminal', ip: '', port: '80', username: 'admin', password: '', location: '' });
+  const [showFacialForm, setShowFacialForm] = useState(false);
+  const [facialSaving, setFacialSaving] = useState(false);
+  const [facialTesting, setFacialTesting] = useState(false);
+  const [facialTestResult, setFacialTestResult] = useState<boolean | null>(null);
+  const [expandedFacialId, setExpandedFacialId] = useState<string | null>(null);
+  const [newDoor, setNewDoor] = useState({ doorNo: '', name: '', actuatorType: 'door', direction: '' });
+  const [newReader, setNewReader] = useState<Record<string, { readerNo: string; type: string; wiring: string; busAddress: string }>>({});
+
   useEffect(() => {
     loadHikConfig();
     loadDoorbells();
     loadGuarita();
     loadApbSettings();
     detectSubnet();
+    loadFacialDevices();
   }, []);
 
   async function detectSubnet() {
@@ -355,6 +398,122 @@ export default function IntegrationsPage() {
   async function resetPassbackState(personId: string) {
     await apiFetch(`/guarita/passback/state/${personId}`, { method: 'DELETE' });
     setApbStates(prev => prev.filter(s => s.personId !== personId));
+  }
+
+  // ── Facial Access ─────────────────────────────────────────────────────────
+
+  async function loadFacialDevices() {
+    try {
+      const data = await apiFetch<any>('/facial-access/devices');
+      const devices: FacialDevice[] = data.devices ?? [];
+      setFacialDevices(devices.map(d => ({ ...d, _pingStatus: 'checking' })));
+      setFacialLoading(false);
+      devices.forEach(d => pingFacialDevice(d.id));
+    } catch { setFacialDevices([]); setFacialLoading(false); }
+  }
+
+  async function pingFacialDevice(id: string) {
+    try {
+      const data = await apiFetch<any>(`/facial-access/devices/${id}/ping`);
+      setFacialDevices(prev => prev.map(d => d.id === id ? { ...d, _pingStatus: data.online ? 'online' : 'offline' } : d));
+    } catch {
+      setFacialDevices(prev => prev.map(d => d.id === id ? { ...d, _pingStatus: 'offline' } : d));
+    }
+  }
+
+  async function testFacialConnection() {
+    if (!newFacial.ip || !newFacial.username || !newFacial.password) return;
+    setFacialTesting(true); setFacialTestResult(null);
+    try {
+      const data = await apiFetch<any>('/facial-access/test', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ip: newFacial.ip, port: parseInt(newFacial.port) || 80, username: newFacial.username, password: newFacial.password }),
+      });
+      setFacialTestResult(data.reachable ?? false);
+    } catch { setFacialTestResult(false); }
+    finally { setFacialTesting(false); }
+  }
+
+  async function addFacialDevice() {
+    if (!newFacial.name || !newFacial.ip || !newFacial.username || !newFacial.password) return;
+    setFacialSaving(true);
+    try {
+      await apiFetch('/facial-access/devices', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: newFacial.name, role: newFacial.role, ip: newFacial.ip,
+          port: parseInt(newFacial.port) || 80, username: newFacial.username, password: newFacial.password,
+          location: newFacial.location || undefined,
+        }),
+      });
+      setNewFacial({ name: '', role: 'standalone_terminal', ip: '', port: '80', username: 'admin', password: '', location: '' });
+      setShowFacialForm(false); setFacialTestResult(null);
+      await loadFacialDevices();
+    } catch (err: any) { alert(err.message || 'Erro ao adicionar dispositivo facial.'); }
+    finally { setFacialSaving(false); }
+  }
+
+  async function removeFacialDevice(id: string) {
+    if (!confirm('Deseja realmente remover este dispositivo facial e todas as suas portas/leitores?')) return;
+    await apiFetch(`/facial-access/devices/${id}`, { method: 'DELETE' });
+    if (expandedFacialId === id) setExpandedFacialId(null);
+    await loadFacialDevices();
+  }
+
+  async function toggleFacialDevice(device: FacialDevice) {
+    await apiFetch(`/facial-access/devices/${device.id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ enabled: !device.enabled }),
+    });
+    await loadFacialDevices();
+  }
+
+  async function addDoor(deviceId: string) {
+    if (!newDoor.name || newDoor.doorNo === '') return;
+    try {
+      await apiFetch(`/facial-access/devices/${deviceId}/doors`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ doorNo: parseInt(newDoor.doorNo), name: newDoor.name, actuatorType: newDoor.actuatorType, direction: newDoor.direction || undefined }),
+      });
+      setNewDoor({ doorNo: '', name: '', actuatorType: 'door', direction: '' });
+      await loadFacialDevices();
+    } catch (err: any) { alert(err.message || 'Erro ao adicionar porta.'); }
+  }
+
+  async function removeDoor(doorId: string) {
+    if (!confirm('Remover esta porta e seus leitores?')) return;
+    await apiFetch(`/facial-access/doors/${doorId}`, { method: 'DELETE' });
+    await loadFacialDevices();
+  }
+
+  function readerForm(doorId: string) {
+    return newReader[doorId] ?? { readerNo: '', type: 'face', wiring: 'rs485', busAddress: '' };
+  }
+
+  async function addReader(doorId: string) {
+    const form = readerForm(doorId);
+    if (form.readerNo === '') return;
+    try {
+      await apiFetch(`/facial-access/doors/${doorId}/readers`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          readerNo: parseInt(form.readerNo), type: form.type, wiring: form.wiring,
+          busAddress: form.wiring === 'rs485' && form.busAddress ? parseInt(form.busAddress) : undefined,
+        }),
+      });
+      setNewReader(prev => ({ ...prev, [doorId]: { readerNo: '', type: 'face', wiring: 'rs485', busAddress: '' } }));
+      await loadFacialDevices();
+    } catch (err: any) { alert(err.message || 'Erro ao adicionar leitor.'); }
+  }
+
+  async function removeReader(readerId: string) {
+    await apiFetch(`/facial-access/readers/${readerId}`, { method: 'DELETE' });
+    await loadFacialDevices();
   }
 
   // ── Discovery ─────────────────────────────────────────────────────────────
@@ -805,6 +964,182 @@ export default function IntegrationsPage() {
             )}
           </div>
 
+        </div>
+
+        {/* 4. FACIAL ACCESS (Hikvision) */}
+        <div className="settings-card" style={{ margin: 0 }}>
+          <div className="settings-card-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+              <div style={{ padding: '8px', borderRadius: '8px', background: 'rgba(34, 211, 238, 0.12)', color: 'var(--cyan-400, #22d3ee)', display: 'inline-flex' }}>
+                <ScanFace size={20} />
+              </div>
+              <div>
+                <h2 style={{ margin: 0, fontSize: '1.1rem' }}>Leitores e Controladoras Faciais (Hikvision)</h2>
+                <span className="text-muted" style={{ fontSize: '0.8rem' }}>Terminais standalone (DS-K1T673) e controladoras multiporta (DS-K2812) — ISAPI</span>
+              </div>
+            </div>
+            <button className="btn btn-secondary" style={{ padding: '6px 12px', fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: '6px' }} onClick={() => { setShowFacialForm(!showFacialForm); setFacialTestResult(null); }}>
+              {showFacialForm ? <X size={14} /> : <Plus size={14} />}
+              {showFacialForm ? 'Cancelar' : 'Adicionar dispositivo'}
+            </button>
+          </div>
+
+          {showFacialForm && (
+            <div style={formBoxStyle}>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '15px' }}>
+                <Field label="Nome identificador"><input value={newFacial.name} onChange={(e) => setNewFacial((d) => ({ ...d, name: e.target.value }))} placeholder="Ex: Facial Portaria Social" style={inputStyle} /></Field>
+                <Field label="Papel do equipamento">
+                  <select value={newFacial.role} onChange={(e) => setNewFacial((d) => ({ ...d, role: e.target.value }))} style={inputStyle}>
+                    <option value="standalone_terminal">Terminal standalone (ex: DS-K1T673)</option>
+                    <option value="controller">Controladora multiporta (ex: DS-K2812)</option>
+                  </select>
+                </Field>
+                <Field label="Endereço IP"><input value={newFacial.ip} onChange={(e) => setNewFacial((d) => ({ ...d, ip: e.target.value }))} placeholder="192.168.1.60" style={inputStyle} /></Field>
+                <Field label="Porta"><input value={newFacial.port} onChange={(e) => setNewFacial((d) => ({ ...d, port: e.target.value }))} placeholder="80" style={inputStyle} /></Field>
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '15px' }}>
+                <Field label="Usuário ISAPI"><input value={newFacial.username} onChange={(e) => setNewFacial((d) => ({ ...d, username: e.target.value }))} placeholder="admin" style={inputStyle} /></Field>
+                <Field label="Senha de acesso"><input type="password" value={newFacial.password} onChange={(e) => setNewFacial((d) => ({ ...d, password: e.target.value }))} placeholder="••••••••" style={inputStyle} /></Field>
+                <Field label="Localização física"><input value={newFacial.location} onChange={(e) => setNewFacial((d) => ({ ...d, location: e.target.value }))} placeholder="Ex: Portaria Social" style={inputStyle} /></Field>
+              </div>
+              {newFacial.role === 'standalone_terminal' && (
+                <p style={{ fontSize: '0.78rem', color: 'var(--text-muted)', margin: 0 }}>
+                  Terminal standalone: uma porta é criada automaticamente no cadastro. Para controladoras, cadastre as portas depois de salvar.
+                </p>
+              )}
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '10px' }}>
+                <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+                  <button onClick={testFacialConnection} disabled={facialTesting || !newFacial.ip} className="btn btn-secondary" style={{ fontSize: '0.8rem', padding: '6px 12px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    {facialTesting ? <Loader2 className="animate-spin" size={14} /> : <RefreshCw size={14} />}
+                    Testar Conectividade
+                  </button>
+                  {facialTestResult !== null && (
+                    <span style={{ fontSize: '0.85rem', fontWeight: 500, color: facialTestResult ? 'var(--green-400)' : 'var(--red-400)', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                      {facialTestResult ? <CheckCircle2 size={16} /> : <AlertTriangle size={16} />}
+                      {facialTestResult ? 'Aparelho online e credenciais corretas!' : 'Falha na conexão com o equipamento.'}
+                    </span>
+                  )}
+                </div>
+                <button onClick={addFacialDevice} disabled={facialSaving || !newFacial.name || !newFacial.ip || !newFacial.username || !newFacial.password} className="btn btn-primary" style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  {facialSaving ? <Loader2 className="animate-spin" size={14} /> : <Plus size={14} />}
+                  Salvar dispositivo
+                </button>
+              </div>
+            </div>
+          )}
+
+          <div style={{ marginTop: '20px' }}>
+            {facialLoading ? (
+              <Loading label="Carregando dispositivos faciais..." />
+            ) : facialDevices.length === 0 ? (
+              <EmptyState label="Nenhum leitor ou controladora facial cadastrado." />
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                {facialDevices.map((device) => (
+                  <div key={device.id} style={{ border: '1px solid var(--border-primary)', borderRadius: 'var(--radius-sm)', overflow: 'hidden' }}>
+                    <div style={{ ...deviceRowStyle, border: 'none', borderRadius: 0 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                        <div style={{ flexShrink: 0 }}>
+                          {device._pingStatus === 'checking' && <Loader2 size={16} className="animate-spin" style={{ color: 'var(--text-muted)' }} />}
+                          {device._pingStatus === 'online' && <Signal size={16} style={{ color: 'var(--green-400)' }} />}
+                          {device._pingStatus === 'offline' && <SignalZero size={16} style={{ color: 'var(--red-400)' }} />}
+                        </div>
+                        <div>
+                          <strong style={{ display: 'block', fontSize: '0.95rem' }}>{device.name}</strong>
+                          <span className="text-muted" style={{ fontSize: '0.8rem' }}>
+                            {device.role === 'controller' ? 'Controladora' : 'Terminal standalone'} · {device.ip}:{device.port}
+                            {device.location ? ` — ${device.location}` : ''}
+                            {' · '}{device.doors.length} porta{device.doors.length !== 1 ? 's' : ''}
+                          </span>
+                        </div>
+                      </div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <StatusBadge enabled={device.enabled} enabledLabel="Ativo" disabledLabel="Pausado" />
+                        <button onClick={() => pingFacialDevice(device.id)} className="btn btn-secondary" style={{ padding: '4px 8px', fontSize: '0.75rem', minWidth: 'auto' }}><RefreshCw size={12} /></button>
+                        <button onClick={() => toggleFacialDevice(device)} className="btn btn-secondary" style={{ padding: '4px 10px', fontSize: '0.75rem', minWidth: 'auto' }}>{device.enabled ? 'Pausar' : 'Ativar'}</button>
+                        <button onClick={() => setExpandedFacialId(expandedFacialId === device.id ? null : device.id)} className="btn btn-secondary" style={{ padding: '4px 8px', fontSize: '0.75rem', minWidth: 'auto' }}>
+                          {expandedFacialId === device.id ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+                        </button>
+                        <button onClick={() => removeFacialDevice(device.id)} className="btn btn-secondary" style={{ padding: '6px', minWidth: 'auto', color: 'var(--red-400)', borderColor: 'rgba(239, 68, 68, 0.2)' }}><Trash2 size={14} /></button>
+                      </div>
+                    </div>
+
+                    {expandedFacialId === device.id && (
+                      <div style={{ padding: '15px 18px', background: 'var(--bg-primary)', borderTop: '1px solid var(--border-primary)' }}>
+                        <p style={{ margin: '0 0 10px', fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-muted)' }}>Portas / portões / cancelas</p>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                          {device.doors.map((door) => (
+                            <div key={door.id} style={{ border: '1px solid var(--border-primary)', borderRadius: 8, padding: '10px 12px' }}>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                <div>
+                                  <strong style={{ fontSize: '0.85rem' }}>#{door.doorNo} — {door.name}</strong>
+                                  <span className="text-muted" style={{ fontSize: '0.75rem', marginLeft: 8 }}>
+                                    {door.actuatorType === 'gate' ? 'Portão' : door.actuatorType === 'barrier' ? 'Cancela' : 'Porta'}
+                                    {door.direction ? ` · ${door.direction === 'entry' ? 'Entrada' : 'Saída'}` : ''}
+                                  </span>
+                                </div>
+                                <button onClick={() => removeDoor(door.id)} className="btn btn-secondary" style={{ padding: '4px', minWidth: 'auto', color: 'var(--red-400)', borderColor: 'rgba(239, 68, 68, 0.2)' }}><Trash2 size={12} /></button>
+                              </div>
+
+                              {door.readers.length > 0 && (
+                                <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 4 }}>
+                                  {door.readers.map((r) => (
+                                    <div key={r.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.75rem', color: 'var(--text-muted)', paddingLeft: 8 }}>
+                                      <span>
+                                        Leitor #{r.readerNo} — {r.type === 'face' ? 'Facial' : r.type === 'card' ? 'Cartão' : 'Facial + Cartão'} ({r.wiring === 'rs485' ? `RS-485${r.busAddress != null ? `, endereço ${r.busAddress}` : ''}` : 'Wiegand'})
+                                      </span>
+                                      <button onClick={() => removeReader(r.id)} className="btn btn-secondary" style={{ padding: '2px 6px', minWidth: 'auto', fontSize: '0.7rem', color: 'var(--red-400)', borderColor: 'rgba(239, 68, 68, 0.2)' }}><Trash2 size={10} /></button>
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+
+                              <div style={{ marginTop: 8, display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center', paddingLeft: 8 }}>
+                                <input value={readerForm(door.id).readerNo} onChange={(e) => setNewReader(prev => ({ ...prev, [door.id]: { ...readerForm(door.id), readerNo: e.target.value } }))} placeholder="Nº leitor" style={{ ...inputStyle, width: 90, padding: '4px 8px', fontSize: '0.75rem' }} />
+                                <select value={readerForm(door.id).type} onChange={(e) => setNewReader(prev => ({ ...prev, [door.id]: { ...readerForm(door.id), type: e.target.value } }))} style={{ ...inputStyle, width: 130, padding: '4px 8px', fontSize: '0.75rem' }}>
+                                  <option value="face">Facial</option>
+                                  <option value="card">Cartão</option>
+                                  <option value="face_and_card">Facial + Cartão</option>
+                                </select>
+                                <select value={readerForm(door.id).wiring} onChange={(e) => setNewReader(prev => ({ ...prev, [door.id]: { ...readerForm(door.id), wiring: e.target.value } }))} style={{ ...inputStyle, width: 110, padding: '4px 8px', fontSize: '0.75rem' }}>
+                                  <option value="rs485">RS-485</option>
+                                  <option value="wiegand">Wiegand</option>
+                                </select>
+                                {readerForm(door.id).wiring === 'rs485' && (
+                                  <input value={readerForm(door.id).busAddress} onChange={(e) => setNewReader(prev => ({ ...prev, [door.id]: { ...readerForm(door.id), busAddress: e.target.value } }))} placeholder="Endereço" style={{ ...inputStyle, width: 90, padding: '4px 8px', fontSize: '0.75rem' }} />
+                                )}
+                                <button onClick={() => addReader(door.id)} className="btn btn-secondary" style={{ padding: '4px 10px', fontSize: '0.75rem', minWidth: 'auto', display: 'flex', alignItems: 'center', gap: 4 }}>
+                                  <Plus size={12} /> Leitor
+                                </button>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+
+                        <div style={{ marginTop: 12, display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center' }}>
+                          <input value={newDoor.doorNo} onChange={(e) => setNewDoor((d) => ({ ...d, doorNo: e.target.value }))} placeholder="Nº porta" style={{ ...inputStyle, width: 90, padding: '6px 8px', fontSize: '0.8rem' }} />
+                          <input value={newDoor.name} onChange={(e) => setNewDoor((d) => ({ ...d, name: e.target.value }))} placeholder="Nome (ex: Portão Social)" style={{ ...inputStyle, width: 200, padding: '6px 8px', fontSize: '0.8rem' }} />
+                          <select value={newDoor.actuatorType} onChange={(e) => setNewDoor((d) => ({ ...d, actuatorType: e.target.value }))} style={{ ...inputStyle, width: 110, padding: '6px 8px', fontSize: '0.8rem' }}>
+                            <option value="door">Porta</option>
+                            <option value="gate">Portão</option>
+                            <option value="barrier">Cancela</option>
+                          </select>
+                          <select value={newDoor.direction} onChange={(e) => setNewDoor((d) => ({ ...d, direction: e.target.value }))} style={{ ...inputStyle, width: 130, padding: '6px 8px', fontSize: '0.8rem' }}>
+                            <option value="">Entrada/Saída</option>
+                            <option value="entry">Só Entrada</option>
+                            <option value="exit">Só Saída</option>
+                          </select>
+                          <button onClick={() => addDoor(device.id)} className="btn btn-primary" style={{ padding: '6px 12px', fontSize: '0.8rem', minWidth: 'auto', display: 'flex', alignItems: 'center', gap: 4 }}>
+                            <Plus size={13} /> Adicionar porta
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
         </div>
 
       </div>

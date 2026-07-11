@@ -24,6 +24,8 @@ import {
     Layers,
     Settings,
     UserCheck,
+    Video,
+    HardDrive,
 } from 'lucide-react';
 import { avatarGradient } from '@/utils/avatarColor';
 
@@ -53,6 +55,13 @@ const menuSections = [
             { to: '/admin/system-users', icon: Users, label: 'Usuários do sistema', end: false },
             { to: '/admin/permissions', icon: Shield, label: 'Permissões', end: false },
             { to: '/admin/system-settings', icon: Settings, label: 'Sistema (SMTP/Updates)', end: false },
+        ],
+    },
+    {
+        title: 'Gerenciador de Imagens',
+        items: [
+            { to: '/admin/vms-devices', icon: Video, label: 'Câmeras / NVRs / DVRs', end: false },
+            { to: '/admin/vms-storage', icon: HardDrive, label: 'Armazenamento', end: false },
         ],
     },
     {

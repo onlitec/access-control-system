@@ -11,7 +11,8 @@ import routes from './routes';
 function AppContent() {
   const location = useLocation();
   // páginas sem o layout da aplicação (tela cheia, sem menu)
-  const isLoginPage = location.pathname === '/login' || location.pathname === '/setup';
+  const isLoginPage = location.pathname === '/login' || location.pathname === '/setup'
+    || location.pathname.startsWith('/camera-view/');
 
   return (
     <>

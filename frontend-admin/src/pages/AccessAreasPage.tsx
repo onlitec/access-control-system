@@ -11,6 +11,20 @@ interface AccessArea {
     order: number;
 }
 
+interface FacialDoor {
+    id: string;
+    doorNo: number;
+    name: string;
+    actuatorType: string;
+}
+
+interface FacialDevice {
+    id: string;
+    name: string;
+    role: string;
+    doors: FacialDoor[];
+}
+
 const ICON_OPTIONS = ['🏠','🏊','🏋️','⛹️','🎉','🔥','🚶','🧖','🚗','🛝','🎾','🎱','🏓','🎳','🎭','🎬','📚','🌿','🐾','🅿️'];
 
 const emptyForm = { name: '', description: '', icon: '🏠', isActive: true, order: 0 };
@@ -25,6 +39,13 @@ export default function AccessAreasPage() {
     const [form, setForm] = useState(emptyForm);
     const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
 
+    // Portas faciais vinculadas ao nível de acesso
+    const [facialDevices, setFacialDevices] = useState<FacialDevice[]>([]);
+    const [doorPanelAreaId, setDoorPanelAreaId] = useState<string | null>(null);
+    const [selectedDoorIds, setSelectedDoorIds] = useState<string[]>([]);
+    const [doorsLoading, setDoorsLoading] = useState(false);
+    const [doorsSaving, setDoorsSaving] = useState(false);
+
     const load = async () => {
         setLoading(true);
         try {
@@ -37,7 +58,50 @@ export default function AccessAreasPage() {
         }
     };
 
-    useEffect(() => { load(); }, []);
+    const loadFacialDevices = async () => {
+        try {
+            const res = await request<{ devices: FacialDevice[] }>('/facial-access/devices');
+            setFacialDevices(res?.devices ?? []);
+        } catch { setFacialDevices([]); }
+    };
+
+    useEffect(() => { load(); loadFacialDevices(); }, []);
+
+    const openDoorPanel = async (area: AccessArea) => {
+        setDoorPanelAreaId(area.id);
+        setDoorsLoading(true);
+        try {
+            const res = await request<{ data: FacialDoor[] }>(`/access-areas/${area.id}/doors`);
+            setSelectedDoorIds((res?.data ?? []).map(d => d.id));
+        } catch (e: any) {
+            setError(e.message);
+            setSelectedDoorIds([]);
+        } finally {
+            setDoorsLoading(false);
+        }
+    };
+
+    const toggleDoorSelection = (doorId: string) => {
+        setSelectedDoorIds(prev => prev.includes(doorId) ? prev.filter(id => id !== doorId) : [...prev, doorId]);
+    };
+
+    const saveDoorPanel = async () => {
+        if (!doorPanelAreaId) return;
+        setDoorsSaving(true);
+        try {
+            await request(`/access-areas/${doorPanelAreaId}/doors`, {
+                method: 'PUT',
+                body: JSON.stringify({ doorIds: selectedDoorIds }),
+            });
+            setDoorPanelAreaId(null);
+        } catch (e: any) {
+            setError(e.message);
+        } finally {
+            setDoorsSaving(false);
+        }
+    };
+
+    const actuatorLabel = (type: string) => type === 'gate' ? 'Portão' : type === 'barrier' ? 'Cancela' : 'Porta';
 
     const openNew = () => {
         setEditingArea(null);
@@ -262,11 +326,11 @@ export default function AccessAreasPage() {
                 ) : (
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
                         {areas.map(area => (
+                            <div key={area.id}>
                             <div
-                                key={area.id}
                                 style={{
                                     background: 'var(--card, #fff)', border: '1px solid var(--border, #e4e4e7)',
-                                    borderRadius: 14, padding: '14px 18px',
+                                    borderRadius: doorPanelAreaId === area.id ? '14px 14px 0 0' : 14, padding: '14px 18px',
                                     display: 'flex', alignItems: 'center', gap: 14,
                                     opacity: area.isActive ? 1 : 0.55,
                                 }}
@@ -300,6 +364,18 @@ export default function AccessAreasPage() {
                                         }}
                                     >
                                         {area.isActive ? 'Ativa' : 'Inativa'}
+                                    </button>
+                                    <button
+                                        onClick={() => doorPanelAreaId === area.id ? setDoorPanelAreaId(null) : openDoorPanel(area)}
+                                        title="Escolher quais portas/portões/cancelas este nível libera"
+                                        style={{
+                                            background: doorPanelAreaId === area.id ? '#eff6ff' : '#fafafa',
+                                            border: '1px solid ' + (doorPanelAreaId === area.id ? '#bfdbfe' : 'var(--border, #e4e4e7)'),
+                                            borderRadius: 8, padding: '6px 12px', cursor: 'pointer', fontSize: 12, fontWeight: 600,
+                                            color: doorPanelAreaId === area.id ? '#2563eb' : 'var(--foreground, #18181b)',
+                                        }}
+                                    >
+                                        🚪 Portas vinculadas
                                     </button>
                                     <button
                                         onClick={() => openEdit(area)}
@@ -346,6 +422,82 @@ export default function AccessAreasPage() {
                                         </button>
                                     )}
                                 </div>
+                            </div>
+
+                            {doorPanelAreaId === area.id && (
+                                <div style={{
+                                    background: '#fafafa', border: '1px solid var(--border, #e4e4e7)', borderTop: 'none',
+                                    borderRadius: '0 0 14px 14px', padding: '14px 18px',
+                                }}>
+                                    {doorsLoading ? (
+                                        <p style={{ fontSize: 13, color: '#888', margin: 0 }}>Carregando portas…</p>
+                                    ) : facialDevices.every(d => d.doors.length === 0) ? (
+                                        <p style={{ fontSize: 13, color: '#888', margin: 0 }}>
+                                            Nenhuma porta/portão/cancela facial cadastrada ainda. Cadastre um dispositivo em
+                                            "Painel de Integrações" primeiro.
+                                        </p>
+                                    ) : (
+                                        <>
+                                            <p style={{ fontSize: 13, fontWeight: 600, margin: '0 0 10px' }}>
+                                                Quais portas este nível de acesso libera?
+                                            </p>
+                                            <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginBottom: 14 }}>
+                                                {facialDevices.filter(d => d.doors.length > 0).map(device => (
+                                                    <div key={device.id}>
+                                                        <span style={{ fontSize: 12, fontWeight: 700, color: '#6b7280' }}>
+                                                            {device.name} {device.role === 'controller' ? '(controladora)' : '(terminal)'}
+                                                        </span>
+                                                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 6 }}>
+                                                            {device.doors.map(door => (
+                                                                <label
+                                                                    key={door.id}
+                                                                    style={{
+                                                                        display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer',
+                                                                        padding: '5px 10px', borderRadius: 8, fontSize: 12,
+                                                                        background: selectedDoorIds.includes(door.id) ? '#eff6ff' : '#fff',
+                                                                        border: '1px solid ' + (selectedDoorIds.includes(door.id) ? '#bfdbfe' : 'var(--border, #e4e4e7)'),
+                                                                    }}
+                                                                >
+                                                                    <input
+                                                                        type="checkbox"
+                                                                        checked={selectedDoorIds.includes(door.id)}
+                                                                        onChange={() => toggleDoorSelection(door.id)}
+                                                                    />
+                                                                    #{door.doorNo} {door.name} · {actuatorLabel(door.actuatorType)}
+                                                                </label>
+                                                            ))}
+                                                        </div>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                            <div style={{ display: 'flex', gap: 10 }}>
+                                                <button
+                                                    onClick={saveDoorPanel}
+                                                    disabled={doorsSaving}
+                                                    style={{
+                                                        background: doorsSaving ? '#e4e4e7' : '#dc2626',
+                                                        color: doorsSaving ? '#aaa' : '#fff',
+                                                        border: 'none', borderRadius: 8, padding: '7px 16px',
+                                                        fontWeight: 600, cursor: doorsSaving ? 'default' : 'pointer', fontSize: 13,
+                                                    }}
+                                                >
+                                                    {doorsSaving ? 'Salvando…' : 'Salvar vínculos'}
+                                                </button>
+                                                <button
+                                                    onClick={() => setDoorPanelAreaId(null)}
+                                                    style={{
+                                                        background: 'transparent', border: '1px solid var(--border, #e4e4e7)',
+                                                        borderRadius: 8, padding: '7px 16px', fontWeight: 500, cursor: 'pointer', fontSize: 13,
+                                                        color: 'var(--foreground, #18181b)',
+                                                    }}
+                                                >
+                                                    Cancelar
+                                                </button>
+                                            </div>
+                                        </>
+                                    )}
+                                </div>
+                            )}
                             </div>
                         ))}
                     </div>
