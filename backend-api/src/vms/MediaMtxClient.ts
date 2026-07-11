@@ -7,6 +7,8 @@ export interface MtxPathConf {
   sourceOnDemand?: boolean;
   rtspTransport?: string;
   record?: boolean;
+  /** duração de cada arquivo gravado, no formato do Go: "10m", "60s"... */
+  recordSegmentDuration?: string;
   runOnRecordSegmentComplete?: string;
 }
 

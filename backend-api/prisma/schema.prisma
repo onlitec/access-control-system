@@ -528,6 +528,9 @@ model VideoRecordingConfig {
   postEventSec  Int          @default(30) @map("post_event_sec") // motion: segue gravando N s após o último evento
   retentionDays Int          @default(7) @map("retention_days")
   useSubStream  Boolean      @default(false) @map("use_sub_stream")
+  /// Duração de cada arquivo gravado (ciclo). Arquivos menores dão granularidade
+  /// fina na retenção e no download; maiores geram menos arquivos para gerir.
+  segmentMinutes Int         @default(10) @map("segment_minutes")
   updatedAt     DateTime     @updatedAt @map("updated_at")
 
   @@map("video_recording_configs")

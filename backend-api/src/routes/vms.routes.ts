@@ -509,9 +509,14 @@ async function enableMotionDetection(device: { ip: string; httpPort: number; use
 
 router.put('/channels/:id/recording', adminMiddleware, async (req: Request, res: Response): Promise<void> => {
   try {
-    const { mode, schedule, postEventSec, retentionDays, useSubStream, eventTypes } = req.body;
+    const { mode, schedule, postEventSec, retentionDays, useSubStream, eventTypes, segmentMinutes } = req.body;
     if (mode && !['off', 'continuous', 'scheduled', 'motion'].includes(mode)) {
       res.status(400).json({ error: 'mode deve ser "off", "continuous", "scheduled" ou "motion"' });
+      return;
+    }
+    // ciclo de gravação: duração de cada arquivo (1 min a 2 h)
+    if (segmentMinutes !== undefined && (Number(segmentMinutes) < 1 || Number(segmentMinutes) > 120)) {
+      res.status(400).json({ error: 'segmentMinutes deve estar entre 1 e 120 minutos' });
       return;
     }
     let cleanEventTypes: string[] | null | undefined;
@@ -542,6 +547,7 @@ router.put('/channels/:id/recording', adminMiddleware, async (req: Request, res:
         postEventSec: postEventSec ?? 30,
         retentionDays: retentionDays ?? 7,
         useSubStream: useSubStream ?? false,
+        segmentMinutes: segmentMinutes !== undefined ? Number(segmentMinutes) : 10,
       },
       update: {
         ...(mode !== undefined && { mode }),
@@ -550,6 +556,7 @@ router.put('/channels/:id/recording', adminMiddleware, async (req: Request, res:
         ...(postEventSec !== undefined && { postEventSec: Number(postEventSec) }),
         ...(retentionDays !== undefined && { retentionDays: Number(retentionDays) }),
         ...(useSubStream !== undefined && { useSubStream }),
+        ...(segmentMinutes !== undefined && { segmentMinutes: Number(segmentMinutes) }),
       },
     });
 

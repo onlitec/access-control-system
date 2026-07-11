@@ -15,7 +15,24 @@ interface RecordingConfig {
   postEventSec: number;
   retentionDays: number;
   useSubStream: boolean;
+  segmentMinutes: number;
 }
+
+/**
+ * Ciclo de gravação = duração de cada arquivo gerado.
+ * Arquivos curtos dão granularidade fina (a retenção apaga de pouco em pouco, e
+ * baixar um trecho é rápido), mas a gravação contínua vira uma enxurrada de
+ * arquivos. Arquivos longos geram menos arquivos, porém o trecho só fica
+ * disponível quando fecha, e cada download é pesado.
+ */
+const SEGMENT_OPTIONS = [
+  { value: 1, label: '1 minuto' },
+  { value: 5, label: '5 minutos' },
+  { value: 10, label: '10 minutos' },
+  { value: 15, label: '15 minutos' },
+  { value: 30, label: '30 minutos' },
+  { value: 60, label: '1 hora' },
+];
 
 interface VmsChannel {
   id: string;
@@ -78,7 +95,7 @@ export default function VmsDevicesPage() {
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [discovering, setDiscovering] = useState<string | null>(null);
   const [newChannel, setNewChannel] = useState({ channelNo: '', name: '', rtspUrlMain: '', rtspUrlSub: '' });
-  const [recForm, setRecForm] = useState<Record<string, { mode: string; retentionDays: string; postEventSec: string; useSubStream: boolean; dow: number[]; start: string; end: string; eventTypes: string[] }>>({});
+  const [recForm, setRecForm] = useState<Record<string, { mode: string; retentionDays: string; postEventSec: string; useSubStream: boolean; dow: number[]; start: string; end: string; eventTypes: string[]; segmentMinutes: string }>>({});
   const [recSaving, setRecSaving] = useState<string | null>(null);
   const [error, setError] = useState('');
 
@@ -106,6 +123,7 @@ export default function VmsDevicesPage() {
             eventTypes: Array.isArray(ch.recording?.eventTypes) && ch.recording.eventTypes.length > 0
               ? ch.recording.eventTypes
               : ['vmd'],
+            segmentMinutes: String(ch.recording?.segmentMinutes ?? 10),
           };
         }
       }
@@ -244,6 +262,7 @@ export default function VmsDevicesPage() {
           retentionDays: parseInt(form.retentionDays) || 7,
           postEventSec: parseInt(form.postEventSec) || 30,
           useSubStream: form.useSubStream,
+          segmentMinutes: parseInt(form.segmentMinutes) || 10,
           schedule: form.mode === 'scheduled' ? [{ dow: form.dow, start: form.start, end: form.end }] : null,
           eventTypes: form.mode === 'motion' ? form.eventTypes : null,
         }),
@@ -412,6 +431,21 @@ export default function VmsDevicesPage() {
                             <Field label="Retenção (dias)">
                               <input value={form.retentionDays} onChange={(e) => setRecForm((f) => ({ ...f, [ch.id]: { ...form, retentionDays: e.target.value } }))} style={{ ...inputStyle, width: '90px' }} />
                             </Field>
+
+                            {form.mode !== 'off' && (
+                              <Field label="Ciclo (duração de cada arquivo)">
+                                <select
+                                  value={form.segmentMinutes}
+                                  onChange={(e) => setRecForm((f) => ({ ...f, [ch.id]: { ...form, segmentMinutes: e.target.value } }))}
+                                  title="A gravação é dividida em arquivos deste tamanho. Arquivos curtos = mais arquivos, porém retenção e download mais granulares."
+                                  style={{ ...inputStyle, width: '130px' }}
+                                >
+                                  {SEGMENT_OPTIONS.map((o) => (
+                                    <option key={o.value} value={o.value}>{o.label}</option>
+                                  ))}
+                                </select>
+                              </Field>
+                            )}
                             {form.mode === 'motion' && (
                               <>
                                 <Field label="Pós-evento (s)">

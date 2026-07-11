@@ -48,6 +48,7 @@ export function inSchedule(schedule: unknown, now: Date): boolean {
  */
 export class RecordingScheduler {
   private applied = new Map<string, boolean>();          // pathName -> record aplicado
+  private appliedSeg = new Map<string, number>();        // pathName -> ciclo (min) aplicado
   private pathTrigger = new Map<string, RecordTrigger>(); // pathName -> motivo da gravação ativa
   private motionUntil = new Map<string, number>();        // channelId -> epoch ms
   private manualUntil = new Map<string, number>();        // channelId -> epoch ms (gravação manual)
@@ -98,6 +99,7 @@ export class RecordingScheduler {
   /** Descarta estado aplicado (força re-aplicação no próximo tick). */
   reset(): void {
     this.applied.clear();
+    this.appliedSeg.clear();
   }
 
   async tick(): Promise<void> {
@@ -150,16 +152,24 @@ export class RecordingScheduler {
       if (diskCritical) shouldRecord = false;
 
       const pathName = cfg?.useSubStream ? subPathName(channel.streamPath) : channel.streamPath;
-      if (this.applied.get(pathName) === shouldRecord) continue;
+      const segMinutes = Math.min(Math.max(cfg?.segmentMinutes ?? 10, 1), 120);
+
+      // reaplica também quando só o ciclo de gravação mudou no admin
+      const unchanged = this.applied.get(pathName) === shouldRecord
+        && this.appliedSeg.get(pathName) === segMinutes;
+      if (unchanged) continue;
 
       try {
         // Com VMS_ALWAYS_ON a fonte fica sempre conectada (abrir o app não
         // espera o RTSP subir); sem ele, só se mantém conectada enquanto grava.
+        // O ciclo (duração de cada arquivo) é configurado por câmera no admin.
         await this.mtx.patchPath(pathName, {
           record: shouldRecord,
+          recordSegmentDuration: `${segMinutes}m`,
           ...(VMS_ALWAYS_ON ? {} : { sourceOnDemand: !shouldRecord }),
         });
         this.applied.set(pathName, shouldRecord);
+        this.appliedSeg.set(pathName, segMinutes);
         if (shouldRecord) {
           this.pathTrigger.set(pathName, trigger);
           console.log(`[VMS] Gravação LIGADA em ${pathName} (${trigger})`);
