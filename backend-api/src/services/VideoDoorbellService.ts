@@ -1,121 +1,8 @@
-import fetch from 'node-fetch';
-import { Agent as HttpsAgent } from 'https';
-import { createHash, randomBytes } from 'crypto';
+import { spawn } from 'child_process';
 import { PrismaClient } from '@prisma/client';
+import { digestFetch } from '../utils/digest-fetch.utils';
 
 const prisma = new PrismaClient();
-
-const httpsAgent = new HttpsAgent({ rejectUnauthorized: false });
-
-function basicAuth(username: string, password: string): string {
-  return 'Basic ' + Buffer.from(`${username}:${password}`).toString('base64');
-}
-
-/**
- * Two-step Digest Auth (RFC 2617 / MD5).
- * Step 1: unauthenticated request → grab WWW-Authenticate challenge
- * Step 2: compute MD5 and replay with Authorization: Digest ...
- * Falls back to Basic if device does not advertise Digest.
- */
-async function digestFetch(
-  url: string,
-  username: string,
-  password: string,
-  method = 'GET',
-  body?: Buffer | string,
-  extraHeaders?: Record<string, string>,
-): Promise<import('node-fetch').Response> {
-  const isHttps = url.startsWith('https://');
-  const agentOpt = isHttps ? { agent: httpsAgent } : {};
-
-  // Step 1: probe without credentials
-  const probe = await fetch(url, {
-    method,
-    // @ts-ignore
-    ...agentOpt,
-    signal: AbortSignal.timeout(5000),
-  });
-
-  if (probe.status !== 401) {
-    // No auth challenge — return as-is (shouldn't happen on Hik devices)
-    return probe;
-  }
-
-  const wwwAuth = probe.headers.get('www-authenticate') || '';
-  const isDigest = wwwAuth.toLowerCase().startsWith('digest');
-
-  if (!isDigest) {
-    // Device only offers Basic
-    return fetch(url, {
-      method,
-      headers: { Authorization: basicAuth(username, password), ...extraHeaders },
-      body,
-      // @ts-ignore
-      ...agentOpt,
-      signal: AbortSignal.timeout(8000),
-    });
-  }
-
-  // Parse challenge fields
-  const field = (name: string) => {
-    const m = wwwAuth.match(new RegExp(`${name}="([^"]+)"`, 'i'))
-      || wwwAuth.match(new RegExp(`${name}=([^\\s,]+)`, 'i'));
-    return m ? m[1] : '';
-  };
-  const realm   = field('realm');
-  const nonce   = field('nonce');
-  const qop     = field('qop');     // "auth" or ""
-  const opaque  = field('opaque');
-  const algo    = field('algorithm') || 'MD5';
-
-  const urlObj = new URL(url);
-  const uri = urlObj.pathname + urlObj.search;
-
-  const md5 = (...parts: string[]) => createHash('md5').update(parts.join(':')).digest('hex');
-
-  const ha1 = md5(username, realm, password);
-  const ha2 = md5(method, uri);
-
-  let authValue: string;
-  if (qop === 'auth' || qop === 'auth-int') {
-    const nc     = '00000001';
-    const cnonce = randomBytes(8).toString('hex');
-    const response = md5(ha1, nonce, nc, cnonce, qop, ha2);
-    authValue = [
-      `Digest username="${username}"`,
-      `realm="${realm}"`,
-      `nonce="${nonce}"`,
-      `uri="${uri}"`,
-      `qop=${qop}`,
-      `nc=${nc}`,
-      `cnonce="${cnonce}"`,
-      `response="${response}"`,
-      `algorithm=${algo}`,
-      ...(opaque ? [`opaque="${opaque}"`] : []),
-    ].join(', ');
-  } else {
-    // No qop (legacy)
-    const response = md5(ha1, nonce, ha2);
-    authValue = [
-      `Digest username="${username}"`,
-      `realm="${realm}"`,
-      `nonce="${nonce}"`,
-      `uri="${uri}"`,
-      `response="${response}"`,
-      `algorithm=${algo}`,
-      ...(opaque ? [`opaque="${opaque}"`] : []),
-    ].join(', ');
-  }
-
-  return fetch(url, {
-    method,
-    headers: { Authorization: authValue, ...extraHeaders },
-    body,
-    // @ts-ignore
-    ...agentOpt,
-    signal: AbortSignal.timeout(8000),
-  });
-}
 
 export interface DoorbellDeviceInfo {
   deviceName?: string;
@@ -138,30 +25,76 @@ export class VideoDoorbellService {
     return device;
   }
 
+  /**
+   * Captura 1 frame do stream RTSP via ffmpeg (sub-stream 102).
+   * As door stations DS-KB/DS-KV não implementam o /picture do ISAPI — a
+   * requisição fica pendurada para sempre — então o RTSP é o caminho titular.
+   */
+  private static snapshotViaRtsp(device: { ip: string; username: string; password: string }, timeoutMs = 12000): Promise<Buffer> {
+    return new Promise((resolve, reject) => {
+      const pass = encodeURIComponent(device.password);
+      const rtspUrl = `rtsp://${device.username}:${pass}@${device.ip}:554/Streaming/Channels/102`;
+      const proc = spawn('ffmpeg', [
+        '-loglevel', 'error',
+        '-rtsp_transport', 'tcp',
+        '-i', rtspUrl,
+        '-frames:v', '1',
+        '-q:v', '4',
+        '-f', 'image2pipe',
+        '-c:v', 'mjpeg',
+        'pipe:1',
+      ]);
+
+      const chunks: Buffer[] = [];
+      let settled = false;
+      const settle = (fn: () => void) => { if (!settled) { settled = true; fn(); } };
+      const timer = setTimeout(() => {
+        try { proc.kill('SIGKILL'); } catch { /* já morreu */ }
+        settle(() => reject(new Error(`RTSP snapshot timeout (${device.ip})`)));
+      }, timeoutMs);
+
+      proc.stdout.on('data', (c: Buffer) => chunks.push(c));
+      proc.stderr.on('data', () => { /* suprime logs do ffmpeg */ });
+      proc.on('error', (err) => { clearTimeout(timer); settle(() => reject(err)); });
+      proc.on('close', () => {
+        clearTimeout(timer);
+        const buf = Buffer.concat(chunks);
+        if (buf.length >= 2 && buf[0] === 0xff && buf[1] === 0xd8) {
+          settle(() => resolve(buf));
+        } else {
+          settle(() => reject(new Error(`RTSP snapshot sem frame JPEG (${device.ip})`)));
+        }
+      });
+    });
+  }
+
   static async getSnapshot(deviceId: string): Promise<Buffer> {
     const device = await this.getDevice(deviceId);
-    
-    const paths = [
-      '/ISAPI/Streaming/channels/1/picture',
-      '/ISAPI/Streaming/channels/101/picture',
-      '/ISAPI/Streaming/channels/102/picture',
-      '/ISAPI/Streaming/channels/2/picture'
-    ];
 
+    // 1º: frame do RTSP via ffmpeg (funciona em door stations e câmeras)
     let lastError: any;
+    try {
+      return await this.snapshotViaRtsp(device);
+    } catch (err) {
+      lastError = err;
+    }
+
+    // Fallback: ISAPI /picture (modelos que implementam, ex.: câmeras IP/NVR)
+    const paths = [
+      '/ISAPI/Streaming/channels/101/picture',
+      '/ISAPI/Streaming/channels/1/picture',
+    ];
     for (const path of paths) {
       try {
         const url = `http://${device.ip}:${device.port}${path}`;
         const response = await digestFetch(url, device.username, device.password);
-        
+
         if (response.ok) {
           const buffer = Buffer.from(await response.arrayBuffer());
           if (buffer.length >= 2 && buffer[0] === 0xff && buffer[1] === 0xd8) {
             return buffer;
-          } else {
-             // Not a valid JPEG, maybe try next path or it's a transient issue
-             lastError = new Error(`Resposta em ${path} não é JPEG válido`);
           }
+          lastError = new Error(`Resposta em ${path} não é JPEG válido`);
         } else {
           lastError = new Error(`ISAPI snapshot falhou em ${path}: ${response.status} ${response.statusText}`);
         }
@@ -169,7 +102,7 @@ export class VideoDoorbellService {
         lastError = err;
       }
     }
-    
+
     throw lastError;
   }
 
