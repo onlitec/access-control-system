@@ -631,6 +631,20 @@ input, select { font-family: inherit; }
   overflow-y: auto;
 }
 
+.list-head {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding: 7px 12px;
+  background: var(--panel-2);
+  border-bottom: 1px solid var(--border);
+  font-size: 0.62rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-faint);
+}
+
 .rec-item {
   display: flex;
   align-items: center;

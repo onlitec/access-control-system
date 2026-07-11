@@ -58,8 +58,9 @@ export default function PlaybackView({ cameras }) {
       const res = await authFetch(`/api/vms/recordings?${params.toString()}`);
       if (!res.ok) throw new Error(`Erro ${res.status}`);
       const data = await res.json();
-      // do mais antigo para o mais novo: é como se assiste um dia gravado
-      const list = (data.recordings || []).slice().reverse();
+      // Mais RECENTE no topo: quem abre a reprodução quase sempre quer ver o que
+      // acabou de acontecer. (A API já devolve em ordem decrescente.)
+      const list = data.recordings || [];
       setRecordings(list);
       setCurrent(list[0] ?? null);
     } catch (err) {
@@ -78,13 +79,20 @@ export default function PlaybackView({ cameras }) {
 
   const index = current ? recordings.findIndex((r) => r.id === current.id) : -1;
 
-  const step = (delta) => {
-    const next = recordings[index + delta];
+  /**
+   * Navega no TEMPO, não na lista: como a lista está do mais recente para o mais
+   * antigo, "avançar no tempo" (+1) é subir um item, e "voltar" (-1) é descer.
+   */
+  const stepTime = (dir) => {
+    const next = recordings[index - dir];
     if (next) setCurrent(next);
   };
 
-  // ao terminar um segmento, emenda o próximo (reprodução contínua do dia)
-  const onEnded = () => step(1);
+  const hasOlder = index >= 0 && index < recordings.length - 1;
+  const hasNewer = index > 0;
+
+  // ao terminar um trecho, emenda o seguinte no tempo (reprodução contínua)
+  const onEnded = () => stepTime(1);
 
   return (
     <>
@@ -94,14 +102,19 @@ export default function PlaybackView({ cameras }) {
           <span className="cam-count">{recordings.length} trecho(s)</span>
         </div>
         <div className="top-bar-right">
-          <button className="icon-btn" onClick={() => step(-1)} disabled={index <= 0} title="Trecho anterior">
+          <button
+            className="icon-btn"
+            onClick={() => stepTime(-1)}
+            disabled={!hasOlder}
+            title="Trecho anterior (mais antigo)"
+          >
             <SkipBack size={17} />
           </button>
           <button
             className="icon-btn"
-            onClick={() => step(1)}
-            disabled={index < 0 || index >= recordings.length - 1}
-            title="Próximo trecho"
+            onClick={() => stepTime(1)}
+            disabled={!hasNewer}
+            title="Trecho seguinte (mais recente)"
           >
             <SkipForward size={17} />
           </button>
@@ -152,6 +165,9 @@ export default function PlaybackView({ cameras }) {
           </div>
 
           <div className="playback-list">
+            {recordings.length > 1 && (
+              <div className="list-head">Mais recentes primeiro</div>
+            )}
             {recordings.map((rec) => {
               const gone = rec.status === 'deleted_local';
               return (
