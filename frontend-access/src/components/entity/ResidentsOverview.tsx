@@ -22,8 +22,17 @@ export function ResidentsOverview({ residents, loading }: ResidentsOverviewProps
       .finally(() => setStatsLoading(false));
   }, []);
 
+  // Proprietário pode não residir: só quem tem is_resident conta como morador
   const owners = useMemo(
     () => residents.filter((r) => r.is_owner).length,
+    [residents]
+  );
+  const residing = useMemo(
+    () => residents.filter((r) => r.is_resident !== false).length,
+    [residents]
+  );
+  const ownersNotResiding = useMemo(
+    () => residents.filter((r) => r.is_owner && r.is_resident === false).length,
     [residents]
   );
 
@@ -44,7 +53,7 @@ export function ResidentsOverview({ residents, loading }: ResidentsOverviewProps
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
         <EntityStatCard
           title="Moradores Cadastrados"
-          value={stats?.totalResidents ?? residents.length}
+          value={stats?.totalResidents ?? residing}
           icon={<Users className="h-5 w-5 text-primary" />}
           loading={statsLoading && loading}
           highlight
@@ -57,10 +66,14 @@ export function ResidentsOverview({ residents, loading }: ResidentsOverviewProps
         />
         <EntityStatCard
           title="Proprietários"
-          value={owners}
+          value={stats?.totalOwners ?? owners}
           icon={<KeyRound className="h-5 w-5 text-muted-foreground" />}
           loading={loading}
-          subtitle={`${residents.length - owners} demais moradores`}
+          subtitle={
+            (stats?.totalOwners !== undefined && stats?.ownersResiding !== undefined)
+              ? `${stats.totalOwners - stats.ownersResiding} não residem no condomínio`
+              : `${ownersNotResiding} não residem no condomínio`
+          }
         />
         <EntityStatCard
           title="Acessos Hoje (geral)"

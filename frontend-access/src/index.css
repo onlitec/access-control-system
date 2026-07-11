@@ -95,3 +95,22 @@ All colors MUST be HSL.
     @apply bg-background text-foreground;
   }
 }
+
+/* Clarão do "print" das câmeras (botão de foto do videowall) */
+@keyframes snapFlash {
+  from { opacity: 0.85; }
+  to   { opacity: 0; }
+}
+
+/* Toque longo (2s) sobre a câmera para iniciar/parar a gravação */
+@keyframes pressGrow {
+  from { width: 0; }
+  to   { width: 100%; }
+}
+
+/* segurar não deve selecionar texto nem abrir a lupa/menu do toque */
+.vms-cell {
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+}

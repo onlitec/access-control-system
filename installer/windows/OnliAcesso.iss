@@ -10,6 +10,9 @@
 #ifndef OutputDir
   #define OutputDir "..\dist"
 #endif
+#ifndef VmsAvailable
+  #define VmsAvailable "0"
+#endif
 
 [Setup]
 AppId={{8F2A1C64-0B7E-4D11-9A3F-6C2E51A0B7D3}
@@ -35,6 +38,16 @@ UninstallDisplayName=OnliAcesso - Sistema de Controle de Acesso
 [Languages]
 Name: "brazilianportuguese"; MessagesFile: "compiler:Languages\BrazilianPortuguese.isl"
 
+[Types]
+Name: "full";   Description: "Instalacao completa"
+Name: "custom"; Description: "Instalacao personalizada"; Flags: iscustom
+
+[Components]
+Name: "core"; Description: "OnliAcesso (obrigatorio)"; Types: full custom; Flags: fixed
+#if Str(VmsAvailable) == "1"
+Name: "vms";  Description: "Gerenciador de Imagens (VMS) — cameras, NVRs, DVRs, gravacao e armazenamento remoto"; Types: full
+#endif
+
 [Messages]
 brazilianportuguese.WelcomeLabel1=Bem-vindo ao instalador do OnliAcesso
 brazilianportuguese.WelcomeLabel2=Este assistente vai instalar o OnliAcesso %1 neste servidor.%n%nSerao instalados: PostgreSQL 16, Node.js 20, Nginx e os aplicativos do sistema (API, painel das portarias, interface administrativa e portal do morador).%n%nRecomenda-se fechar outros programas antes de continuar.
@@ -45,7 +58,18 @@ Name: "desktopicon"; Description: "Criar icone na area de trabalho"; GroupDescri
 [Files]
 ; extraido em {tmp} para rodar ANTES da copia (destrava instalacao anterior)
 Source: "{#StageDir}\scripts\cleanup.ps1"; Flags: dontcopy
-Source: "{#StageDir}\*"; DestDir: "{app}"; Flags: recursesubdirs createallsubdirs ignoreversion
+; Excludes: arquivos do VMS saem do wildcard core — senao seriam instalados
+; mesmo com o componente desmarcado, e o config\mediamtx.yml (ignoreversion)
+; sobrescreveria a config do usuario em cada upgrade.
+Source: "{#StageDir}\*"; DestDir: "{app}"; Flags: recursesubdirs createallsubdirs ignoreversion; Components: core; Excludes: "\binaries\mediamtx\*,\binaries\rclone\*,\config\mediamtx.yml,\services\onliacesso-mediamtx.xml,\services\onliacesso-vms.xml"
+; mediamtx.yml base — só copiado se nao existir (preservar em upgrade)
+#if Str(VmsAvailable) == "1"
+Source: "{#StageDir}\config\mediamtx.yml"; DestDir: "{app}\config"; Flags: onlyifdoesntexist; Components: vms
+Source: "{#StageDir}\binaries\mediamtx\*"; DestDir: "{app}\binaries\mediamtx"; Flags: recursesubdirs createallsubdirs ignoreversion; Components: vms
+Source: "{#StageDir}\binaries\rclone\*"; DestDir: "{app}\binaries\rclone"; Flags: recursesubdirs createallsubdirs ignoreversion; Components: vms
+Source: "{#StageDir}\services\onliacesso-mediamtx.xml"; DestDir: "{app}\services"; Flags: ignoreversion; Components: vms
+Source: "{#StageDir}\services\onliacesso-vms.xml"; DestDir: "{app}\services"; Flags: ignoreversion; Components: vms
+#endif
 
 [Icons]
 Name: "{commondesktop}\OnliAcesso - Painel"; Filename: "http://localhost/painel/"; Tasks: desktopicon
@@ -148,6 +172,11 @@ begin
       ' -HikAppKey "' + Trim(ConfigPage.Values[2]) + '"' +
       ' -HikAppSecret "' + Trim(ConfigPage.Values[3]) + '"' +
       ' -AppVersion "{#AppVersion}"';
+
+    if WizardIsComponentSelected('vms') then
+      Params := Params + ' -InstallVms "1"'
+    else
+      Params := Params + ' -InstallVms "0"';
 
     if not Exec('powershell.exe', Params, '', SW_HIDE, ewNoWait, ResultCode) then
     begin

@@ -19,8 +19,12 @@
     },
     "dependencies": {
         "@prisma/client": "^5.10.2",
+        "@tensorflow/tfjs": "^4.22.0",
+        "@tensorflow/tfjs-backend-wasm": "^4.22.0",
+        "@vladmandic/face-api": "^1.7.15",
         "artemis-http-client": "^1.0.3",
         "bcryptjs": "^3.0.3",
+        "canvas": "^2.11.2",
         "cookie-parser": "^1.4.7",
         "cors": "^2.8.5",
         "crypto-js": "^4.2.0",

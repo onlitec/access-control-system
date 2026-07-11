@@ -73,7 +73,10 @@ const server = http.createServer((req, res) => {
             res.writeHead(404).end('Not found');
             return;
           }
-          res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+          res.writeHead(200, {
+            'Content-Type': 'text/html; charset=utf-8',
+            'Cache-Control': 'no-store, must-revalidate',
+          });
           res.end(index);
         });
         return;
@@ -81,7 +84,13 @@ const server = http.createServer((req, res) => {
       const ext = path.extname(filePath).toLowerCase();
       const headers = { 'Content-Type': MIME[ext] || 'application/octet-stream' };
       if (rel.startsWith('/assets/')) {
+        // arquivos com hash no nome: podem ser cacheados para sempre
         headers['Cache-Control'] = 'public, max-age=31536000, immutable';
+      } else if (ext === '.html') {
+        // Sem isto o navegador cacheia o index.html por heurística própria e o
+        // usuário continua carregando o JS ANTIGO depois de uma atualização —
+        // dando a impressão de que a nova versão não foi aplicada.
+        headers['Cache-Control'] = 'no-store, must-revalidate';
       }
       res.writeHead(200, headers);
       res.end(data);

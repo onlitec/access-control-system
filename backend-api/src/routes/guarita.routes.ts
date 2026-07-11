@@ -153,6 +153,81 @@ router.post('/devices/:id/close', portariaMiddleware, async (req: Request, res: 
   }
 });
 
+// ── GET /api/guarita/devices/:id/stored-events ───────────────────────────
+// Diagnóstico: lê da MEMÓRIA do módulo a contagem de eventos armazenados e o
+// último evento gravado — prova se acionamentos de controle chegam ao módulo.
+router.get('/devices/:id/stored-events', async (req: Request, res: Response): Promise<void> => {
+  try {
+    const device = await NiceGuaritaService.getDevice(req.params.id);
+    const [count, lastEvent] = await Promise.all([
+      NiceGuaritaProtocol.readEventCount(device.ip, device.port),
+      NiceGuaritaProtocol.readLastEvent(device.ip, device.port),
+    ]);
+    // Varredura opcional (?scan=N): amostra N ponteiros espalhados por 0-8191 e
+    // agrega tipos/datas — revela se acionamentos de controle já chegaram ao módulo
+    const scanN = Math.min(parseInt(String(req.query.scan ?? '0'), 10) || 0, 256);
+    // Janela opcional (?from=&to=): varre ponteiros contíguos dessa faixa
+    const fromP = parseInt(String(req.query.from ?? ''), 10);
+    const toP = parseInt(String(req.query.to ?? ''), 10);
+    let scan: any = undefined;
+    if (!Number.isNaN(fromP) && !Number.isNaN(toP) && toP >= fromP) {
+      const events: any[] = [];
+      for (let p = fromP; p <= Math.min(toP, 8191) && events.length < 256; p++) {
+        const ev = await NiceGuaritaProtocol.readEventAt(device.ip, device.port, p).catch(() => null);
+        if (ev) events.push({ pointer: p, type: ev.type, serial: ev.serial, dateTime: ev.dateTime, deviceKind: ev.deviceKind, output: ev.output });
+      }
+      res.json({ storedEvents: count, lastEvent, window: events });
+      return;
+    }
+    if (scanN > 0) {
+      const step = Math.floor(8192 / scanN);
+      const byType: Record<string, number> = {};
+      let newest: any = null;
+      let newestControl: any = null;
+      for (let i = 0; i < scanN; i++) {
+        const ev = await NiceGuaritaProtocol.readEventAt(device.ip, device.port, i * step).catch(() => null);
+        if (!ev) continue;
+        byType[ev.type] = (byType[ev.type] ?? 0) + 1;
+        const entry = { pointer: i * step, type: ev.type, serial: ev.serial, dateTime: ev.dateTime, deviceKind: ev.deviceKind, output: ev.output };
+        if (!newest || ev.dateTime > newest.dateTime) newest = entry;
+        if ((ev.type === 'device_triggered' || ev.type === 'access_granted') && (!newestControl || ev.dateTime > newestControl.dateTime)) {
+          newestControl = entry;
+        }
+      }
+      scan = { sampled: scanN, byType, newestSampled: newest, newestControlSampled: newestControl };
+    }
+
+    res.json({
+      storedEvents: count,
+      lastEvent: lastEvent
+        ? { type: lastEvent.type, serial: lastEvent.serial, dateTime: lastEvent.dateTime, deviceKind: lastEvent.deviceKind, output: lastEvent.output, raw: lastEvent.rawFrame.toString('hex') }
+        : null,
+      scan,
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── POST /api/guarita/devices/:id/import-events ──────────────────────────
+// Importa o histórico de eventos da memória do módulo (job em segundo plano)
+router.post('/devices/:id/import-events', portariaMiddleware, async (req: Request, res: Response): Promise<void> => {
+  try {
+    const from = Math.max(0, parseInt(String(req.body?.from ?? '0'), 10) || 0);
+    const to = Math.min(8191, parseInt(String(req.body?.to ?? '8191'), 10) || 8191);
+    const progress = NiceGuaritaService.startImportStoredEvents(req.params.id, from, to);
+    res.status(202).json({ started: true, progress });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── GET /api/guarita/devices/:id/import-events (progresso do job) ─────────
+router.get('/devices/:id/import-events', async (req: Request, res: Response): Promise<void> => {
+  const progress = NiceGuaritaService.importJobs.get(req.params.id) ?? null;
+  res.json({ progress });
+});
+
 // ── GET /api/guarita/devices/:id/status ──────────────────────────────────
 router.get('/devices/:id/status', async (req: Request, res: Response): Promise<void> => {
   try {

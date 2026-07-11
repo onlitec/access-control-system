@@ -1,0 +1,9 @@
+version: '3.8'
+
+services:
+  onlitec-pwa:
+    build: .
+    container_name: onlitec-pwa
+    restart: always
+    ports:
+      - "3050:80"

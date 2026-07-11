@@ -20,6 +20,9 @@ import ActiveProvidersPage from './pages/ActiveProvidersPage';
 import FinishedProvidersPage from './pages/FinishedProvidersPage';
 import TodayAccessesPage from './pages/TodayAccessesPage';
 import DeviceStatusPage from './pages/DeviceStatusPage';
+import LiveWallPage from './pages/LiveWallPage';
+import VmsRecordingsPage from './pages/VmsRecordingsPage';
+import CameraPopupPage from './pages/CameraPopupPage';
 
 export interface RouteConfig {
   name: string;
@@ -81,6 +84,9 @@ const routes: RouteConfig[] = [
   { name: 'Prestadores em Atividade', path: '/prestadores-atividade', element: <ActiveProvidersPage /> },
   { name: 'Prestadores Finalizados', path: '/prestadores-finalizados', element: <FinishedProvidersPage /> },
   { name: 'Acessos Hoje', path: '/acessos-hoje', element: <TodayAccessesPage /> },
+  { name: 'Câmeras ao Vivo', path: '/cameras', element: <LiveWallPage /> },
+  { name: 'Gravações', path: '/gravacoes', element: <VmsRecordingsPage /> },
+  { name: 'Câmera Destacada', path: '/camera-view/:channelId', element: <CameraPopupPage />, visible: false },
   { name: 'Status Dispositivos', path: '/devices-status', element: <DeviceStatusPage /> },
   { name: 'Configuração Hikcentral', path: '/hikcentral-config', element: <HikcentralConfigPage /> },
   {

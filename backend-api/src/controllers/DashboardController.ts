@@ -2,6 +2,7 @@ import { Request, Response } from 'express';
 import { BaseController } from './BaseController';
 import { HikCentralService } from '../services/HikCentralService';
 import { EntityMappingService } from '../services/EntityMappingService';
+import { DeviceStatusService } from '../services/DeviceStatusService';
 import { prisma } from '../index';
 
 export class DashboardController extends BaseController {
@@ -18,9 +19,16 @@ export class DashboardController extends BaseController {
                 EntityMappingService.resolveOrgCodesWithFallback('/painel/staff'),
             ]);
 
-            // Contar do banco local (sincronizado em tempo real pelos endpoints)
-            const [totalResidents, totalProviders, totalStaff] = await Promise.all([
-                prisma.person.count({ where: { orgIndexCode: { in: residentCodes } } }),
+            // Contar do banco local (sincronizado em tempo real pelos endpoints).
+            // "Moradores" = quem efetivamente reside (is_resident); proprietário
+            // não-residente conta só em totalOwners. Null = true (cadastros antigos),
+            // por isso os filtros aceitam explicitamente true OU null.
+            const residesFilter = { OR: [{ is_resident: true }, { is_resident: null }] };
+            const ownerFilter = { OR: [{ is_owner: true }, { is_owner: null }] };
+            const [totalResidents, totalOwners, ownersResiding, totalProviders, totalStaff] = await Promise.all([
+                prisma.person.count({ where: { orgIndexCode: { in: residentCodes }, ...residesFilter } }),
+                prisma.person.count({ where: { orgIndexCode: { in: residentCodes }, ...ownerFilter } }),
+                prisma.person.count({ where: { orgIndexCode: { in: residentCodes }, AND: [residesFilter, ownerFilter] } }),
                 prisma.person.count({ where: { orgIndexCode: { in: prestadoresCodes } } }),
                 prisma.person.count({ where: { orgIndexCode: { in: staffCodes } } }),
             ]);
@@ -88,14 +96,13 @@ export class DashboardController extends BaseController {
             }
             const hourlyAccess = hourCounts.map((count, hour) => ({ hour, count }));
 
-            // Fetch device status from HikCentral
+            // Status de dispositivos: locais (videoporteiros + MG3000) + HikCentral (se configurado)
             let onlineDevices = 0;
             let offlineDevices = 0;
             try {
-                const deviceResult = await HikCentralService.getAcsDeviceList(1, 100);
-                const devices = deviceResult?.data?.list || [];
-                onlineDevices = devices.filter((d: any) => d.status === 1).length;
-                offlineDevices = devices.filter((d: any) => d.status === 0).length;
+                const devices = await DeviceStatusService.getAll();
+                onlineDevices = devices.filter((d) => d.status === 'online').length;
+                offlineDevices = devices.filter((d) => d.status === 'offline').length;
             } catch (err) {
                 console.error('Error fetching devices for stats:', err);
             }
@@ -104,6 +111,8 @@ export class DashboardController extends BaseController {
 
             return this.success(res, {
                 totalResidents,
+                totalOwners,
+                ownersResiding,
                 totalVisitors,
                 activeVisits,
                 completedVisits: totalVisitors - activeVisits,

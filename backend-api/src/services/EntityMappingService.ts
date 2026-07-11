@@ -99,8 +99,10 @@ export class EntityMappingService {
      */
     public static getFallbackOrgCodes(pageRoute: string): string[] {
         const fallbacks: Record<string, string[]> = {
-            '/painel/residents': ['2'],       // MORADORES
-            '/painel/staff': ['4'],           // PORTARIA
+            // '2' e '7' são ambos MORADORES (ver HIK_ORG_NAMES): '7' é o default
+            // do cadastro local/importação Guarita; '2' vem de instalações HikCentral
+            '/painel/residents': ['2', '7'],  // MORADORES
+            '/painel/staff': ['4', '5'],      // PORTARIA
             '/painel/service-providers': ['3'], // PRESTADORES
         };
         return fallbacks[pageRoute] || [];

@@ -23,6 +23,9 @@ import {
     KeyRound,
     Layers,
     Settings,
+    UserCheck,
+    Video,
+    HardDrive,
 } from 'lucide-react';
 import { avatarGradient } from '@/utils/avatarColor';
 
@@ -55,8 +58,16 @@ const menuSections = [
         ],
     },
     {
+        title: 'Gerenciador de Imagens',
+        items: [
+            { to: '/admin/vms-devices', icon: Video, label: 'Câmeras / NVRs / DVRs', end: false },
+            { to: '/admin/vms-storage', icon: HardDrive, label: 'Armazenamento', end: false },
+        ],
+    },
+    {
         title: 'Auditoria',
         items: [
+            { to: '/admin/onboarding-review', icon: UserCheck, label: 'Aprovação Facial', end: false },
             { to: '/admin/audit-access', icon: ClipboardList, label: 'Logs de acesso', end: false },
             { to: '/admin/audit-admin', icon: List, label: 'Logs administrativos', end: false },
             { to: '/admin/reports', icon: BarChart3, label: 'Relatórios', end: false },

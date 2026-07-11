@@ -14,34 +14,45 @@ const isHikCentralConfigured = () =>
     (process.env.PROVIDER_TYPE ?? 'local').toLowerCase() === 'hikcentral' &&
     !!process.env.HIKCENTRAL_IP_BASE;
 
-/** Map local Visitor status to HikCentral appointment status codes */
-const localStatusToAppoint = (status: string | null): number => {
-    if (status === 'ACTIVE') return 2;   // checked-in
-    if (status === 'FINISHED') return 1; // checked-out
-    return 0;                            // scheduled / pre-registered
+/**
+ * Deriva o status efetivo de um visitante local combinando o campo `status`
+ * com a janela de tempo da visita (o campo `status` fica 'ACTIVE' por default
+ * e não é atualizado no checkout — a janela de tempo é a fonte de verdade,
+ * mesma lógica usada pelos contadores da dashboard).
+ */
+const localEffectiveStatus = (v: any): { code: number; text: string } => {
+    const now = new Date();
+    const start = v.visitStartTime ? new Date(v.visitStartTime) : null;
+    const end = v.visitEndTime ? new Date(v.visitEndTime) : null;
+    if (v.status === 'FINISHED' || (end && end < now)) return { code: 1, text: 'FINISHED' };
+    if (start && start <= now) return { code: 2, text: 'ACTIVE' };
+    return { code: 0, text: 'SCHEDULED' };
 };
 
-const serializeLocalVisitor = (v: any) => ({
-    id: v.id,
-    visitor_id: v.id,
-    visitor_name: v.full_name || `${v.name || ''} ${v.surname || ''}`.trim() || 'Sem nome',
-    visitor_group_name: v.purpose || 'Visita',
-    plate_no: v.plateNo || '',
-    certificate_no: v.certificateNo || v.document || '',
-    phone_num: v.phone || '',
-    appoint_status: localStatusToAppoint(v.status),
-    appoint_status_text: v.status || 'SCHEDULED',
-    appoint_start_time: v.visitStartTime?.toISOString?.() || v.visitStartTime || null,
-    appoint_end_time: v.visitEndTime?.toISOString?.() || v.visitEndTime || null,
-    visit_start_time: null,
-    visit_end_time: null,
-    // Pass through rich local fields so the page can show them directly
-    visiting_unit: v.visiting_unit || null,
-    visiting_block: v.visiting_block || null,
-    tower: v.tower || null,
-    notes: v.notes || null,
-    photo_url: v.photo_url || null,
-});
+const serializeLocalVisitor = (v: any) => {
+    const eff = localEffectiveStatus(v);
+    return {
+        id: v.id,
+        visitor_id: v.id,
+        visitor_name: v.full_name || `${v.name || ''} ${v.surname || ''}`.trim() || 'Sem nome',
+        visitor_group_name: v.purpose || 'Visita',
+        plate_no: v.plateNo || '',
+        certificate_no: v.certificateNo || v.document || '',
+        phone_num: v.phone || '',
+        appoint_status: eff.code,
+        appoint_status_text: eff.text,
+        appoint_start_time: v.visitStartTime?.toISOString?.() || v.visitStartTime || null,
+        appoint_end_time: v.visitEndTime?.toISOString?.() || v.visitEndTime || null,
+        visit_start_time: null,
+        visit_end_time: null,
+        // Pass through rich local fields so the page can show them directly
+        visiting_unit: v.visiting_unit || null,
+        visiting_block: v.visiting_block || null,
+        tower: v.tower || null,
+        notes: v.notes || null,
+        photo_url: v.photo_url || null,
+    };
+};
 
 const serializeLocalProvider = (p: any) => {
     const now = new Date();
@@ -130,8 +141,8 @@ router.get('/visitantes', async (req: Request, res: Response) => {
 
 router.get('/visitantes-atividade', async (req: Request, res: Response) => {
     if (!isHikCentralConfigured()) {
-        const rows = await prisma.visitor.findMany({ where: { status: 'ACTIVE' }, orderBy: { createdAt: 'desc' }, take: 500 });
-        const data = rows.map(serializeLocalVisitor);
+        const rows = await prisma.visitor.findMany({ orderBy: { createdAt: 'desc' }, take: 500 });
+        const data = rows.map(serializeLocalVisitor).filter(v => v.appoint_status === STATUS.CHECKED_IN);
         return res.json({ data, total: data.length });
     }
     try {
@@ -147,8 +158,8 @@ router.get('/visitantes-atividade', async (req: Request, res: Response) => {
 
 router.get('/visitantes-finalizados', async (req: Request, res: Response) => {
     if (!isHikCentralConfigured()) {
-        const rows = await prisma.visitor.findMany({ where: { status: 'FINISHED' }, orderBy: { createdAt: 'desc' }, take: 500 });
-        const data = rows.map(serializeLocalVisitor);
+        const rows = await prisma.visitor.findMany({ orderBy: { createdAt: 'desc' }, take: 500 });
+        const data = rows.map(serializeLocalVisitor).filter(v => v.appoint_status === STATUS.CHECKED_OUT);
         return res.json({ data, total: data.length });
     }
     try {
@@ -250,10 +261,14 @@ router.get('/internal-providers', async (req: Request, res: Response) => {
  * Retorna lista de terminais (dispositivos ACS) do HikCentral.
  */
 router.get('/terminals', async (req: Request, res: Response) => {
+    if (!isHikCentralConfigured()) {
+        // Standalone: sem terminais externos — captura usa os videoporteiros locais
+        return res.json({ data: [], total: 0 });
+    }
     try {
         const { type = 'acs' } = req.query;
         console.log(`[HikCentral] Buscando terminais (tipo: ${type})...`);
-        
+
         let result;
         if (type === 'acs') {
             result = await HikCentralService.getAcsDeviceList(1, 100);
@@ -290,6 +305,9 @@ router.get('/person-properties', async (req: Request, res: Response) => {
     try {
         // Fallback rígido garantido conforme requisito
         const defaultOptions = ['TORRE - PERFECTO', 'TORRE - NOBILE', 'TORRE - DESEO', 'TORRE - PARAÍSO'];
+
+        // Standalone: sem HikCentral, responde direto o fallback local
+        if (!isHikCentralConfigured()) return res.json({ options: defaultOptions });
 
         try {
             // Tentativa de buscar os campos customizados do HikCentral (Artemis OpenAPI)
@@ -353,6 +371,9 @@ router.get('/access-levels', async (req: Request, res: Response) => {
 });
 
 router.post('/residents/sync', async (req: Request, res: Response) => {
+    if (!isHikCentralConfigured()) {
+        return res.json({ success: true, count: 0, message: 'Sistema standalone: dados 100% locais, nada a sincronizar' });
+    }
     try {
         const orgs = await HikCentralService.getOrgList(1, 500);
         const orgList: any[] = orgs?.data?.list || [];
@@ -379,6 +400,10 @@ router.post('/remote-capture', async (req: Request, res: Response) => {
 
         if (!deviceIndexCode) {
             return res.status(400).json({ error: 'deviceIndexCode é obrigatório' });
+        }
+
+        if (!isHikCentralConfigured()) {
+            return res.status(400).json({ error: 'Sistema standalone: captura remota usa os videoporteiros locais (/api/doorbell)' });
         }
 
         console.log(`[Remote Capture] Requisição recebida para dispositivo: ${deviceIndexCode}`);

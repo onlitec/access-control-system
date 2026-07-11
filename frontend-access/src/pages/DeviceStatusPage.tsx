@@ -65,7 +65,7 @@ export default function DeviceStatusPage() {
                     <div className="col-span-full flex flex-col items-center justify-center p-12 border-2 border-dashed rounded-lg bg-muted/50">
                         <Monitor className="h-12 w-12 text-muted-foreground mb-4" />
                         <p className="text-lg font-medium">Nenhum dispositivo encontrado</p>
-                        <p className="text-sm text-muted-foreground">Verifique a configuração da integração HikCentral.</p>
+                        <p className="text-sm text-muted-foreground">Cadastre videoporteiros, receptores Guarita ou leitores/controladoras faciais no Painel de Integrações.</p>
                     </div>
                 ) : (
                     devices.map((device) => (

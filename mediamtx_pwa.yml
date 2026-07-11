@@ -1,0 +1,31 @@
+# Arquivo de configuração standalone para o MediaMTX (PWA)
+# Execute o MediaMTX apontando para este arquivo.
+
+logLevel: info
+
+# Desabilita protocolos não utilizados pelo seu PWA
+rtmp: no
+srt: no
+webrtc: yes # Deixando WebRTC habilitado na porta padrão 8889
+webrtcAddress: :8889
+
+# Configuração HLS (Porta requisitada para o PWA da nuvem)
+hls: yes
+hlsAddress: :8888
+hlsVariant: lowLatency
+
+# Configuração RTSP de entrada
+rtsp: yes
+rtspAddress: :8554
+protocols: [tcp]
+
+# Caminhos das Câmeras da Plataforma NVR
+paths:
+  # Exemplo de canal (PWA vai acessar em: http://100.77.220.32:8888/camera1/index.m3u8)
+  camera1:
+    # SUBSTITUA PELA URL RTSP REAL DA SUA PLATAFORMA NVR:
+    # Formato Hikvision: rtsp://admin:senha123@172.20.120.44:554/Streaming/Channels/101
+    source: rtsp://SEU_USUARIO:SUA_SENHA@172.20.120.44:554/Streaming/Channels/101
+
+  camera2:
+    source: rtsp://SEU_USUARIO:SUA_SENHA@172.20.120.44:554/Streaming/Channels/201

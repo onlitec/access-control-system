@@ -8,9 +8,14 @@ export class TerminalController {
      */
     public listTerminals = async (req: Request, res: Response) => {
         try {
+            // Standalone: sem HikCentral não existem terminais externos a listar
+            if (!(await HikCentralService.isConfigured())) {
+                res.json({ success: true, data: [], total: 0 });
+                return;
+            }
             const pageNo = parseInt(req.query.pageNo as string) || 1;
             const pageSize = parseInt(req.query.pageSize as string) || 100;
-            
+
             const result = await HikCentralService.getAcsDeviceList(pageNo, pageSize);
             const list = result?.data?.list || [];
             

@@ -118,6 +118,7 @@ export default function ResidentsPage() {
       notes: '',
       access_levels: [] as string[],
       is_owner: true,
+      is_resident: true,
       parkingSpaces: '',
       vehiclePlate: '',
       department_id: ''
@@ -237,6 +238,7 @@ export default function ResidentsPage() {
         notes: resident.notes || '',
         access_levels: [],
         is_owner: resident.is_owner ?? true,
+        is_resident: resident.is_resident ?? true,
         parkingSpaces: resident.parkingSpaces !== null && resident.parkingSpaces !== undefined ? String(resident.parkingSpaces) : '',
         vehiclePlate: resident.vehiclePlate || '',
         cardSerial: resident.cardSerial || '',
@@ -262,6 +264,7 @@ export default function ResidentsPage() {
         notes: '',
         access_levels: [],
         is_owner: true,
+        is_resident: true,
         parkingSpaces: '',
         vehiclePlate: '',
         cardSerial: '',
@@ -1011,6 +1014,26 @@ export default function ResidentsPage() {
 
                             <FormField
                               control={form.control}
+                              name="is_resident"
+                              render={({ field }) => (
+                                <FormItem className="flex flex-row items-start space-x-4 space-y-0 p-5 border border-zinc-200 rounded-xl bg-zinc-50/50">
+                                  <FormControl>
+                                    <Checkbox
+                                      checked={field.value}
+                                      onCheckedChange={field.onChange}
+                                      className="h-5 w-5 data-[state=checked]:bg-red-600 data-[state=checked]:border-red-600 mt-0.5"
+                                    />
+                                  </FormControl>
+                                  <div className="space-y-1 leading-none">
+                                    <FormLabel className="text-base font-bold text-zinc-800 cursor-pointer select-none">Reside no Condomínio</FormLabel>
+                                    <p className="text-sm text-zinc-500">Desmarque para proprietário que não mora na unidade — ele não entra na contagem de moradores.</p>
+                                  </div>
+                                </FormItem>
+                              )}
+                            />
+
+                            <FormField
+                              control={form.control}
                               name="notes"
                               render={({ field }) => (
                                 <FormItem>
@@ -1175,7 +1198,9 @@ export default function ResidentsPage() {
                     <TableCell>
                       <div className="font-bold text-zinc-900 text-base">{resident.full_name}</div>
                       {resident.is_owner ? (
-                        <div className="text-[10px] uppercase font-black tracking-widest text-zinc-400 mt-0.5">Proprietário</div>
+                        <div className="text-[10px] uppercase font-black tracking-widest text-zinc-400 mt-0.5">
+                          {resident.is_resident === false ? 'Proprietário · não reside' : 'Proprietário morador'}
+                        </div>
                       ) : (
                         <div className="text-[10px] uppercase font-bold tracking-widest text-zinc-400 mt-0.5">Morador</div>
                       )}

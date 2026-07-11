@@ -10,7 +10,8 @@ param(
     [string]$HikAppKey = "",
     [string]$HikAppSecret = "",
     [string]$AdminEmail = "admin@onliacesso.local",
-    [string]$AppVersion = "0.0.0"
+    [string]$AppVersion = "0.0.0",
+    [string]$InstallVms = "0"
 )
 
 $ErrorActionPreference = "Stop"
@@ -123,6 +124,15 @@ try {
     foreach ($d in @("data", "logs", "config", "backups")) {
         New-Item -ItemType Directory -Force -Path (Join-Path $TargetDir $d) | Out-Null
     }
+
+    # NOTA: TLS/HTTPS (nginx ssl_certificate + ssl_certificate_key em PEM) foi
+    # planejado mas revertido nesta versao - New-SelfSignedCertificate gera o
+    # certificado, mas exportar a chave privada em PEM a partir dele exige
+    # OpenSSL ou codificacao ASN.1/PKCS#1 manual, que nao tem suporte nativo
+    # confiavel no `powershell.exe` (PowerShell 5.1) usado pelo Inno Setup.
+    # O proxy permanece em HTTP simples ate isso ser resolvido corretamente
+    # (empacotar um openssl.exe, ou emitir via ACME/Let's Encrypt quando
+    # houver dominio publico).
 
     $Bin     = Join-Path $TargetDir "binaries"
     $Apps    = Join-Path $TargetDir "apps"
@@ -261,6 +271,26 @@ PostgreSQL (usuario postgres, porta $PgPort): $DbPassword
     # WinSW v3 grava os logs dos servicos ao lado dos wrappers (services\)
     Set-EnvKey "SERVICE_LOGS_DIR" "$TargetDir\services" $true
     Log "Chaves de infraestrutura garantidas no .env (APP_VERSION=$AppVersion)."
+
+    # ---- VMS: chaves de ambiente (só quando componente selecionado).
+    # Nomes DEVEM bater com backend-api/src/vms/config.ts e vms.routes.ts.
+    if ($InstallVms -eq "1") {
+        Set-EnvKey "MEDIAMTX_API_URL"   "http://127.0.0.1:9997"
+        Set-EnvKey "VMS_PORT"           "3011"
+        Set-EnvKey "VMS_RECORDINGS_DIR" "$TargetDir\data\recordings"
+        Set-EnvKey "VMS_MAX_DISK_GB"    "0"
+        # Espaco livre minimo no disco: abaixo disso o VMS apaga gravacoes antigas
+        # e, se persistir, PAUSA a gravacao (disco cheio trava o MediaMTX e ameaca
+        # o PostgreSQL). Ver docs do modulo VMS.
+        Set-EnvKey "VMS_MIN_FREE_GB"    "10"
+        Set-EnvKey "RCLONE_PATH"        "$Bin\rclone\rclone.exe"
+        Set-EnvKey "RCLONE_CONFIG"      "$TargetDir\config\rclone.conf"
+        # Token compartilhado backend-api <-> vms-service <-> hooks MediaMTX
+        # (sem Overwrite: preservado em upgrades para não invalidar hooks ativos)
+        Set-EnvKey "VMS_INTERNAL_TOKEN" (New-SecureToken 32)
+        New-Item -ItemType Directory -Force -Path "$TargetDir\data\recordings" | Out-Null
+        Log "Chaves VMS garantidas no .env."
+    }
 
     # ------------------------------------------- 6. Permissoes (ACL) e initdb
     # O postgres.exe recusa executar com token administrativo, entao o servico
@@ -448,6 +478,10 @@ PostgreSQL (usuario postgres, porta $PgPort): $DbPassword
         "onliacesso-admin",
         "onliacesso-proxy"
     )
+    if ($InstallVms -eq "1") {
+        $ServiceOrder += @("onliacesso-mediamtx", "onliacesso-vms")
+        Log "Servicos VMS incluidos na ordem de inicializacao."
+    }
 
     foreach ($svc in $ServiceOrder) {
         $svcExe = Join-Path $ServicesDir "$svc.exe"

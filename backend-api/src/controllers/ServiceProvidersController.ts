@@ -1,8 +1,5 @@
 import { Request, Response } from 'express';
 import { prisma } from '../database';
-import { HikCentralService } from '../services/HikCentralService';
-import { EntityMappingService } from '../services/EntityMappingService';
-import { HIK_ORG_NAMES } from '../config/hik-constants';
 import { Prisma } from '@prisma/client';
 
 const SERVICE_PROVIDER_TYPES = ['fixed', 'temporary'] as const;
@@ -235,84 +232,6 @@ export class ServiceProvidersController {
             const limitNum = Math.min(200, Math.max(1, Number.parseInt(limit, 10) || 20));
             const normalizedSearch = (search || '').trim();
 
-            const prestadoresOrgCodes = await EntityMappingService.resolveOrgCodesWithFallback('/painel/service-providers');
-            console.log(`[HikCentral] PRESTADORES orgCodes resolvidos: ${prestadoresOrgCodes.join(',')}`);
-
-            try {
-                const hikPromise = HikCentralService.getPersonList({ pageNo: 1, pageSize: 500 });
-                const hikResult = await Promise.race([
-                    hikPromise,
-                    new Promise<null>((_, reject) => setTimeout(() => reject(new Error('timeout')), 10000))
-                ]) as any;
-                const hikPersons = hikResult?.data?.list || [];
-
-                if (hikPersons.length > 0) {
-                    const prestadores = hikPersons.filter((p: any) =>
-                        prestadoresOrgCodes.includes(String(p.orgIndexCode || ''))
-                    );
-
-                    for (const p of prestadores) {
-                        try {
-                            const hikId = p.personId || p.indexCode;
-                            if (!hikId) continue;
-                            await prisma.person.upsert({
-                                where: { hikPersonId: hikId },
-                                update: {
-                                    firstName: p.personGivenName || p.personName || '',
-                                    lastName: p.personFamilyName || '',
-                                    phone: p.phoneNo || null,
-                                    email: p.email || null,
-                                    orgIndexCode: String(p.orgIndexCode || '3'),
-                                },
-                                create: {
-                                    firstName: p.personGivenName || p.personName || '',
-                                    lastName: p.personFamilyName || '',
-                                    phone: p.phoneNo || null,
-                                    email: p.email || null,
-                                    orgIndexCode: String(p.orgIndexCode || '3'),
-                                    hikPersonId: hikId,
-                                },
-                            });
-                        } catch (_) { }
-                    }
-
-                    let filtered = prestadores;
-                    if (normalizedSearch) {
-                        const s = normalizedSearch.toLowerCase();
-                        filtered = prestadores.filter((p: any) =>
-                            (p.personGivenName + ' ' + p.personFamilyName).toLowerCase().includes(s) ||
-                            p.phoneNo?.toLowerCase().includes(s) ||
-                            p.email?.toLowerCase().includes(s)
-                        );
-                    }
-
-                    return res.json({
-                        data: filtered.map((p: any) => {
-                            const orgCode = String(p.orgIndexCode || '3');
-                            const orgName = HIK_ORG_NAMES[orgCode] || p.orgName || 'PRESTADORES';
-                            return {
-                                id: p.personId || p.indexCode,
-                                full_name: `${p.personGivenName || p.personName || ''} ${p.personFamilyName || ''}`.trim(),
-                                document: p.certificateNo || '',
-                                service_type: orgName,
-                                provider_type: 'recurrent',
-                                company_name: null,
-                                phone: p.phoneNo || null,
-                                email: p.email || null,
-                                photo_url: p.hikPersonId ? `/api/hikcentral/person-photo/${p.personId || p.indexCode}` : null,
-                                department: orgName,
-                                hikPersonId: p.personId || p.indexCode || null,
-                                created_at: p.createTime || new Date().toISOString(),
-                                updated_at: p.updateTime || new Date().toISOString(),
-                            };
-                        }),
-                        count: filtered.length,
-                        source: 'hikcentral',
-                    });
-                }
-            } catch (hikErr: any) {
-                console.warn('[HikCentral] Fallback service-providers para banco local:', hikErr.message);
-            }
 
             const skip = (pageNum - 1) * limitNum;
             const where: Prisma.ServiceProviderWhereInput = normalizedSearch

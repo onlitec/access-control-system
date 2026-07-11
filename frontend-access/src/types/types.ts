@@ -37,6 +37,8 @@ export interface Resident {
   photo_url: string | null;
   hikcentral_person_id: string | null;
   is_owner: boolean;
+  /** proprietário pode não residir; morador pode não ser proprietário */
+  is_resident: boolean;
   notes: string | null;
   created_by: string | null;
   created_at: string;
@@ -134,6 +136,8 @@ export interface DeviceStatus {
 
 export interface DashboardStats {
   totalResidents: number;
+  totalOwners?: number;
+  ownersResiding?: number;
   totalStaff: number;
   totalVisitors: number;
   activeVisits: number;

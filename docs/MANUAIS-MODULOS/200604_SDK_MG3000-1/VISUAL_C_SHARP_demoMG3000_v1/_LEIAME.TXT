@@ -1,0 +1,46 @@
+************************************
+* NICE BRASIL - CONTROLE DE ACESSO *
+*                                  *
+* VISUAL C# 2015                   *
+* REVISÃO: 17/02/2020              *
+*                                  *
+************************************
+
+:: COMANDOS IMPLEMENTADOS ::
+
+- Comando 4 : Envio automático de evento
+- Comando 7 : Ler número de dispositivos na memória
+- Comando 11: Escrever data e hora
+- Comando 12: Ler data e hora
+- Comando 13: Acionar saída
+- Comando 29: Atualizar Receptores
+- Comando 35: Ativar modo remoto (RECEPTORES) - 90 segundos
+- Comando 42: Dispositivo não cadastrado
+- Comando 43: Interromper timeout dos comandos PROGRESSIVOS
+- Comando 46: Disp. não cadastrado - RECs (TA, CT e TP)
+- Comando 67/0: Cadastrar dispositivos
+- Comando 67/4: Apagar dispositivos
+- Comando 70: Ler dispositivos (PROGRESSIVO)
+
+- Comando 57*: Digital ANVIZ não cadastrada (Guarita)
+- Comando 59*: Solicitar ID Digital vago
+- Comando 74*: Vincular Digital ANVIZ (Biometria)
+
+* Comandos EXCLUSIVOS para Sistema Biométrico RS-485
+(Módulo MG3000 + Receptor RMF3004 + Controladores Biométricos RS-485 "LN")
+
+: NOTA
+O Comando 57 (Digital ANVIZ não cadastrada) pode ser substituído pela captura
+por LN-BIO (Hamster USB). Consulte o SDK do Sistema Biométrico para mais informações.
+
+
+:: INFORMAÇÕES DO VISUAL STUDIO ::
+
+- Framework de destino: .NET Framework 3.5
+- Tipo de saída: Aplicativo do Windows x86
+- Visual Studio (C#): Community 2015
+
+
+:: REFERÊNCIA TCP/IP ::
+
+http://www.codeproject.com/Articles/1608/Asynchronous-socket-communication
