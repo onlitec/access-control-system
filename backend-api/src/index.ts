@@ -5,6 +5,7 @@ import { Prisma, PrismaClient } from '@prisma/client';
 import { HikCentralService } from './services/HikCentralService';
 import { NiceGuaritaService } from './services/NiceGuaritaService';
 import { EntityMappingService } from './services/EntityMappingService';
+import { DeviceStatusService } from './services/DeviceStatusService';
 import { HikCentralSyncService } from './services/HikCentralSyncService';
 import {
     calculateSecurityMetrics,
@@ -35,6 +36,8 @@ import providersRoutes from './routes/service-providers.routes';
 import residentAuthRoutes from './routes/resident-auth.routes';
 import doorbellRoutes from './routes/doorbell.routes';
 import guaritaRoutes from './routes/guarita.routes';
+import facialAccessRoutes from './routes/facial-access.routes';
+import vmsRoutes from './routes/vms.routes';
 import deliveriesRoutes from './routes/deliveries.routes';
 import { config } from './config/unifiedConfig';
 import { AuditService } from './services/AuditService';
@@ -89,6 +92,12 @@ async function resolveOrgCodesByName(): Promise<Record<string, string>> {
     const now = Date.now();
     if (Object.keys(orgNameCache).length > 0 && (now - orgCacheTimestamp) < ORG_CACHE_TTL_MS) {
         return orgNameCache;
+    }
+    // Standalone: sem HikCentral configurado, usa direto o mapa estático (sem log)
+    if (!(await HikCentralService.isConfigured())) {
+        const staticMap: Record<string, string> = {};
+        Object.entries(HIK_ORG_NAMES).forEach(([code, name]) => { staticMap[name.toUpperCase()] = code; });
+        return staticMap;
     }
     try {
         const result = await Promise.race([
@@ -236,6 +245,7 @@ app.use('/api/residents', residentsRoutes);
 app.use('/api/staff', staffRoutes);
 app.use('/api/service-providers', providersRoutes);
 app.use('/api/events', eventsRoutes);
+app.use('/api/vms', vmsRoutes);
 
 // ============ Platform Routes (Integrated with HikCentral) ============
 app.use('/api/hikcentral', hikcentralVisitorsRouter);
@@ -554,6 +564,8 @@ app.use('/api/security', securityRoutes);
 app.use('/api/resident', residentAuthRoutes);
 app.use('/api/doorbell', doorbellRoutes);
 app.use('/api/guarita', guaritaRoutes);
+app.use('/api/facial-access', facialAccessRoutes);
+app.use('/api/vms', vmsRoutes);
 app.use('/api/deliveries', deliveriesRoutes);
 app.use('/api/ops', opsRoutes);
 app.use('/api/system-settings', systemSettingsRoutes);
@@ -570,15 +582,10 @@ app.get('/api/health', (req, res) => {
 // ============ Residents Sync (HikCentral + Local DB) ============
 // Handled in ResidentsController
 
-// ============ Sincronização completa de todas as pessoas por departamento ============
+// ============ Sincronização (legado) ============
+// Standalone: dados são 100% locais — não há sistema externo para sincronizar.
 app.post('/api/hikcentral/persons/sync', authMiddleware, async (req, res) => {
-    try {
-        const summary = await HikCentralSyncService.syncAll();
-        res.json({ success: true, ...summary });
-    } catch (error: any) {
-        console.error('[Sync] Erro geral:', error.message);
-        res.status(500).json({ error: error.message });
-    }
+    res.json({ success: true, totalSynced: 0, departments: {}, errors: [], info: 'Sistema standalone: dados 100% locais, nada a sincronizar' });
 });
 
 // ============ Person Photo Proxy (HikCentral) ============
@@ -595,54 +602,23 @@ const photoTokenMiddleware = (req: any, res: any, next: any) => {
 app.get('/api/hikcentral/person-photo/:personId', photoTokenMiddleware, authMiddleware, async (req, res) => {
     try {
         const { personId } = req.params;
-        const { picUri } = req.query;
-        const token = req.headers.authorization?.split(' ')[1];
 
-        // Se o picUri foi passado diretamente (otimização), usamos ele
-        if (picUri && typeof picUri === 'string' && picUri.length > 5) {
-            console.log(`[Photo Proxy] Usando picUri fornecido via query: ${picUri} para person ${personId}`);
-
-            let apiPath = picUri;
-            if (!picUri.startsWith('/')) {
-                apiPath = `/artemis/media/pic/${picUri}`;
-            }
-
-            try {
-                const buffer = await HikCentralService.hikRequestRaw(apiPath, { method: 'GET' });
-                res.set('Content-Type', 'image/jpeg');
+        // Standalone: fotos vêm SOMENTE do banco local (photoUrl base64/data URI)
+        const localPerson = await prisma.person.findFirst({
+            where: { OR: [{ hikPersonId: personId }, { id: personId }] },
+        });
+        if (localPerson?.photoUrl?.startsWith('data:')) {
+            const matches = localPerson.photoUrl.match(/^data:([^;]+);base64,(.+)$/);
+            if (matches) {
+                const contentType = matches[1];
+                const buffer = Buffer.from(matches[2], 'base64');
+                res.set('Content-Type', contentType);
                 res.set('Cache-Control', 'public, max-age=3600');
                 return res.send(buffer);
-            } catch (e: any) {
-                console.warn(`[Photo Proxy] Falha ao buscar picUri direto (${picUri}), tentando fallback...`);
             }
         }
 
-        // Primeiro checar se temos foto local no banco
-        const localPerson = await prisma.person.findFirst({ where: { hikPersonId: personId } });
-        if (localPerson?.photoUrl) {
-            // Se a foto local é base64, retorna como imagem
-            if (localPerson.photoUrl.startsWith('data:')) {
-                const matches = localPerson.photoUrl.match(/^data:([^;]+);base64,(.+)$/);
-                if (matches) {
-                    const contentType = matches[1];
-                    const buffer = Buffer.from(matches[2], 'base64');
-                    res.set('Content-Type', contentType);
-                    res.set('Cache-Control', 'public, max-age=3600');
-                    return res.send(buffer);
-                }
-            }
-        }
-
-        // Buscar foto do HikCentral via proxy autenticado (fallback lento)
-        const photoResult = await HikCentralService.getPersonPhoto(personId);
-
-        if (!photoResult) {
-            return res.status(404).json({ error: 'Foto não encontrada' });
-        }
-
-        res.set('Content-Type', photoResult.contentType);
-        res.set('Cache-Control', 'public, max-age=3600');
-        res.send(photoResult.buffer);
+        return res.status(404).json({ error: 'Foto não encontrada' });
     } catch (error: any) {
         console.error('[Photo Proxy] Erro:', error.message);
         res.status(500).json({ error: error.message });
@@ -691,6 +667,7 @@ app.post('/api/residents', authMiddleware, async (req, res) => {
         prismaData.block = body.block || null;
         prismaData.unit_number = body.unit_number || null;
         prismaData.is_owner = body.is_owner !== undefined ? body.is_owner : true;
+        prismaData.is_resident = body.is_resident !== undefined ? body.is_resident : true;
         prismaData.notes = body.notes || null;
         prismaData.photoUrl = body.photo_url || null;
         prismaData.document_photo_url = body.document_photo_url || null;
@@ -703,7 +680,7 @@ app.post('/api/residents', authMiddleware, async (req, res) => {
         // 1. Cadastrar no HikCentral se disponível (opcional — sistema funciona sem HikCentral)
         let hikPersonId = body.hikcentral_person_id || null;
 
-        if (!hikPersonId) {
+        if (!hikPersonId && await HikCentralService.isConfigured()) {
             try {
                 const hikResponse: any = await HikCentralService.addPerson({
                     personGivenName: prismaData.firstName,
@@ -829,6 +806,7 @@ app.patch('/api/residents/:id', authMiddleware, async (req, res) => {
             block: body.block !== undefined ? body.block : existing.block,
             unit_number: body.unit_number !== undefined ? body.unit_number : existing.unit_number,
             is_owner: body.is_owner !== undefined ? body.is_owner : existing.is_owner,
+            is_resident: body.is_resident !== undefined ? body.is_resident : existing.is_resident,
             notes: body.notes !== undefined ? body.notes : existing.notes,
             document_photo_url: body.document_photo_url !== undefined ? body.document_photo_url : existing.document_photo_url,
             parkingSpaces: body.parkingSpaces !== undefined ? (body.parkingSpaces !== null ? parseInt(body.parkingSpaces) : null) : existing.parkingSpaces,
@@ -840,7 +818,7 @@ app.patch('/api/residents/:id', authMiddleware, async (req, res) => {
         if (body.txSerial !== undefined) updateData.txSerial = body.txSerial;
 
         // 1. Sincronizar com HikCentral se tiver ID
-        if (existing.hikPersonId) {
+        if (existing.hikPersonId && await HikCentralService.isConfigured()) {
             try {
                 await HikCentralService.updatePerson({
                     personId: existing.hikPersonId,
@@ -1178,7 +1156,7 @@ app.post('/api/invites/complete', async (req, res) => {
 
         // Sincronizar com HikCentral (opcional — sistema funciona sem HikCentral)
         let hikVisitorId: string | undefined;
-        try {
+        if (await HikCentralService.isConfigured()) try {
             const hikResult: any = await HikCentralService.reserveVisitor({
                 visitorName: `${visitor.name} ${visitor.surname || ''}`.trim(),
                 certificateNo: doc || visitor.certificateNo || `DOC${Date.now()}`,
@@ -1305,8 +1283,8 @@ app.get('/api/access-logs', authMiddleware, async (req, res) => {
         const start = startTime || new Date(Date.now() - 86400000).toISOString();
         const end = endTime || new Date().toISOString();
 
-        // Try to fetch from HikCentral and store locally
-        if (source !== 'local') {
+        // Try to fetch from HikCentral and store locally (só quando integração configurada)
+        if (source !== 'local' && await HikCentralService.isConfigured()) {
             try {
                 const hikResult = await HikCentralService.getAccessLogs({
                     startTime: start,
@@ -1454,19 +1432,9 @@ app.get('/api/dashboard/stats', authMiddleware, async (req, res) => {
 
 app.get('/api/devices/status', authMiddleware, async (req, res) => {
     try {
-        const deviceResult = await HikCentralService.getAcsDeviceList(1, 100);
-        const devices = deviceResult?.data?.list || [];
-
-        // Return a clean list of devices with their status
-        const formattedDevices = devices.map((d: any) => ({
-            id: d.acsDevIndexCode || d.acsDeviceIndexCode,
-            name: d.acsDevName || d.acsDeviceName,
-            status: d.status === 1 ? 'online' : 'offline',
-            ip: d.acsDevIp || d.acsDeviceIp,
-            type: d.treatyType || d.acsDeviceType
-        }));
-
-        res.json(formattedDevices);
+        // Agrega locais (videoporteiros + Guarita MG3000) e HikCentral (se configurado)
+        const devices = await DeviceStatusService.getAll();
+        res.json(devices);
     } catch (error: any) {
         console.error('Devices Status Error:', error);
         res.status(500).json({ error: error.message });
@@ -1613,17 +1581,19 @@ app.get('/api/system/status', authMiddleware, async (req, res) => {
             dbStatus = 'ONLINE';
         } catch { dbStatus = 'OFFLINE'; }
 
-        // Check HikCentral connectivity
-        let hikStatus = 'UNKNOWN';
-        try {
-            await HikCentralService.getAccessLogs({
-                startTime: new Date(Date.now() - 60000).toISOString(),
-                endTime: new Date().toISOString(),
-                pageNo: 1,
-                pageSize: 1,
-            });
-            hikStatus = 'ONLINE';
-        } catch { hikStatus = 'OFFLINE'; }
+        // Check HikCentral connectivity (standalone: reporta NOT_CONFIGURED sem tentar)
+        let hikStatus = 'NOT_CONFIGURED';
+        if (await HikCentralService.isConfigured()) {
+            try {
+                await HikCentralService.getAccessLogs({
+                    startTime: new Date(Date.now() - 60000).toISOString(),
+                    endTime: new Date().toISOString(),
+                    pageNo: 1,
+                    pageSize: 1,
+                });
+                hikStatus = 'ONLINE';
+            } catch { hikStatus = 'OFFLINE'; }
+        }
 
         res.json({
             api: 'ONLINE',
@@ -1638,8 +1608,12 @@ app.get('/api/system/status', authMiddleware, async (req, res) => {
 });
 
 // ============ Background: Sincronização de Eventos de Acesso a cada 2 minutos ============
-setInterval(() => {
-    HikCentralSyncService.syncAccessEvents().catch(err =>
-        console.error('[Cron] Falha no syncAccessEvents:', err?.message || err)
-    );
+// Standalone (sem HikCentral configurado): não dispara sincronização nenhuma.
+setInterval(async () => {
+    try {
+        if (!(await HikCentralService.isConfigured())) return;
+        await HikCentralSyncService.syncAccessEvents();
+    } catch (err: any) {
+        console.error('[Cron] Falha no syncAccessEvents:', err?.message || err);
+    }
 }, 2 * 60 * 1000); // 2 minutos
