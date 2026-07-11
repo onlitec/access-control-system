@@ -5,7 +5,15 @@ certbot/
 certs/
 auth/
 .env
+.env.*
+!.env.example
+
+# Builds (gerados pelo CI/npm run build — nunca versionados)
 backend-api/dist/
+frontend-access/dist/
+frontend-admin/dist/
+frontend-cloud/dist/
+frontend-visitor/.next/
 
 # Arquivos temporários de teste
 .agent/
@@ -18,8 +26,18 @@ backend-api/testsprite_tests/
 backend-api/src/scripts/test-*.ts
 documentation/TECNOLOGIAS_E_ESTRUTURA.md
 
-# SDK de fornecedor (Nice MG3000) - binarios/demos de terceiros, nao redistribuir
+# SDKs de fornecedor - binarios/demos de terceiros, nao redistribuir
 sdk-nice/
+docs/LEITORES-FACIAIS/EN-HCNetSDK*/
+docs/LEITORES-FACIAIS/*.zip
+
+# IMAGENS DE CÂMERAS E TELAS COM DADOS DE MORADORES
+# Contêm pessoas identificáveis e informações pessoais (LGPD) — jamais
+# versionar, nem em repositório privado.
+prints-interface-nvr/
+docs/DASHBOARD-*.png
+docs/CADASTRO-*.png
+docs/PAINEL-*.png
 
 # Logs de runtime e arquivos de trabalho locais
 monitoring/audit.log

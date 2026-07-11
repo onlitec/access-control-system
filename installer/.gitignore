@@ -7,3 +7,8 @@ build-run-*.log
 
 # Segredos empacotados no instalador - NUNCA versionar (repositorio publico)
 windows/scripts/smtp-defaults.env
+
+# Cache do npm usado no build do instalador (não versionar)
+.npm-cache/
+stage/
+dist/
