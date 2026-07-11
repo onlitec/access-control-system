@@ -1,8 +1,42 @@
-# Access Control System
+# OnliAcesso — Controle de Acesso e Câmeras
 
 [![Security Regression](https://github.com/YOUR_ORG/YOUR_REPO/actions/workflows/security-regression.yml/badge.svg)](https://github.com/YOUR_ORG/YOUR_REPO/actions/workflows/security-regression.yml)
 
-Stack com backend API, frontends (admin/painel/login), PostgreSQL e Nginx reverse proxy.
+Sistema de controle de acesso para condomínios: moradores, visitantes,
+prestadores, entregas, terminais faciais, guarita e **câmeras (VMS)**. Funciona
+em modo **standalone** — todos os dados vêm do PostgreSQL local, sem depender de
+servidores externos.
+
+## Aplicações
+
+| Pasta | O que é |
+|---|---|
+| `backend-api/` | API (Express + Prisma). Inclui `src/vms/` — o serviço de câmeras, que roda como processo próprio |
+| `frontend-access/` | Painel da portaria: acessos, entregas, eventos e o **videowall** das câmeras |
+| `frontend-admin/` | Administração: usuários, integrações, cadastro de câmeras e armazenamento |
+| `frontend-visitor/` | Portal do morador/visitante (Next.js) |
+| `frontend-cloud/` | **PWA de acesso remoto às câmeras** (`cloud.onlitec.com.br`) |
+| `installer/` | Instalador Windows (Inno Setup) — o VMS é um componente opcional |
+| `deploy/cloud/` | Infraestrutura do acesso remoto: proxy, TURN e deploy da PWA |
+
+## VMS — câmeras
+
+Cadastro de câmeras IP, NVRs e DVRs (Hikvision/ISAPI, ONVIF ou RTSP), com:
+
+- **Ao vivo**: mosaico estilo NVR, WebRTC (latência abaixo de 1s) e HLS de reserva
+- **Gravação**: contínua, agendada, por evento (movimento/VCA) ou manual
+- **Armazenamento**: disco local com retenção, e envio para Google Drive, OneDrive,
+  pasta compartilhada (SMB), FTP ou SFTP via rclone
+- **Acesso remoto**: pela PWA em `cloud.onlitec.com.br`
+
+Componentes: **MediaMTX** (servidor de mídia) e **rclone**, empacotados no
+instalador e executados como serviços Windows (`onliacesso-mediamtx`,
+`onliacesso-vms`).
+
+> **Segurança:** a API de controle do MediaMTX (porta 9997) nunca deve ser
+> exposta — ela devolve as URLs RTSP **com as senhas das câmeras**. Todo acesso a
+> vídeo é autenticado pelo backend, e só usuários do sistema (não moradores)
+> podem ver as câmeras. Ver `deploy/cloud/README.md`.
 
 ## Quick Ops
 

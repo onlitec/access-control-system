@@ -1,0 +1,28 @@
+# Normaliza as quebras de linha no repositório (LF) e evita que o Windows
+# introduza CRLF em arquivos que rodam no Linux — um script .sh ou um Dockerfile
+# com CRLF simplesmente não executa no VPS ("bad interpreter: /bin/bash^M").
+* text=auto eol=lf
+
+# Sempre LF (executam em Linux/container)
+*.sh              text eol=lf
+Dockerfile        text eol=lf
+*.yml             text eol=lf
+*.yaml            text eol=lf
+*.conf            text eol=lf
+
+# Sempre CRLF (ferramentas do Windows)
+*.ps1             text eol=crlf
+*.bat             text eol=crlf
+*.cmd             text eol=crlf
+*.iss             text eol=crlf
+
+# Binários — nunca converter
+*.png             binary
+*.jpg             binary
+*.jpeg            binary
+*.ico             binary
+*.pdf             binary
+*.zip             binary
+*.exe             binary
+*.dll             binary
+*.node            binary
