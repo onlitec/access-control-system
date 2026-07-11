@@ -52,12 +52,49 @@ export interface DeviceStatusEntry {
  */
 export class DeviceStatusService {
 
+  // ── Cache com atualização em segundo plano ─────────────────────────────────
+  // As sondas de conectividade custam caro quando há equipamento fora do ar
+  // (até 5s de timeout cada; pings de Guarita ao MESMO módulo são serializados
+  // na conexão compartilhada — 4 portões inalcançáveis = ~20s). O dashboard e a
+  // página de status leem o cache; a varredura real roda em background.
+  private static cache: DeviceStatusEntry[] = [];
+  private static lastRefresh = 0;
+  private static refreshing: Promise<DeviceStatusEntry[]> | null = null;
+  private static readonly MAX_AGE_MS = 90_000;
+
+  /** Status agregado — responde na hora com o último resultado conhecido. */
   static async getAll(): Promise<DeviceStatusEntry[]> {
-    const [local, hik] = await Promise.all([
-      this.getLocalDevices(),
-      this.getHikCentralDevices(),
-    ]);
-    return [...local, ...hik];
+    const age = Date.now() - this.lastRefresh;
+    if (this.lastRefresh > 0 && age < this.MAX_AGE_MS) {
+      if (age > 30_000) void this.refresh().catch(() => {}); // renova em background
+      return this.cache;
+    }
+    return this.refresh(); // boot/cache expirado: varredura síncrona única
+  }
+
+  /** Varredura real (coalescida: chamadas concorrentes compartilham a mesma). */
+  static async refresh(): Promise<DeviceStatusEntry[]> {
+    if (this.refreshing) return this.refreshing;
+    this.refreshing = (async () => {
+      try {
+        const [local, hik] = await Promise.all([
+          this.getLocalDevices(),
+          this.getHikCentralDevices(),
+        ]);
+        this.cache = [...local, ...hik];
+        this.lastRefresh = Date.now();
+        return this.cache;
+      } finally {
+        this.refreshing = null;
+      }
+    })();
+    return this.refreshing;
+  }
+
+  /** Mantém o cache quente — chamado uma vez no boot (server.ts). */
+  static startBackgroundRefresh(intervalMs = 30_000): void {
+    void this.refresh().catch(() => {});
+    setInterval(() => { void this.refresh().catch(() => {}); }, intervalMs);
   }
 
   private static async getLocalDevices(): Promise<DeviceStatusEntry[]> {
@@ -67,6 +104,15 @@ export class DeviceStatusService {
       prisma.facialAccessDevice.findMany({ where: { enabled: true } }),
       prisma.videoDevice.findMany({ where: { enabled: true } }),
     ]);
+
+    // Vários "portões" lógicos do Guarita compartilham o mesmo módulo físico
+    // (ip:porta) — pinga cada módulo uma vez e reaproveita o resultado.
+    const guaritaPings = new Map<string, Promise<boolean>>();
+    const pingGuarita = (ip: string, port: number) => {
+      const key = `${ip}:${port}`;
+      if (!guaritaPings.has(key)) guaritaPings.set(key, NiceGuaritaProtocol.ping(ip, port));
+      return guaritaPings.get(key)!;
+    };
 
     const checks: Promise<DeviceStatusEntry>[] = [
       ...doorbells.map(async (d): Promise<DeviceStatusEntry> => ({
@@ -84,7 +130,7 @@ export class DeviceStatusService {
         ip: d.ip,
         type: 'Guarita IP (MG3000)',
         location: d.location,
-        status: (await NiceGuaritaProtocol.ping(d.ip, d.port)) ? 'online' : 'offline',
+        status: (await pingGuarita(d.ip, d.port)) ? 'online' : 'offline',
       })),
       ...facialDevices.map(async (d): Promise<DeviceStatusEntry> => ({
         id: d.id,

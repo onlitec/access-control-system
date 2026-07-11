@@ -10,6 +10,7 @@ import { guaritaEventServer } from './services/NiceGuaritaProtocol';
 import { NiceGuaritaService, setPassbackBroadcast } from './services/NiceGuaritaService';
 import { broadcastPassbackAlert } from './routes/guarita-passback.routes';
 import { facialAccessEventWatcher } from './services/FacialAccessEventWatcher';
+import { DeviceStatusService } from './services/DeviceStatusService';
 
 const port = process.env.PORT || 3001;
 
@@ -34,6 +35,10 @@ app.listen(Number(port), '0.0.0.0', () => {
     guaritaEventServer.on('server_error', (err: Error) => {
         console.error('[NiceGuarita] Event server error:', err.message);
     });
+    // ─────────────────────────────────────────────────────────────────────
+
+    // ── Cache de status de dispositivos (dashboard/página de status) ──────
+    DeviceStatusService.startBackgroundRefresh();
     // ─────────────────────────────────────────────────────────────────────
 
     // ── Terminais/controladoras faciais Hikvision: alertStream por device ─
