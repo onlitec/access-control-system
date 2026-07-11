@@ -10,7 +10,8 @@ param(
     [string]$HikAppKey = "",
     [string]$HikAppSecret = "",
     [string]$AdminEmail = "admin@onliacesso.local",
-    [string]$AppVersion = "0.0.0"
+    [string]$AppVersion = "0.0.0",
+    [string]$InstallVms = "0"
 )
 
 $ErrorActionPreference = "Stop"
@@ -271,6 +272,26 @@ PostgreSQL (usuario postgres, porta $PgPort): $DbPassword
     Set-EnvKey "SERVICE_LOGS_DIR" "$TargetDir\services" $true
     Log "Chaves de infraestrutura garantidas no .env (APP_VERSION=$AppVersion)."
 
+    # ---- VMS: chaves de ambiente (só quando componente selecionado).
+    # Nomes DEVEM bater com backend-api/src/vms/config.ts e vms.routes.ts.
+    if ($InstallVms -eq "1") {
+        Set-EnvKey "MEDIAMTX_API_URL"   "http://127.0.0.1:9997"
+        Set-EnvKey "VMS_PORT"           "3011"
+        Set-EnvKey "VMS_RECORDINGS_DIR" "$TargetDir\data\recordings"
+        Set-EnvKey "VMS_MAX_DISK_GB"    "0"
+        # Espaco livre minimo no disco: abaixo disso o VMS apaga gravacoes antigas
+        # e, se persistir, PAUSA a gravacao (disco cheio trava o MediaMTX e ameaca
+        # o PostgreSQL). Ver docs do modulo VMS.
+        Set-EnvKey "VMS_MIN_FREE_GB"    "10"
+        Set-EnvKey "RCLONE_PATH"        "$Bin\rclone\rclone.exe"
+        Set-EnvKey "RCLONE_CONFIG"      "$TargetDir\config\rclone.conf"
+        # Token compartilhado backend-api <-> vms-service <-> hooks MediaMTX
+        # (sem Overwrite: preservado em upgrades para não invalidar hooks ativos)
+        Set-EnvKey "VMS_INTERNAL_TOKEN" (New-SecureToken 32)
+        New-Item -ItemType Directory -Force -Path "$TargetDir\data\recordings" | Out-Null
+        Log "Chaves VMS garantidas no .env."
+    }
+
     # ------------------------------------------- 6. Permissoes (ACL) e initdb
     # O postgres.exe recusa executar com token administrativo, entao o servico
     # roda como NetworkService (S-1-5-20) - que precisa de acesso aos arquivos.
@@ -457,6 +478,10 @@ PostgreSQL (usuario postgres, porta $PgPort): $DbPassword
         "onliacesso-admin",
         "onliacesso-proxy"
     )
+    if ($InstallVms -eq "1") {
+        $ServiceOrder += @("onliacesso-mediamtx", "onliacesso-vms")
+        Log "Servicos VMS incluidos na ordem de inicializacao."
+    }
 
     foreach ($svc in $ServiceOrder) {
         $svcExe = Join-Path $ServicesDir "$svc.exe"

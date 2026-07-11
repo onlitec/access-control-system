@@ -1,0 +1,18 @@
+<service>
+  <id>onliacesso-mediamtx</id>
+  <name>OnliAcesso - MediaMTX (VMS)</name>
+  <description>Servidor de media (HLS/RTSP) do módulo VMS do OnliAcesso. Gerencia os streams das câmeras IP, NVRs e DVRs cadastrados.</description>
+  <executable>%BASE%\..\binaries\mediamtx\mediamtx.exe</executable>
+  <arguments>%BASE%\..\config\mediamtx.yml</arguments>
+  <workingdirectory>%BASE%\..\binaries\mediamtx</workingdirectory>
+  <startmode>Automatic</startmode>
+  <stoptimeout>15sec</stoptimeout>
+  <log mode="roll-by-size">
+    <logpath>%BASE%\..\logs</logpath>
+    <sizeThreshold>10240</sizeThreshold>
+    <keepFiles>5</keepFiles>
+  </log>
+  <onfailure action="restart" delay="10 sec"/>
+  <onfailure action="restart" delay="20 sec"/>
+  <onfailure action="none"/>
+</service>

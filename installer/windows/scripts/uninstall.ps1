@@ -19,6 +19,8 @@ $ServicesDir = Join-Path $TargetDir "services"
 
 # Parar e remover na ordem inversa das dependencias
 $ServiceOrder = @(
+    "onliacesso-vms",
+    "onliacesso-mediamtx",
     "onliacesso-proxy",
     "onliacesso-admin",
     "onliacesso-access",

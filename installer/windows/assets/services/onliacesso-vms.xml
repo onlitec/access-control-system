@@ -1,0 +1,23 @@
+<service>
+  <id>onliacesso-vms</id>
+  <name>OnliAcesso - VMS Service</name>
+  <description>Serviço VMS do OnliAcesso: reconcilia paths de câmeras no MediaMTX, agenda gravações, detecta movimento (ISAPI), indexa segmentos e envia para armazenamento remoto (rclone).</description>
+  <executable>%BASE%\..\binaries\node\node.exe</executable>
+  <arguments>dist\vms\vms-main.js</arguments>
+  <workingdirectory>%BASE%\..\apps\backend-api</workingdirectory>
+  <env name="NODE_ENV" value="production"/>
+  <!-- ffmpeg (já no PATH da API) + rclone empacotado no VMS -->
+  <env name="PATH" value="%BASE%\..\binaries\ffmpeg\bin;%BASE%\..\binaries\rclone;%BASE%\..\binaries\node;%PATH%"/>
+  <depend>onliacesso-postgres</depend>
+  <depend>onliacesso-mediamtx</depend>
+  <startmode>Automatic</startmode>
+  <stoptimeout>20sec</stoptimeout>
+  <log mode="roll-by-size">
+    <logpath>%BASE%\..\logs</logpath>
+    <sizeThreshold>10240</sizeThreshold>
+    <keepFiles>5</keepFiles>
+  </log>
+  <onfailure action="restart" delay="10 sec"/>
+  <onfailure action="restart" delay="20 sec"/>
+  <onfailure action="none"/>
+</service>

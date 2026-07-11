@@ -1,0 +1,87 @@
+# Configuração base do MediaMTX para o OnliAcesso VMS (serviço onliacesso-mediamtx).
+# Os paths de câmera NÃO ficam aqui: são criados em runtime pelo onliacesso-vms
+# via API (porta 9997) a partir do cadastro no banco — este arquivo só define
+# portas, autenticação e o padrão de gravação. Instalado em C:\OnliAcesso\config\
+# (preservado em upgrades; recordPath é ajustado pelo install.ps1).
+
+logLevel: info
+
+###############################################
+# API de controle (usada pelo onliacesso-vms) — só loopback
+api: yes
+apiAddress: 127.0.0.1:9997
+
+###############################################
+# Autenticação delegada ao backend-api: cada acesso de leitura (HLS/RTSP)
+# é validado em POST /api/vms/stream-auth (JWT via query ?jwt=...)
+authMethod: http
+authHTTPAddress: http://127.0.0.1:3001/api/vms/stream-auth
+authHTTPExclude:
+  - action: api
+  - action: metrics
+  - action: pprof
+
+###############################################
+# Protocolos — tudo só em loopback; o acesso externo ao HLS passa pelo nginx (/streams/)
+rtsp: yes
+rtspAddress: 127.0.0.1:8554
+# MediaMTX 1.9.x usa "protocols"; em versões >=1.11 a chave virou "rtspTransports"
+# — se atualizar a versão pinada no download-binaries.sh, renomeie aqui.
+protocols: [tcp]
+
+# WebRTC (WHEP) — transporte principal da visualização ao vivo: latência
+# sub-segundo, contra 2-4s do HLS. O signaling passa pelo nginx (/webrtc/);
+# a MÍDIA vai por UDP direto do servidor ao navegador (porta 8189), por isso
+# ela precisa estar liberada no firewall para a rede local.
+webrtc: yes
+webrtcAddress: :8889
+webrtcEncryption: no
+webrtcLocalUDPAddress: :8189
+webrtcIPsFromInterfaces: yes
+
+# ICE — necessário APENAS para acesso remoto (fora da LAN). Na rede local o
+# WebRTC funciona sem nada disto, com os candidatos "host".
+#
+# Para publicar as câmeras na internet (ex.: cloud.onlitec.com.br), descomente
+# e aponte para um STUN/TURN próprio:
+#   STUN → o servidor descobre seu IP público; se o NAT permitir, o vídeo vai
+#          DIRETO ao navegador do usuário (menor latência possível).
+#   TURN → relay, usado quando o caminho direto não é possível. Com
+#          "username: AUTH_SECRET" o MediaMTX gera credenciais temporárias a
+#          partir do segredo — nenhuma senha fixa fica exposta no navegador.
+#   Abra no firewall do servidor TURN: 3478/udp+tcp e a faixa de relay (ex.:
+#   49160-49200/udp). Em provedores de nuvem, lembre do firewall externo.
+#
+# webrtcICEServers2:
+#   - url: stun:SEU_SERVIDOR:3478
+#   - url: turn:SEU_SERVIDOR:3478
+#     username: AUTH_SECRET
+#     password: SEGREDO_DO_COTURN
+
+# HLS: fallback na LAN e ÚNICO transporte no acesso remoto (o WebRTC exigiria
+# TURN pela internet). Escuta em todas as interfaces porque o proxy do cloud
+# (VPS, via Tailscale) precisa alcançá-lo — o acesso é restringido no firewall
+# do Windows, que só libera a 8888 para o IP Tailscale do VPS e para a LAN.
+# A autenticação continua obrigatória (?jwt= validado no backend).
+hls: yes
+hlsAddress: :8888
+hlsVariant: lowLatency
+hlsPartDuration: 200ms
+hlsSegmentDuration: 1s
+hlsAlwaysRemux: no
+
+rtmp: no
+srt: no
+
+###############################################
+# Gravação: segmentos fMP4 de 60s por path (câmera).
+# A limpeza NÃO é feita pelo MediaMTX (recordDeleteAfter: 0s) — quem apaga é o
+# onliacesso-vms, aplicando a retenção configurada por câmera.
+pathDefaults:
+  recordPath: C:/OnliAcesso/data/recordings/%path/%Y-%m-%d_%H-%M-%S-%f
+  recordFormat: fmp4
+  recordPartDuration: 1s
+  recordSegmentDuration: 60s
+  recordDeleteAfter: 0s
+
+paths: {}
