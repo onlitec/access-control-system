@@ -1,7 +1,17 @@
 import React, { memo, useEffect, useImperativeHandle, useRef, useState, forwardRef } from 'react';
-import Hls from 'hls.js';
 import { AlertCircle } from 'lucide-react';
 import { getToken, ensureFreshToken } from '../auth';
+
+/**
+ * O hls.js (~400 KB, metade do bundle) só é usado quando o WebRTC falha — o que
+ * quase nunca acontece. Carregá-lo junto do app atrasava a PRIMEIRA imagem de
+ * todas as câmeras, à toa. Agora ele é baixado sob demanda, e apenas uma vez.
+ */
+let hlsModule = null;
+async function loadHls() {
+  if (!hlsModule) hlsModule = (await import('hls.js')).default;
+  return hlsModule;
+}
 
 /** Frame atual como data URL — usado como "poster" para a tela não ficar preta. */
 export function captureFrame(video) {
@@ -211,9 +221,13 @@ const VideoPlayer = forwardRef(function VideoPlayer(
     };
 
     // ── HLS (fallback: atravessa qualquer rede, mas com mais atraso) ──
-    const startHls = () => {
+    const startHls = async () => {
       if (disposed) return;
       setTransport('hls');
+
+      const Hls = await loadHls().catch(() => null); // baixado só agora
+      if (disposed) return;
+      if (!Hls) { setError('Não foi possível carregar o player'); return; }
 
       if (Hls.isSupported()) {
         hls = new Hls({
@@ -279,7 +293,7 @@ const VideoPlayer = forwardRef(function VideoPlayer(
           if (disposed || !pc) return;
           if (pc.connectionState === 'failed') {
             cleanup();
-            startHls(); // UDP bloqueado nesta rede → HLS
+            void startHls(); // UDP bloqueado nesta rede → HLS
           } else if (pc.connectionState === 'disconnected') {
             cleanup();
             retryTimer = setTimeout(start, 3000);
@@ -312,7 +326,7 @@ const VideoPlayer = forwardRef(function VideoPlayer(
         setTransport('webrtc');
       } catch {
         cleanup();
-        if (!disposed) startHls();
+        if (!disposed) void startHls();
       }
     };
 
@@ -323,7 +337,7 @@ const VideoPlayer = forwardRef(function VideoPlayer(
       if (typeof RTCPeerConnection !== 'undefined') {
         void startWebRtc();
       } else {
-        startHls();
+        void startHls();
       }
     };
 
