@@ -92,6 +92,23 @@ export class HikCentralService {
             .digest('base64');
     }
 
+    // Cache do estado de configuração (TTL 60 s) para permitir que todos os
+    // pontos de integração pulem chamadas ao HikCentral no modo standalone
+    // sem custo de uma query por verificação.
+    private static _configuredCache: { value: boolean; ts: number } | null = null;
+
+    /** true somente quando há credenciais completas do HikCentral no painel Admin */
+    public static async isConfigured(): Promise<boolean> {
+        const now = Date.now();
+        if (this._configuredCache && now - this._configuredCache.ts < 60_000) {
+            return this._configuredCache.value;
+        }
+        const config = await prisma.hikcentralConfig.findFirst({ orderBy: { createdAt: 'desc' } });
+        const value = !!(config && config.apiUrl && config.appKey && config.appSecret);
+        this._configuredCache = { value, ts: now };
+        return value;
+    }
+
     public static async hikRequest(path: string, options: any = {}) {
         const config = await prisma.hikcentralConfig.findFirst({ orderBy: { createdAt: 'desc' } });
         if (!config || !config.apiUrl || !config.appKey || !config.appSecret) {

@@ -1,0 +1,854 @@
+
+ ▎ Extended: Fable 5 is included in your weekly limit
+ ▎ Through July 12, you can use up to 50% of your weekly usage limit on Fable 5. If you hit your limit, you can continue on Fable 5 with usage credits. Fable 5 draws down usage faster than Opus 4.8. Run /model and select Fable to use it. Learn more (https://support.claude.com/en/articles/15424964-claude-fable-5-promotional-access)
+   +1 more · /status
+
+> sei que existe a implmentação do distema com faciais porem eu gostaria de saber apos uma analise se é possivel implementar um visualizador de imagens das cameras do condominio de modo que seja possivel cadastrar na plataforma os NVRs/DVRs, Cameras IP , etc... assim no instalador do onliacesso o usuario poderá selecionar se instala ou não o gerenciados de imagens VMS e esta VMS tera a opção de gravar as iamgens das cameras automaticamente e estas iamgens poderão ser salvas localmente ou remotamente com diversas opções , xomo google drive, onedrive, pasta compartilhada, servidor samba etc...
+
+Vou analisar a viabilidade de um módulo VMS (visualizador/gravador de câmeras) no OnliAcesso. Primeiro vou explorar a arquitetura existente — dispositivos/faciais, o instalador e o que já existe de vídeo (VideoDoorbellService).
+
+● 2 Explore agents finished
+Explorar arquitetura de dispositivos/vídeo · 25 tool uses · 85.2k tokens
+⎿  Done
+Explorar instalador e componentes opcionais · 12 tool uses · 62.6k tokens
+⎿  Done
+
+● User answered Claude's questions:
+· Qual tecnologia de streaming usar para a visualização ao vivo? O método atual (MJPEG via ffmpeg, um processo por espectador) funciona bem até ~4-6 câmeras simultâneas, mas consome muita CPU com muitas câmeras/usuários. → MediaMTX embutido (Recomendado)
+· Como implementar o armazenamento remoto das gravações (Google Drive, OneDrive, Samba/pasta compartilhada)? Google Drive e OneDrive exigem OAuth; implementar cada um à mão é muito trabalho. → rclone empacotado (Recomendado)
+· Qual modo de gravação o VMS deve suportar na primeira versão? → Implemente opções para o usuario escolher , continua, por evento , movimento
+· O módulo VMS deve rodar como um serviço Windows separado (onliacesso-vms) ou dentro do backend-api existente? → Serviço separado (Recomendado)
+
+● Plan(Desenhar plano do módulo VMS)
+Done (16 tool uses · 66.1k tokens · 4m 50s)
+
+
+O desenho está sólido. Vou registrar o plano final no arquivo de plano.
+
+● Updated plan
+/plan to preview
+
+● User approved Claude's plan
+Plan saved to: C:\Users\Alessandro\.claude\plans\sei-que-existe-a-quiet-charm.md · /plan to edit
+Módulo VMS — Visualizador e Gravador de Câmeras (NVR/DVR/Câmera IP)
+
+Contexto
+
+O OnliAcesso já controla acesso (faciais, guarita, videoporteiros), mas não gerencia as câmeras do condomínio. O objetivo é adicionar um módulo VMS: cadastro de NVRs/DVRs/câmeras IP, visualização ao vivo, gravação automática (contínua / agendada / por movimento, configurável por câmera) com armazenamento local ou remoto (Google Drive, OneDrive, SMB, FTP via rclone), e instalação opcional no instalador Windows.
+
+Viabilidade confirmada na análise: o ffmpeg já é empacotado no instalador e está no PATH do serviço API; já existe pipeline RTSP→MJPEG (doorbell.routes.ts) e grid de câmeras no frontend (CamerasPanel.tsx); padrão de cadastro de dispositivos pronto (FacialAccessDevice). Lacunas: gravação/timeline, streaming escalável e seleção de componentes no instalador.
+
+Decisões do usuário: MediaMTX embutido (streaming), rclone empacotado (storage remoto), modos de gravação selecionáveis por câmera, serviço Windows separado.
+
+Arquitetura
+
+- MediaMTX (binário único, MIT) como media server: serviço WinSW onliacesso-mediamtx, config base em C:\OnliAcesso\config\mediamtx.yml; paths de câmeras gerenciados em runtime via API REST dele (127.0.0.1:9997). Live no navegador via HLS (hls.js) proxiado pelo nginx (/streams/ → 127.0.0.1:8888); WebRTC/WHEP fica como evolução futura.
+- Gravação nativa do MediaMTX (fMP4, segmentos de 60s, sem re-encode → custo é I/O, não CPU). Liga/desliga por câmera via PATCH na API — é assim que os modos agendado/motion funcionam. Hook runOnRecordSegmentComplete indexa cada segmento no banco.
+- vms-service: entrypoint separado dentro do backend-api (src/vms/vms-main.ts → dist/vms/vms-main.js), rodando como serviço WinSW onliacesso-vms na porta interna 3011. Reusa Prisma, tsconfig e o staging do instalador. Banco = fonte de verdade; backend-api chama POST /internal/reload após CRUDs (token compartilhado VMS_INTERNAL_TOKEN) + reconciliação automática a cada 60s.
+- Autenticação dos streams: MediaMTX authMethod: http → POST /api/vms/stream-auth no backend-api, que valida JWT vindo por query string (mesmo padrão do doorbell).
+- Motion: watcher ISAPI alertStream (long-poll, Digest MD5) por dispositivo no vms-service; evento vira emitEvent() no SSE existente via endpoint interno.
+- Upload remoto: rclone com rclone.conf em C:\OnliAcesso\config\; fila em tabela recording_uploads com worker (retry/backoff). OAuth do Drive/OneDrive via rclone authorize (URL exibida ao admin) com fallback "colar token" para servidor sem navegador. Modos copy (mantém local) e move (libera disco).
+- Telas: cadastro/config no frontend-admin; live view + gravações no frontend-access (portaria) — segue a divisão admin=config / access=operação.
+- Standalone: tudo no PostgreSQL local via Prisma, zero dependência de HikCentral (regra do projeto).
+
+1. Modelo de dados (Prisma)
+
+Modificar backend-api/prisma/schema.prisma + migration idempotente backend-api/prisma/migrations/20260710120000_add_vms/migration.sql (padrão CREATE TABLE IF NOT EXISTS, como a 20260707220000):
+
+- VideoDevice (video_devices): name, kind (nvr|dvr|ip_camera), protocol (hikvision_isapi|onvif|rtsp), ip, httpPort, rtspPort, username, password, location, enabled, sdkConfig Json? — molde: FacialAccessDevice.
+- VideoChannel (video_channels): deviceId (cascade), channelNo, name, streamPath (slug único = path no MediaMTX), rtspUrlMain/rtspUrlSub (override manual; se null, montada por protocolo), enabled. @@unique([deviceId, channelNo]).
+- VideoRecordingConfig (1:1 canal): mode (off|continuous|scheduled|motion), schedule Json (janelas por dia da semana), postEventSec, retentionDays, useSubStream.
+- StorageDestination: kind (local|rclone), rcloneType (drive|onedrive|smb|ftp|sftp), rcloneRemote (seção do rclone.conf), remoteBasePath, uploadMode (copy|move), enabled.
+- RecordingSegment: channelId, startedAt/endedAt, filePath (relativo a VMS_RECORDINGS_DIR), sizeBytes BigInt, trigger, status (recording|closed|failed|deleted_local). Índices por (channelId, startedAt) e status.
+- RecordingUpload: segmentId+destinationId únicos, status (pending|uploading|done|failed), attempts, lastError.
+
+Config global no .env: VMS_RECORDINGS_DIR, VMS_MAX_DISK_GB, VMS_PORT, VMS_INTERNAL_TOKEN, MEDIAMTX_API_URL, RCLONE_PATH, RCLONE_CONFIG.
+
+2. vms-service (novos arquivos em backend-api/src/vms/)
+
+- vms-main.ts — entrypoint: Express interno (3011) + workers.
+- MediaMtxClient.ts — wrapper da API REST 9997 (paths add/patch/delete, toggle record, health).
+- PathReconciler.ts — banco → paths MediaMTX; monta URL RTSP por protocolo (Hikvision: rtsp://user:pass@ip:554/Streaming/Channels/{channelNo}; ONVIF GetStreamUri; manual). Roda no boot, no reload e a cada 60s.
+- RecordingScheduler.ts — loop 30s: decide record por canal conforme modo/agenda/flag de motion.
+- SegmentIndexer.ts — POST /internal/segment-complete (chamado pelo hook do MediaMTX via curl.exe); registra segmento + cria uploads pendentes; scan de reconciliação no boot (segmentos órfãos).
+- MotionWatcher.ts — long-poll ISAPI alertStream por device; <eventType>VMD</eventType> + channelID → flag motion com timer postEventSec; notifica backend-api (endpoint interno) para emitEvent() no SSE.
+- RetentionWorker.ts — hora em hora: apaga por retentionDays e por VMS_MAX_DISK_GB (mais antigos primeiro).
+- UploadWorker.ts — fila rclone (rclone copyto), concorrência 1-2, backoff por attempts.
+- Extrair util compartilhado backend-api/src/utils/digestFetch.ts do código duplicado em VideoDoorbellService.ts e FacialAccessService.ts (o VMS é o terceiro consumidor).
+
+3. API REST (backend-api)
+
+Novo backend-api/src/routes/vms.routes.ts (padrão facial-access.routes.ts: authMiddleware global, adminMiddleware em mutações, P2025→404/P2002→409) + montagem em src/index.ts (/api/vms):
+
+- CRUD /devices e /devices/:id/channels; POST /devices/:id/discover (ISAPI GET /ISAPI/ContentMgmt/InputProxy/channels para popular canais do NVR; ONVIF GetProfiles); POST /devices/:id/test. GETs nunca retornam password (select explícito).
+- PUT /channels/:id/recording — config de gravação.
+- GET /channels/:id/live — URLs prontas (HLS /streams/{streamPath}/index.m3u8?jwt=... + snapshot).
+- POST /stream-auth — sem authMiddleware (chamado pelo MediaMTX); valida JWT do query ou token interno.
+- GET /recordings?channelId&from&to + GET /recordings/:id/file (mp4 com Range/206, JWT via query — padrão doorbell). Atenção: sizeBytes BigInt não serializa em JSON — converter.
+- GET/POST/DELETE /storage; POST /storage/oauth/start (spawna rclone authorize --auth-no-open-browser, devolve URL), POST /storage/oauth/token (token colado → rclone config create), POST /storage/:id/test (rclone lsd).
+- Após mutações: POST http://127.0.0.1:3011/internal/reload best-effort.
+- Modificar DeviceStatusService.getLocalDevices() para incluir videoDevices.
+
+4. Frontend
+
+frontend-access (nova dependência hls.js):
+- src/components/vms/HlsPlayer.tsx — wrapper hls.js (lowLatency, retry).
+- src/pages/LiveWallPage.tsx — grid 1/4/9/16, sub-stream no grid, main no fullscreen (Dialog, padrão CamerasPanel.tsx).
+- src/pages/VmsRecordingsPage.tsx — filtro câmera+data, lista de segmentos, player <video> + download.
+- Registrar rotas/menu (mesmo lugar de DeviceStatusPage).
+
+frontend-admin:
+- src/pages/VmsDevicesPage.tsx — CRUD NVR/DVR/câmera, "Descobrir canais", config de gravação por canal (modo, agenda semanal, retenção).
+- src/pages/VmsStoragePage.tsx — destinos (Drive/OneDrive com OAuth/colar token; SMB/FTP com formulário), status da fila de upload.
+- Registrar no roteamento/sidebar (padrão IntegrationsPage).
+
+5. Instalador (componente opcional)
+
+- installer/windows/OnliAcesso.iss: introduzir [Types] (full/custom) e [Components] (core Fixed + vms "Gerenciador de Imagens (VMS)"); dividir [Files] com Components:; passar -InstallVms 0|1 ao install.ps1 via WizardIsComponentSelected('vms').
+- installer/windows/scripts/download-binaries.sh: baixar MediaMTX (release GitHub pinada + checksums) e rclone (zip oficial + SHA256SUMS) para assets/binaries/{mediamtx,rclone}.
+- installer/build-package-windows-native.sh: adicionar mediamtx rclone aos loops de validação (~L43) e staging (~L61).
+- Novos XMLs em installer/windows/assets/services/: onliacesso-mediamtx.xml (mediamtx.exe + mediamtx.yml) e onliacesso-vms.xml (node dist\vms\vms-main.js, PATH com ffmpeg+rclone, depend de postgres+mediamtx).
+- Novo asset installer/windows/assets/mediamtx/mediamtx.yml: API/HLS/RTSP só em 127.0.0.1, authMethod: http → stream-auth, recordPath em C:/OnliAcesso/data/recordings/%path/..., fmp4 60s, hook segment-complete via curl.exe. Não escrever senhas no yml — paths com credenciais só via API runtime.
+- install.ps1: parâmetro $InstallVms; se "1": criar data\recordings com ACE de escrita (padrão pgdata ~L320), copiar mediamtx.yml para config\ se não existir (preserva em upgrade), Set-EnvKey das chaves VMS, incluir os 2 serviços no $ServiceOrder, flag config\vms-installed.flag para upgrades silenciosos.
+- uninstall.ps1: remover os 2 serviços (tolerante a ausência); data\recordings preservado sem -RemoveData.
+- installer/windows/assets/nginx/nginx.conf: location /streams/ { proxy_buffering off; proxy_pass http://127.0.0.1:8888/; }.
+
+6. Fases de entrega (incrementais e testáveis)
+
+1. Cadastro + Live view — schema VideoDevice/Channel, vms.routes CRUD+discover+stream-auth, digestFetch util, vms-main mínimo (PathReconciler+MediaMtxClient), mediamtx.yml, HlsPlayer/LiveWall/VmsDevicesPage. Dev: MediaMTX baixado manualmente, npx tsx src/vms/vms-main.ts.
+2. Gravação contínua + retenção + playback — RecordingConfig/Segment, Scheduler (continuous), SegmentIndexer+hook, RetentionWorker, endpoints recordings, VmsRecordingsPage.
+3. Agenda + Motion — schedule no Scheduler, MotionWatcher ISAPI, evento no SSE/EventsCenter, UI de agenda no admin.
+4. Storage remoto rclone — StorageDestination/RecordingUpload, UploadWorker, OAuth/token-paste, VmsStoragePage, modo move.
+5. Instalador — [Components], binários, XMLs, install/uninstall.ps1, nginx, testes de instalação.
+
+7. Verificação
+
+- F1: cadastrar NVR Hikvision → discover popula canais; curl 127.0.0.1:9997/v3/paths/list mostra paths; LiveWall exibe HLS; .m3u8 sem ?jwt → 401; desabilitar câmera → path some em <60s.
+- F2: fMP4 aparecem em data\recordings\; linhas em recording_segments batem com arquivos; retenção apaga; seek funciona (Range 206); matar vms-main durante gravação → reconciliação indexa órfãos no boot.
+- F3: agenda 5min no futuro liga/desliga; motion na frente da câmera → grava com trigger=motion + evento no SSE, para postEventSec depois.
+- F4: SMB de teste → uploads done; Drive via colar token; queda de rede → retry até done; move apaga local.
+- F5: build completo em VM limpa: sem VMS → 6 serviços, sistema intacto; com VMS → 8 serviços, /streams/ via nginx:80; upgrade preserva recordings/mediamtx.yml/rclone.conf; uninstall preserva data\.
+
+8. Riscos
+
+- H.265 não toca em todo navegador via hls.js — orientar main/sub-stream em H.264 para live; gravação aceita H.265.
+- Latência LL-HLS ~2-4s — ok para monitoramento; o MJPEG do doorbell continua cobrindo o caso "quem tocou"; WHEP fica para o futuro (exige UDP direto).
+- ONVIF errático em câmeras baratas — implementar mínimo (GetProfiles/GetStreamUri) e sempre oferecer URL RTSP manual como fallback.
+- Disco: ~1-4 GB/h/câmera no main stream — expor projeção/uso na UI e ter VMS_MAX_DISK_GB como guarda.
+- Senhas de câmera em plaintext no banco — consistente com DoorbellDevice/FacialAccessDevice; criptografia uniforme fica como melhoria futura.
+- Portas 9997/8554/8888 do MediaMTX só em 127.0.0.1; acesso externo apenas via nginx.
+
+  Read 2 files
+
+  Read 2 files
+
+Padrões claros. Agora vou adicionar os modelos VMS ao schema Prisma.
+
+● Update(E:\projeto_acesso\access-control-system\backend-api\prisma\schema.prisma)
+Added 109 lines
+  @@map("facial_access_readers")
+}
+
+// ============ VMS: câmeras IP, NVRs/DVRs, gravação e storage ============
+// Dispositivo de vídeo -> canais (1 câmera IP = 1 canal; NVR/DVR = N canais).
+// Streaming ao vivo via MediaMTX (paths sincronizados a partir destas tabelas).
+
+model VideoDevice {
+  id        String         @id @default(cuid())
+  name      String
+  kind      String         @default("ip_camera") // "nvr" | "dvr" | "ip_camera"
+  protocol  String         @default("hikvision_isapi") // "hikvision_isapi" | "onvif" | "rtsp"
+  ip        String
+  httpPort  Int            @default(80) @map("http_port")
+  rtspPort  Int            @default(554) @map("rtsp_port")
+  username  String
+  password  String
+  location  String?
+  enabled   Boolean        @default(true)
+  sdkConfig Json?          @map("sdk_config")
+  channels  VideoChannel[]
+  createdAt DateTime       @default(now()) @map("created_at")
+  updatedAt DateTime       @updatedAt @map("updated_at")
+
+  @@map("video_devices")
+}
+
+model VideoChannel {
+  id          String                @id @default(cuid())
+  deviceId    String                @map("device_id")
+  device      VideoDevice           @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  channelNo   Int                   @map("channel_no") // canal ISAPI (1, 2...) — stream = {channelNo}01 main / {channelNo}02 sub
+  name        String
+  streamPath  String                @unique @map("stream_path") // slug do path no MediaMTX (ex.: "cam-portaria")
+  rtspUrlMain String?               @map("rtsp_url_main") // override manual; se null, montada pelo protocolo
+  rtspUrlSub  String?               @map("rtsp_url_sub")
+  enabled     Boolean               @default(true)
+  recording   VideoRecordingConfig?
+  segments    RecordingSegment[]
+  createdAt   DateTime              @default(now()) @map("created_at")
+  updatedAt   DateTime              @updatedAt @map("updated_at")
+
+  @@unique([deviceId, channelNo])
+  @@map("video_channels")
+}
+
+model VideoRecordingConfig {
+  id            String       @id @default(cuid())
+  channelId     String       @unique @map("channel_id")
+  channel       VideoChannel @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  mode          String       @default("off") // "off" | "continuous" | "scheduled" | "motion"
+  schedule      Json?        // [{"dow":[1,2,3,4,5],"start":"08:00","end":"18:00"}] p/ mode=scheduled
+  postEventSec  Int          @default(30) @map("post_event_sec") // motion: segue gravando N s após o último evento
+  retentionDays Int          @default(7) @map("retention_days")
+  useSubStream  Boolean      @default(false) @map("use_sub_stream")
+  updatedAt     DateTime     @updatedAt @map("updated_at")
+
+  @@map("video_recording_configs")
+}
+
+model StorageDestination {
+  id             String            @id @default(cuid())
+  name           String
+  kind           String            @default("rclone") // "local" | "rclone"
+  rcloneType     String?           @map("rclone_type") // "drive" | "onedrive" | "smb" | "ftp" | "sftp"
+  rcloneRemote   String?           @unique @map("rclone_remote") // nome da seção no rclone.conf
+  remoteBasePath String?           @map("remote_base_path")
+  uploadMode     String            @default("copy") // "copy" (mantém local) | "move" (apaga local após upload)
+  enabled        Boolean           @default(true)
+  configJson     Json?             @map("config_json") // params não-secretos exibíveis (host, share...)
+  uploads        RecordingUpload[]
+  createdAt      DateTime          @default(now()) @map("created_at")
+  updatedAt      DateTime          @updatedAt @map("updated_at")
+
+  @@map("storage_destinations")
+}
+
+model RecordingSegment {
+  id        String            @id @default(cuid())
+  channelId String            @map("channel_id")
+  channel   VideoChannel      @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  startedAt DateTime          @map("started_at")
+  endedAt   DateTime?         @map("ended_at")
+  filePath  String            @unique @map("file_path") // relativo a VMS_RECORDINGS_DIR
+  sizeBytes BigInt            @default(0) @map("size_bytes")
+  trigger   String            @default("continuous") // "continuous" | "schedule" | "motion"
+  status    String            @default("closed") // "recording" | "closed" | "failed" | "deleted_local"
+  uploads   RecordingUpload[]
+  createdAt DateTime          @default(now()) @map("created_at")
+
+  @@index([channelId, startedAt])
+  @@index([status])
+  @@map("recording_segments")
+}
+
+model RecordingUpload {
+  id            String             @id @default(cuid())
+  segmentId     String             @map("segment_id")
+  segment       RecordingSegment   @relation(fields: [segmentId], references: [id], onDelete: Cascade)
+  destinationId String             @map("destination_id")
+  destination   StorageDestination @relation(fields: [destinationId], references: [id], onDelete: Cascade)
+  status        String             @default("pending") // "pending" | "uploading" | "done" | "failed"
+  attempts      Int                @default(0)
+  lastError     String?            @map("last_error")
+  uploadedAt    DateTime?          @map("uploaded_at")
+  createdAt     DateTime           @default(now()) @map("created_at")
+
+  @@unique([segmentId, destinationId])
+  @@index([status])
+  @@map("recording_uploads")
+}
+
+// ============ CMS Data-Driven: Entity Mappings ============
+// Mapeamento universal entre entidades HikCentral e páginas do painel
+// Permite que o admin configure dinamicamente quais dados alimentam cada página
+
+Agora a migration idempotente:
+
+● Write(E:\projeto_acesso\access-control-system\backend-api\prisma\migrations\20260710120000_add_vms\migration.sql)
+Wrote 147 lines to ..\backend-api\prisma\migrations\20260710120000_add_vms\migration.sql
+-- Módulo VMS: cadastro de câmeras IP/NVRs/DVRs, canais, configuração de
+-- gravação, destinos de storage (local/rclone) e índice de segmentos gravados.
+-- Streaming/gravação executados pelo MediaMTX; estas tabelas são a fonte de
+-- verdade que o vms-service reconcilia com o media server.
+
+-- CreateTable
+CREATE TABLE IF NOT EXISTS "video_devices" (
+    "id" TEXT NOT NULL,
+    "name" TEXT NOT NULL,
+    "kind" TEXT NOT NULL DEFAULT 'ip_camera',
+… +141 lines
+
+  Searched for 2 patterns
+
+● Write(E:\projeto_acesso\access-control-system\backend-api\src\utils\digest-fetch.utils.ts)
+Wrote 111 lines to ..\backend-api\src\utils\digest-fetch.utils.ts
+import fetch from 'node-fetch';
+import { Agent as HttpsAgent } from 'https';
+import { createHash, randomBytes } from 'crypto';
+
+const httpsAgent = new HttpsAgent({ rejectUnauthorized: false });
+
+export function basicAuth(username: string, password: string): string {
+  return 'Basic ' + Buffer.from(`${username}:${password}`).toString('base64');
+}
+… +101 lines
+
+● Update(E:\projeto_acesso\access-control-system\backend-api\src\services\FacialAccessService.ts)
+Added 1 line, removed 110 lines
+import fetch from 'node-fetch';
+import { Agent as HttpsAgent } from 'https';
+import { createHash, randomBytes } from 'crypto';
+import { PrismaClient } from '@prisma/client';
+import { digestFetch } from '../utils/digest-fetch.utils';
+
+const prisma = new PrismaClient();
+
+const httpsAgent = new HttpsAgent({ rejectUnauthorized: false });
+
+function basicAuth(username: string, password: string): string {
+  return 'Basic ' + Buffer.from(`${username}:${password}`).toString('base64');
+}
+
+/**
+ * Two-step Digest Auth (RFC 2617 / MD5) — mesmo protocolo usado pelos
+ * videoporteiros Hikvision (VideoDoorbellService.digestFetch). Duplicado aqui
+ * (em vez de compartilhado) para não mexer num arquivo já estável em produção;
+ * os terminais/controladoras faciais Hikvision usam a mesma autenticação ISAPI.
+ */
+async function digestFetch(
+  url: string,
+  username: string,
+  password: string,
+  method = 'GET',
+  body?: Buffer | string,
+  extraHeaders?: Record<string, string>,
+): Promise<import('node-fetch').Response> {
+  const isHttps = url.startsWith('https://');
+  const agentOpt = isHttps ? { agent: httpsAgent } : {};
+
+  const probe = await fetch(url, {
+    method,
+    // @ts-ignore
+    ...agentOpt,
+    signal: AbortSignal.timeout(5000),
+  });
+
+  if (probe.status !== 401) {
+    return probe;
+  }
+
+  const wwwAuth = probe.headers.get('www-authenticate') || '';
+  const isDigest = wwwAuth.toLowerCase().startsWith('digest');
+
+  if (!isDigest) {
+    return fetch(url, {
+      method,
+      headers: { Authorization: basicAuth(username, password), ...extraHeaders },
+      body,
+      // @ts-ignore
+      ...agentOpt,
+      signal: AbortSignal.timeout(8000),
+    });
+  }
+
+  const field = (name: string) => {
+    const m = wwwAuth.match(new RegExp(`${name}="([^"]+)"`, 'i'))
+      || wwwAuth.match(new RegExp(`${name}=([^\\s,]+)`, 'i'));
+    return m ? m[1] : '';
+  };
+  const realm   = field('realm');
+  const nonce   = field('nonce');
+  const qop     = field('qop');
+  const opaque  = field('opaque');
+  const algo    = field('algorithm') || 'MD5';
+
+  const urlObj = new URL(url);
+  const uri = urlObj.pathname + urlObj.search;
+
+  const md5 = (...parts: string[]) => createHash('md5').update(parts.join(':')).digest('hex');
+
+  const ha1 = md5(username, realm, password);
+  const ha2 = md5(method, uri);
+
+  let authValue: string;
+  if (qop === 'auth' || qop === 'auth-int') {
+    const nc     = '00000001';
+    const cnonce = randomBytes(8).toString('hex');
+    const response = md5(ha1, nonce, nc, cnonce, qop, ha2);
+    authValue = [
+      `Digest username="${username}"`,
+      `realm="${realm}"`,
+      `nonce="${nonce}"`,
+      `uri="${uri}"`,
+      `qop=${qop}`,
+      `nc=${nc}`,
+      `cnonce="${cnonce}"`,
+      `response="${response}"`,
+      `algorithm=${algo}`,
+      ...(opaque ? [`opaque="${opaque}"`] : []),
+    ].join(', ');
+  } else {
+    const response = md5(ha1, nonce, ha2);
+    authValue = [
+      `Digest username="${username}"`,
+      `realm="${realm}"`,
+      `nonce="${nonce}"`,
+      `uri="${uri}"`,
+      `response="${response}"`,
+      `algorithm=${algo}`,
+      ...(opaque ? [`opaque="${opaque}"`] : []),
+    ].join(', ');
+  }
+
+  return fetch(url, {
+    method,
+    headers: { Authorization: authValue, ...extraHeaders },
+    body,
+    // @ts-ignore
+    ...agentOpt,
+    signal: AbortSignal.timeout(8000),
+  });
+}
+
+/**
+ * Terminais faciais standalone (DS-K1T673) e controladoras (DS-K2812) Hikvision,
+ * via ISAPI (HTTP + Digest MD5) — sem depender de HikCentral. Ver
+ * docs/LEITORES-FACIAIS/PLANO-INTEGRACAO-LEITORES-FACIAIS.md.
+
+Agora a mesma extração no VideoDoorbellService.ts:
+
+  Read 1 file
+
+● Update(E:\projeto_acesso\access-control-system\backend-api\src\services\VideoDoorbellService.ts)
+Added 1 line, removed 115 lines
+import fetch from 'node-fetch';
+import { Agent as HttpsAgent } from 'https';
+import { createHash, randomBytes } from 'crypto';
+import { spawn } from 'child_process';
+import { PrismaClient } from '@prisma/client';
+import { digestFetch } from '../utils/digest-fetch.utils';
+
+const prisma = new PrismaClient();
+
+const httpsAgent = new HttpsAgent({ rejectUnauthorized: false });
+
+function basicAuth(username: string, password: string): string {
+  return 'Basic ' + Buffer.from(`${username}:${password}`).toString('base64');
+}
+
+/**
+ * Two-step Digest Auth (RFC 2617 / MD5).
+ * Step 1: unauthenticated request → grab WWW-Authenticate challenge
+ * Step 2: compute MD5 and replay with Authorization: Digest ...
+ * Falls back to Basic if device does not advertise Digest.
+ */
+async function digestFetch(
+  url: string,
+  username: string,
+  password: string,
+  method = 'GET',
+  body?: Buffer | string,
+  extraHeaders?: Record<string, string>,
+): Promise<import('node-fetch').Response> {
+  const isHttps = url.startsWith('https://');
+  const agentOpt = isHttps ? { agent: httpsAgent } : {};
+
+  // Step 1: probe without credentials
+  const probe = await fetch(url, {
+    method,
+    // @ts-ignore
+    ...agentOpt,
+    signal: AbortSignal.timeout(5000),
+  });
+
+  if (probe.status !== 401) {
+    // No auth challenge — return as-is (shouldn't happen on Hik devices)
+    return probe;
+  }
+
+  const wwwAuth = probe.headers.get('www-authenticate') || '';
+  const isDigest = wwwAuth.toLowerCase().startsWith('digest');
+
+  if (!isDigest) {
+    // Device only offers Basic
+    return fetch(url, {
+      method,
+      headers: { Authorization: basicAuth(username, password), ...extraHeaders },
+      body,
+      // @ts-ignore
+      ...agentOpt,
+      signal: AbortSignal.timeout(8000),
+    });
+  }
+
+  // Parse challenge fields
+  const field = (name: string) => {
+    const m = wwwAuth.match(new RegExp(`${name}="([^"]+)"`, 'i'))
+      || wwwAuth.match(new RegExp(`${name}=([^\\s,]+)`, 'i'));
+    return m ? m[1] : '';
+  };
+  const realm   = field('realm');
+  const nonce   = field('nonce');
+  const qop     = field('qop');     // "auth" or ""
+  const opaque  = field('opaque');
+  const algo    = field('algorithm') || 'MD5';
+
+  const urlObj = new URL(url);
+  const uri = urlObj.pathname + urlObj.search;
+
+  const md5 = (...parts: string[]) => createHash('md5').update(parts.join(':')).digest('hex');
+
+  const ha1 = md5(username, realm, password);
+  const ha2 = md5(method, uri);
+
+  let authValue: string;
+  if (qop === 'auth' || qop === 'auth-int') {
+    const nc     = '00000001';
+    const cnonce = randomBytes(8).toString('hex');
+    const response = md5(ha1, nonce, nc, cnonce, qop, ha2);
+    authValue = [
+      `Digest username="${username}"`,
+      `realm="${realm}"`,
+      `nonce="${nonce}"`,
+      `uri="${uri}"`,
+      `qop=${qop}`,
+      `nc=${nc}`,
+      `cnonce="${cnonce}"`,
+      `response="${response}"`,
+      `algorithm=${algo}`,
+      ...(opaque ? [`opaque="${opaque}"`] : []),
+    ].join(', ');
+  } else {
+    // No qop (legacy)
+    const response = md5(ha1, nonce, ha2);
+    authValue = [
+      `Digest username="${username}"`,
+      `realm="${realm}"`,
+      `nonce="${nonce}"`,
+      `uri="${uri}"`,
+      `response="${response}"`,
+      `algorithm=${algo}`,
+      ...(opaque ? [`opaque="${opaque}"`] : []),
+    ].join(', ');
+  }
+
+  return fetch(url, {
+    method,
+    headers: { Authorization: authValue, ...extraHeaders },
+    body,
+    // @ts-ignore
+    ...agentOpt,
+    signal: AbortSignal.timeout(8000),
+  });
+}
+
+export interface DoorbellDeviceInfo {
+  deviceName?: string;
+  serialNumber?: string;
+
+  Searched for 2 patterns
+
+A extração está limpa. Vou validar o schema e gerar o Prisma Client:
+
+  Ran 1 shell command
+
+  Searched for 4 patterns, read 5 files, listed 1 directory
+
+● Update(E:\projeto_acesso\access-control-system\backend-api\src\utils\digest-fetch.utils.ts)
+Added 3 lines
+  method = 'GET',
+  body?: Buffer | string,
+  extraHeaders?: Record<string, string>,
+  opts?: { timeoutMs?: number }, // 0 = sem timeout (long-poll, ex.: ISAPI alertStream)
+): Promise<import('node-fetch').Response> {
+  const isHttps = url.startsWith('https://');
+  const agentOpt = isHttps ? { agent: httpsAgent } : {};
+  const timeoutMs = opts?.timeoutMs ?? 8000;
+  const signalOpt = timeoutMs > 0 ? { signal: AbortSignal.timeout(timeoutMs) } : {};
+
+  const probe = await fetch(url, {
+    method,
+
+● Update(E:\projeto_acesso\access-control-system\backend-api\src\utils\digest-fetch.utils.ts)
+Added 1 line, removed 1 line
+      body,
+      // @ts-ignore
+      ...agentOpt,
+      signal: AbortSignal.timeout(8000),
+      ...signalOpt,
+    });
+  }
+
+
+● Update(E:\projeto_acesso\access-control-system\backend-api\src\utils\digest-fetch.utils.ts)
+Added 1 line, removed 1 line
+    body,
+    // @ts-ignore
+    ...agentOpt,
+    signal: AbortSignal.timeout(8000),
+    ...signalOpt,
+  });
+}
+
+Agora escrevo os arquivos do vms-service. São 9 arquivos novos em backend-api/src/vms/:
+
+● Write(E:\projeto_acesso\access-control-system\backend-api\src\vms\config.ts)
+Wrote 23 lines to ..\backend-api\src\vms\config.ts
+import path from 'path';
+
+// Configuração do vms-service — chaves gravadas no .env pelo install.ps1
+// (componente opcional "Gerenciador de Imagens" do instalador).
+
+export const VMS_PORT = Number(process.env.VMS_PORT || 3011);
+
+/** Token compartilhado entre backend-api, vms-service e hooks do MediaMTX. */
+export const VMS_INTERNAL_TOKEN = process.env.VMS_INTERNAL_TOKEN || '';
+… +13 lines
+
+● Write(E:\projeto_acesso\access-control-system\backend-api\src\vms\MediaMtxClient.ts)
+Wrote 74 lines to ..\backend-api\src\vms\MediaMtxClient.ts
+import fetch from 'node-fetch';
+import { MEDIAMTX_API_URL } from './config';
+
+/** Subconjunto da configuração de path do MediaMTX que o VMS gerencia. */
+export interface MtxPathConf {
+  source?: string;
+  sourceOnDemand?: boolean;
+  rtspTransport?: string;
+  record?: boolean;
+  runOnRecordSegmentComplete?: string;
+… +64 lines
+
+● Write(E:\projeto_acesso\access-control-system\backend-api\src\vms\rtsp.ts)
+Wrote 42 lines to ..\backend-api\src\vms\rtsp.ts
+interface DeviceLike {
+  protocol: string;
+  ip: string;
+  rtspPort: number;
+  username: string;
+  password: string;
+}
+
+interface ChannelLike {
+  channelNo: number;
+… +32 lines
+
+● Write(E:\projeto_acesso\access-control-system\backend-api\src\vms\PathReconciler.ts)
+Wrote 89 lines to ..\backend-api\src\vms\PathReconciler.ts
+import { prisma } from '../database';
+import { MediaMtxClient, MtxPathConf } from './MediaMtxClient';
+import { buildStreamUrls, subPathName } from './rtsp';
+import { VMS_PORT, VMS_INTERNAL_TOKEN } from './config';
+
+/**
+ * Hook executado pelo MediaMTX ao fechar cada segmento de gravação.
+ * No Windows o MediaMTX roda comandos via cmd.exe, que expande %VAR%;
+ * em POSIX é /bin/sh, que expande $VAR.
+ */
+… +79 lines
+
+● Write(E:\projeto_acesso\access-control-system\backend-api\src\vms\RecordingScheduler.ts)
+Wrote 114 lines to ..\backend-api\src\vms\RecordingScheduler.ts
+import { prisma } from '../database';
+import { MediaMtxClient } from './MediaMtxClient';
+import { subPathName } from './rtsp';
+
+export type RecordTrigger = 'continuous' | 'schedule' | 'motion';
+
+interface ScheduleWindow {
+  dow: number[]; // 0=domingo .. 6=sábado
+  start: string; // "HH:MM"
+  end: string;   // "HH:MM"
+… +104 lines
+
+● Write(E:\projeto_acesso\access-control-system\backend-api\src\vms\SegmentIndexer.ts)
+Wrote 130 lines to ..\backend-api\src\vms\SegmentIndexer.ts
+import { promises as fs } from 'fs';
+import path from 'path';
+import { prisma } from '../database';
+import { VMS_RECORDINGS_DIR } from './config';
+import { RecordingScheduler } from './RecordingScheduler';
+
+/** `cam-x-sub` e `cam-x` são o mesmo canal (streamPath = `cam-x`). */
+function channelPathOf(mtxPath: string): string {
+  return mtxPath.endsWith('-sub') ? mtxPath.slice(0, -4) : mtxPath;
+}
+… +120 lines
+
+● Write(E:\projeto_acesso\access-control-system\backend-api\src\vms\MotionWatcher.ts)
+Wrote 129 lines to ..\backend-api\src\vms\MotionWatcher.ts
+import fetch from 'node-fetch';
+import { prisma } from '../database';
+import { digestFetch } from '../utils/digest-fetch.utils';
+import { RecordingScheduler } from './RecordingScheduler';
+import { VMS_BACKEND_API_URL, VMS_INTERNAL_TOKEN } from './config';
+
+const RETRY_DELAY_MS = 10_000;
+const EVENT_THROTTLE_MS = 30_000; // no máx. 1 evento SSE por canal a cada 30s
+
+interface WatchedDevice {
+… +119 lines
+
+● Write(E:\projeto_acesso\access-control-system\backend-api\src\vms\RetentionWorker.ts)
+Wrote 91 lines to ..\backend-api\src\vms\RetentionWorker.ts
+import { promises as fs } from 'fs';
+import path from 'path';
+import { prisma } from '../database';
+import { VMS_RECORDINGS_DIR, VMS_MAX_DISK_GB } from './config';
+
+/**
+ * Limpeza de gravações: (1) retenção por dias configurada em cada canal e
+ * (2) teto global de disco (VMS_MAX_DISK_GB), apagando os segmentos mais
+ * antigos. A linha no banco é mantida com status "deleted_local" para
+ * preservar o histórico (e o vínculo com uploads remotos já concluídos).
+… +81 lines
+
+● Write(E:\projeto_acesso\access-control-system\backend-api\src\vms\UploadWorker.ts)
+Wrote 117 lines to ..\backend-api\src\vms\UploadWorker.ts
+import { promises as fs } from 'fs';
+import path from 'path';
+import { execFile } from 'child_process';
+import { promisify } from 'util';
+import { prisma } from '../database';
+import { VMS_RECORDINGS_DIR, RCLONE_PATH, RCLONE_CONFIG } from './config';
+
+const execFileAsync = promisify(execFile);
+
+const MAX_ATTEMPTS = 8;
+… +107 lines
+
+Agora o entrypoint vms-main.ts:
+
+● Write(E:\projeto_acesso\access-control-system\backend-api\src\vms\vms-main.ts)
+Wrote 122 lines to ..\backend-api\src\vms\vms-main.ts
+import dotenv from 'dotenv';
+dotenv.config();
+
+import express, { Request, Response, NextFunction } from 'express';
+import { promises as fs } from 'fs';
+import { MediaMtxClient } from './MediaMtxClient';
+import { PathReconciler } from './PathReconciler';
+import { RecordingScheduler } from './RecordingScheduler';
+import { SegmentIndexer } from './SegmentIndexer';
+import { MotionWatcher } from './MotionWatcher';
+… +112 lines
+
+Agora o asset base do MediaMTX e a checagem de tipos do backend:
+
+● Write(E:\projeto_acesso\access-control-system\installer\windows\assets\mediamtx\mediamtx.yml)
+Wrote 49 lines to ..\installer\windows\assets\mediamtx\mediamtx.yml
+# Configuração base do MediaMTX para o OnliAcesso VMS (serviço onliacesso-mediamtx).
+# Os paths de câmera NÃO ficam aqui: são criados em runtime pelo onliacesso-vms
+# via API (porta 9997) a partir do cadastro no banco — este arquivo só define
+# portas, autenticação e o padrão de gravação. Instalado em C:\OnliAcesso\config\
+# (preservado em upgrades; recordPath é ajustado pelo install.ps1).
+
+logLevel: info
+
+###############################################
+# API de controle (usada pelo onliacesso-vms) — só loopback
+… +39 lines
+
+  Ran 1 shell command
+
+  Searched for 1 pattern, read 1 file
+
+● Write(E:\projeto_acesso\access-control-system\backend-api\src\routes\vms.routes.ts)
+Wrote 787 lines to ..\backend-api\src\routes\vms.routes.ts
+import { Router, Request, Response } from 'express';
+import fetch from 'node-fetch';
+import jwt from 'jsonwebtoken';
+import { createReadStream, promises as fs } from 'fs';
+import path from 'path';
+import net from 'net';
+import { spawn, execFile, ChildProcess } from 'child_process';
+import { promisify } from 'util';
+import { randomBytes } from 'crypto';
+import { prisma } from '../database';
+… +777 lines
+
+● Update(E:\projeto_acesso\access-control-system\backend-api\src\index.ts)
+Added 1 line
+import doorbellRoutes from './routes/doorbell.routes';
+import guaritaRoutes from './routes/guarita.routes';
+import facialAccessRoutes from './routes/facial-access.routes';
+import vmsRoutes from './routes/vms.routes';
+import deliveriesRoutes from './routes/deliveries.routes';
+import { config } from './config/unifiedConfig';
+import { AuditService } from './services/AuditService';
+
+● Update(E:\projeto_acesso\access-control-system\backend-api\src\index.ts)
+Added 1 line
+app.use('/api/doorbell', doorbellRoutes);
+app.use('/api/guarita', guaritaRoutes);
+app.use('/api/facial-access', facialAccessRoutes);
+app.use('/api/vms', vmsRoutes);
+app.use('/api/deliveries', deliveriesRoutes);
+app.use('/api/ops', opsRoutes);
+app.use('/api/system-settings', systemSettingsRoutes);
+
+  Read 1 file
+
+● Update(E:\projeto_acesso\access-control-system\backend-api\src\services\DeviceStatusService.ts)
+Added 2 lines, removed 1 line
+  }
+
+  private static async getLocalDevices(): Promise<DeviceStatusEntry[]> {
+    const [doorbells, guaritas, facialDevices] = await Promise.all([
+    const [doorbells, guaritas, facialDevices, videoDevices] = await Promise.all([
+      prisma.doorbellDevice.findMany({ where: { enabled: true } }),
+      prisma.guaritaDevice.findMany({ where: { enabled: true } }),
+      prisma.facialAccessDevice.findMany({ where: { enabled: true } }),
+      prisma.videoDevice.findMany({ where: { enabled: true } }),
+    ]);
+
+    const checks: Promise<DeviceStatusEntry>[] = [
+
+● Update(E:\projeto_acesso\access-control-system\backend-api\src\services\DeviceStatusService.ts)
+Added 8 lines
+        status: (await FacialAccessService.testConnection(d.ip, d.port, d.username, d.password))
+          ? 'online' : 'offline',
+      })),
+      ...videoDevices.map(async (d): Promise<DeviceStatusEntry> => ({
+        id: d.id,
+        name: d.name,
+        ip: d.ip,
+        type: d.kind === 'nvr' ? 'NVR' : d.kind === 'dvr' ? 'DVR' : 'Câmera IP',
+        location: d.location,
+        status: (await VmsDeviceStatus.testConnection(d)) ? 'online' : 'offline',
+      })),
+    ];
+
+    return Promise.all(checks);
+
+● Update(E:\projeto_acesso\access-control-system\backend-api\src\services\DeviceStatusService.ts)
+Added 26 lines
+import net from 'net';
+import { PrismaClient } from '@prisma/client';
+import { VideoDoorbellService } from './VideoDoorbellService';
+import { NiceGuaritaProtocol } from './NiceGuaritaProtocol';
+import { HikCentralService } from './HikCentralService';
+import { FacialAccessService } from './FacialAccessService';
+import { digestFetch } from '../utils/digest-fetch.utils';
+
+const prisma = new PrismaClient();
+
+/** Checagem de conectividade dos dispositivos de vídeo do VMS (câmeras/NVRs/DVRs). */
+const VmsDeviceStatus = {
+  async testConnection(d: { protocol: string; ip: string; httpPort: number; rtspPort: number; username: string; password: string }): Promise<boolean> {
+    if (d.protocol === 'hikvision_isapi') {
+      try {
+        const res = await digestFetch(`http://${d.ip}:${d.httpPort}/ISAPI/System/deviceInfo`, d.username, d.password);
+        return res.ok || res.status === 401;
+      } catch {
+        return false;
+      }
+    }
+
+  7 tasks (5 done, 1 in progress, 1 open)
+  ■ Frontend: LiveWall + gravações (access) e cadastro/storage (admin)
+  □ Fase 5: instalador ([Components], binários mediamtx/rclone, serviços WinSW, nginx)
+  √ Fase 1: Schema Prisma VMS + migration + digestFetch util
+  √ Fase 1: vms-service (MediaMtxClient, PathReconciler, vms-main)
+  √ Fase 1: rotas /api/vms (CRUD, discover, test, live, stream-auth)
+   … +2 completed

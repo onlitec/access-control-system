@@ -16,6 +16,15 @@ export class OrgResolverService {
         if (Object.keys(orgNameCache).length > 0 && (now - orgCacheTimestamp) < ORG_CACHE_TTL_MS) {
             return orgNameCache;
         }
+        // Standalone: sem HikCentral configurado, usa direto o mapa estático
+        // (este método roda a cada login — não pode tentar chamada externa)
+        if (!(await HikCentralService.isConfigured())) {
+            const staticMap: Record<string, string> = {};
+            Object.entries(HIK_ORG_NAMES).forEach(([code, name]) => {
+                staticMap[name.toUpperCase()] = code;
+            });
+            return staticMap;
+        }
         try {
             const result = await Promise.race([
                 HikCentralService.getOrgList(1, 200),

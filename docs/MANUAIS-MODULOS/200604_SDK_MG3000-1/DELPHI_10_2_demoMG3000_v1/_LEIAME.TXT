@@ -1,0 +1,54 @@
+************************************
+* NICE BRASIL - CONTROLE DE ACESSO *
+*                                  *
+* EMBARCADERO DELPHI 10.2          *
+* REVISÃO: 17/02/2020              *
+*                                  *
+************************************
+
+:: COMANDOS IMPLEMENTADOS ::
+
+- Comando 4 : Envio automático de evento
+- Comando 7 : Ler número de dispositivos na memória
+- Comando 11: Escrever data e hora
+- Comando 12: Ler data e hora
+- Comando 13: Acionar saída
+- Comando 29: Atualizar Receptores
+- Comando 35: Ativar modo remoto (RECEPTORES) - 90 segundos
+- Comando 42: Dispositivo não cadastrado
+- Comando 43: Interromper timeout dos comandos PROGRESSIVOS
+- Comando 46: Disp. não cadastrado - RECs (TA, CT e TP)
+- Comando 67/0: Cadastrar dispositivos
+- Comando 67/4: Apagar dispositivos
+- Comando 70: Ler dispositivos (PROGRESSIVO)
+
+- Comando 57*: Digital ANVIZ não cadastrada (Guarita)
+- Comando 59*: Solicitar ID Digital vago
+- Comando 74*: Vincular Digital ANVIZ (Biometria)
+
+* Comandos EXCLUSIVOS para Sistema Biométrico RS-485
+(Módulo MG3000 + Receptor RMF3004 + Controladores Biométricos RS-485 "LN")
+
+: NOTA
+O Comando 57 (Digital ANVIZ não cadastrada) pode ser substituído pela captura
+por LN-BIO (Hamster USB). Consulte o SDK do Sistema Biométrico para mais informações.
+
+
+:: BIBLIOTECAS UTILIZADAS ::
+
+1) TCP (Modo CLIENT)
+ TClientSocket, por Embarcadero
+
+Se o componente não estiver instalado por padrão
+(palheta "Internet"), siga os passos abaixo (Delphi 10.2):
+
+- Clique no menu "Component", e "Install Packages...";
+- Clique no botão "Add...";
+- Navegue até a pasta de instalação do Delphi, e abra a pasta "bin";
+- Abra a biblioteca "dclsockets250.bpl";
+- Clique no botão "OK".
+
+Para uma solução TCP/IP mais completa, utilize a
+biblioteca ICS, da OverByte (por François Piette):
+ http://www.overbyte.eu/
+ http://wiki.overbyte.eu/wiki/index.php/Main_Page

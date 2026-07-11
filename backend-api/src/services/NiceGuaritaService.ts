@@ -42,6 +42,23 @@ const prisma = new PrismaClient();
 
 export type GateStatus = 'open' | 'closed' | 'unknown';
 
+/**
+ * Subtipos do "Evento de receptor" (0x0C) — enviados pelo TX-4A e afins via CAN
+ * quando o portão muda de estado (sensor de porta) ou em condições especiais.
+ * Códigos conforme demo oficial Delphi (uprincipal.pas, evento tipo 12).
+ */
+export function describeReceiverEvent(subCode: number): { name: string; category: 'access' | 'gate' | 'alarm' | 'device'; status: string } {
+  switch (subCode) {
+    case 0xFB: return { name: 'Portão abriu', category: 'gate', status: 'authorized' };
+    case 0xFA: return { name: 'Portão fechou', category: 'gate', status: 'authorized' };
+    case 0xF9: return { name: 'Portão violado', category: 'alarm', status: 'denied' };
+    case 0xFF: return { name: 'Portão aberto (tempo excedido)', category: 'alarm', status: 'denied' };
+    case 0xFE: return { name: "Falta d'água", category: 'device', status: 'denied' };
+    case 0x00: return { name: 'TAG sem vaga', category: 'access', status: 'denied' };
+    default:   return { name: `Evento de receptor (0x${subCode.toString(16)})`, category: 'device', status: 'authorized' };
+  }
+}
+
 // Sentinel for features blocked until hardware is connected
 export class ServiceUnavailableError extends Error {
   readonly code = 'SDK_UNAVAILABLE';
@@ -152,7 +169,7 @@ export class NiceGuaritaService {
       device.port,
       cfg.deviceType ?? 0xFF,
       cfg.deviceNum ?? 0xFF,
-      cfg.relayOutput ?? 0x04,
+      cfg.relayOutput ?? 0x01,
       true
     );
   }
@@ -170,7 +187,7 @@ export class NiceGuaritaService {
       device.port,
       cfg.deviceType ?? 0xFF,
       cfg.deviceNum ?? 0xFF,
-      cfg.relayClose ?? cfg.relayOutput ?? 0x04,
+      cfg.relayClose ?? cfg.relayOutput ?? 0x01,
       true
     );
   }
@@ -224,6 +241,9 @@ export class NiceGuaritaService {
     if (result.success) {
       const syncResult = await NiceGuaritaProtocol.updateReceivers(device.ip, device.port);
       receiversUpdated = syncResult.success;
+      if (!syncResult.success) {
+        console.warn(`[NiceGuarita] Cmd 29 falhou em ${device.name}: ${syncResult.message} — receptores no barramento CAN não confirmaram (verificar cabeamento/endereço CAN dos receptores)`);
+      }
     }
 
     return { ...result, receiversUpdated };
@@ -252,6 +272,9 @@ export class NiceGuaritaService {
     if (result.success) {
       const syncResult = await NiceGuaritaProtocol.updateReceivers(device.ip, device.port);
       receiversUpdated = syncResult.success;
+      if (!syncResult.success) {
+        console.warn(`[NiceGuarita] Cmd 29 falhou em ${device.name}: ${syncResult.message} — receptores no barramento CAN não confirmaram (verificar cabeamento/endereço CAN dos receptores)`);
+      }
     }
 
     return { ...result, receiversUpdated };
@@ -285,7 +308,10 @@ export class NiceGuaritaService {
       const isControl = d.deviceType === DEVICE_TYPES.CONTROL;
       if (!isCard && !isControl) continue; // Skip biometric/passwords for now unless needed
 
-      const serialHex = d.serial.toString(16).toUpperCase();
+      // Formato canônico = o mesmo dos eventos Cmd 4 do módulo: TX tem 7
+      // dígitos hex (nibble alto incluso), demais 6 — com zeros à esquerda.
+      // Sem isso o lookup do morador no acionamento nunca casa.
+      const serialHex = d.serial.toString(16).toUpperCase().padStart(isControl ? 7 : 6, '0');
 
       const parts = d.identification.trim().split(' ');
       const firstName = parts[0] || 'Desconhecido';
@@ -350,6 +376,115 @@ export class NiceGuaritaService {
     return { imported, total: count };
   }
 
+  // ── Importação do histórico de eventos da memória do módulo ─────────────
+
+  /**
+   * O MG3000 guarda até 8192 eventos em memória circular. Este job lê a faixa
+   * de ponteiros pedida e converte acionamentos/alarmes em AccessEvents locais.
+   * Idempotente: o id é derivado de serial+instante+saída (createMany com
+   * skipDuplicates), então rodar de novo não duplica; acionamentos repetidos
+   * no MESMO segundo (retransmissões do receptor) colapsam em um evento.
+   */
+  static importJobs = new Map<string, {
+    running: boolean; from: number; to: number; processed: number; imported: number;
+    startedAt: Date; finishedAt?: Date; error?: string;
+  }>();
+
+  static startImportStoredEvents(deviceId: string, from = 0, to = 8191) {
+    const existing = this.importJobs.get(deviceId);
+    if (existing?.running) return existing;
+
+    const progress: { running: boolean; from: number; to: number; processed: number; imported: number; startedAt: Date; finishedAt?: Date; error?: string } =
+      { running: true, from, to, processed: 0, imported: 0, startedAt: new Date() };
+    this.importJobs.set(deviceId, progress);
+
+    void (async () => {
+      try {
+        const device = await this.getDevice(deviceId);
+
+        // Mapas em memória: serial→morador e relé→portão (evita N+1 na varredura)
+        const persons = await prisma.person.findMany({
+          where: { OR: [{ txSerial: { not: null } }, { cardSerial: { not: null } }] },
+          select: { id: true, firstName: true, lastName: true, unit_number: true, photoUrl: true, txSerial: true, cardSerial: true },
+        });
+        const personBySerial = new Map<string, typeof persons[number]>();
+        for (const p of persons) {
+          for (const s of [p.txSerial, p.cardSerial]) {
+            if (!s) continue;
+            personBySerial.set(s.toUpperCase(), p);
+            personBySerial.set(s.toUpperCase().replace(/^0+/, ''), p);
+          }
+        }
+        const gates = await prisma.guaritaDevice.findMany({ where: { ip: device.ip } });
+        const gateByOutput = new Map<number, typeof gates[number]>();
+        for (const g of gates) {
+          const relay = (g.sdkConfig as Record<string, unknown> | null)?.relayOutput;
+          if (typeof relay === 'number') gateByOutput.set(relay, g);
+        }
+
+        const IMPORT_TYPES = new Set(['device_triggered', 'access_granted', 'panic', 'clone_attempt', 'intercom_triggered']);
+        let batch: any[] = [];
+
+        const flush = async () => {
+          if (batch.length === 0) return;
+          const result = await prisma.accessEvent.createMany({ data: batch, skipDuplicates: true });
+          progress.imported += result.count;
+          batch = [];
+        };
+
+        for (let pointer = from; pointer <= Math.min(to, 8191); pointer++) {
+          const ev = await NiceGuaritaProtocol.readEventAt(device.ip, device.port, pointer).catch(() => null);
+          progress.processed++;
+          if (!ev || !IMPORT_TYPES.has(ev.type) || isNaN(ev.dateTime.getTime())) continue;
+
+          const serialTrimmed = ev.serial.replace(/^0+/, '');
+          const person = personBySerial.get(ev.serial) ?? personBySerial.get(serialTrimmed) ?? null;
+          const gate = ev.output != null ? gateByOutput.get(ev.output) ?? null : null;
+          const gateCfg = gate?.sdkConfig as Record<string, unknown> | null;
+          const direction = gateCfg?.direction === 'entry' ? 'in' : gateCfg?.direction === 'exit' ? 'out' : null;
+
+          const isAlarm = ev.type === 'panic' || ev.type === 'clone_attempt';
+          const isIntercom = ev.type === 'intercom_triggered';
+          batch.push({
+            id: `mg3k-${ev.serial}-${Math.floor(ev.dateTime.getTime() / 1000)}-${ev.output ?? 'x'}`,
+            occurredAt: ev.dateTime,
+            eventTime: ev.dateTime,
+            personName: person
+              ? `${person.firstName} ${person.lastName}`.trim()
+              : isIntercom ? 'Acionamento pela portaria'
+              : ev.type === 'panic' ? 'Botão de pânico acionado'
+              : ev.type === 'clone_attempt' ? 'Tentativa de clonagem detectada'
+              : 'Controle não cadastrado',
+            personType: person ? 'resident' : 'system',
+            personId: person?.id ?? null,
+            unit: person?.unit_number ?? null,
+            deviceName: gate?.name ?? device.name,
+            status: isAlarm || (!person && !isIntercom) ? 'denied' : 'authorized',
+            photoUrl: person?.photoUrl ?? null,
+            direction: isIntercom || isAlarm ? null : direction,
+            category: isAlarm ? 'alarm' : isIntercom ? 'gate' : 'access',
+            source: 'controle_rf',
+            notes: person ? null : `Serial ${ev.serial}`,
+            metadata: { serial: ev.serial, deviceKind: ev.deviceKind, guaritaEventType: ev.type, output: ev.output, pointer, importedFromModule: true },
+          });
+          if (batch.length >= 200) await flush();
+        }
+        await flush();
+
+        progress.running = false;
+        progress.finishedAt = new Date();
+        console.log(`[NiceGuarita] Importação de histórico concluída: ${progress.imported} eventos de ${progress.processed} ponteiros lidos (${device.name})`);
+      } catch (err: any) {
+        progress.running = false;
+        progress.finishedAt = new Date();
+        progress.error = err.message;
+        console.error('[NiceGuarita] Importação de histórico falhou:', err.message);
+      }
+    })();
+
+    return progress;
+  }
+
   // ── Clock Sync ────────────────────────────────────────────────────────────
 
   static async syncClock(deviceId: string): Promise<{ success: boolean; guardaClock?: Date | null }> {
@@ -379,18 +514,26 @@ export class NiceGuaritaService {
         return;
       }
 
-      // ── 1. Correlacionar dispositivo pela IP de origem ─────────────────────
-      const device = event.sourceIp
-        ? await prisma.guaritaDevice.findFirst({ where: { ip: event.sourceIp } })
-        : null;
+      // ── 1. Correlacionar dispositivo (portão) pela IP + saída (relé) ───────
+      // Um módulo comanda vários portões (ex.: relé 1 = entrada moradores,
+      // relé 2 = entrada visitantes, relé 3 = saída), cada um cadastrado como
+      // um GuaritaDevice com o mesmo IP e sdkConfig.relayOutput distinto.
+      const candidates = event.sourceIp
+        ? await prisma.guaritaDevice.findMany({ where: { ip: event.sourceIp } })
+        : [];
+      const device = (event.output != null
+        ? candidates.find((d) => ((d.sdkConfig as Record<string, unknown> | null)?.relayOutput ?? null) === event.output)
+        : undefined) ?? candidates[0] ?? null;
       const direction = (device?.sdkConfig as Record<string, unknown> | null)?.direction as string ?? 'both';
 
       // ── 2. Lookup morador pelo serial do cartão/TAG/controle ───────────────
+      // Aceita também o serial sem zeros à esquerda (cadastros antigos/manuais)
+      const serialTrimmed = event.serial.replace(/^0+/, '') || event.serial;
       const person = await prisma.person.findFirst({
         where: {
           OR: [
-            { cardSerial: event.serial },
-            { txSerial: event.serial },
+            { cardSerial: { in: [event.serial, serialTrimmed], mode: 'insensitive' } },
+            { txSerial: { in: [event.serial, serialTrimmed], mode: 'insensitive' } },
             { hikPersonId: event.serial },
             { externalId: event.serial },
           ],
@@ -468,7 +611,49 @@ export class NiceGuaritaService {
       };
 
       const ALARM_TYPES = new Set(['panic', 'clone_attempt']);
-      const ACCESS_TYPES = new Set(['access_granted', 'device_triggered', 'remote_pc_trigger', 'intercom_triggered']);
+      // Acionamentos COM serial (controle/cartão/tag do morador)
+      const ACCESS_TYPES = new Set(['access_granted', 'device_triggered']);
+
+      if (event.type === 'remote_pc_trigger') {
+        // Eco do Cmd 13 enviado pela própria plataforma (gera_evt=1): a rota
+        // /open|/close já registrou "Portão aberto/fechado manualmente" —
+        // registrar de novo criaria evento falso "Controle não cadastrado".
+        console.log(`[NiceGuarita] Acionamento PC confirmado pelo módulo ${device?.name ?? event.sourceIp ?? ''}`);
+        return;
+      }
+
+      if (event.type === 'intercom_triggered') {
+        // Acionamento feito na console física da portaria (sem serial)
+        await emitEvent({
+          occurredAt: event.dateTime,
+          personName: 'Acionamento pela portaria',
+          personType: 'system',
+          deviceName: device?.name ?? 'Guarita IP',
+          status: 'authorized',
+          category: 'gate',
+          source: 'guarita',
+          metadata: baseMetadata,
+        });
+        return;
+      }
+
+      if (event.type === 'receiver_event') {
+        // Evento vindo do receptor (TX-4A etc.) via CAN: mudança de estado do
+        // portão (sensor de porta) — cobre também aberturas feitas diretamente
+        // no receptor/controle em modo autônomo, desde que haja sensor ligado.
+        const desc = describeReceiverEvent(event.subCode);
+        await emitEvent({
+          occurredAt: event.dateTime,
+          personName: desc.name,
+          personType: 'system',
+          deviceName: device?.name ?? 'Guarita IP',
+          status: desc.status,
+          category: desc.category,
+          source: 'guarita',
+          metadata: { ...baseMetadata, receiverSubCode: event.subCode },
+        });
+        return;
+      }
 
       if (ALARM_TYPES.has(event.type)) {
         await emitEvent({

@@ -121,4 +121,43 @@ router.put('/resident/:personId', async (req: Request, res: Response) => {
     }
 });
 
+// GET /api/access-areas/:id/doors — portas faciais vinculadas a este nível de acesso
+router.get('/:id/doors', async (req: Request, res: Response) => {
+    try {
+        const records = await prisma.accessAreaDoor.findMany({
+            where: { areaId: req.params.id },
+            include: { door: { include: { device: true, readers: true } } },
+        });
+        res.json({ data: records.map(r => r.door) });
+    } catch (error: any) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// PUT /api/access-areas/:id/doors — substitui as portas que este nível de acesso libera
+router.put('/:id/doors', async (req: Request, res: Response) => {
+    try {
+        const { id } = req.params;
+        const { doorIds }: { doorIds: string[] } = req.body;
+
+        if (!Array.isArray(doorIds)) return res.status(400).json({ error: 'doorIds deve ser um array' });
+
+        const area = await prisma.accessArea.findUnique({ where: { id } });
+        if (!area) return res.status(404).json({ error: 'Área não encontrada' });
+
+        await prisma.$transaction([
+            prisma.accessAreaDoor.deleteMany({ where: { areaId: id } }),
+            ...doorIds.map(doorId =>
+                prisma.accessAreaDoor.create({
+                    data: { areaId: id, doorId },
+                })
+            ),
+        ]);
+
+        res.json({ success: true, doorIds });
+    } catch (error: any) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
 export default router;

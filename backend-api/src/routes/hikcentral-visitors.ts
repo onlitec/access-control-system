@@ -261,10 +261,14 @@ router.get('/internal-providers', async (req: Request, res: Response) => {
  * Retorna lista de terminais (dispositivos ACS) do HikCentral.
  */
 router.get('/terminals', async (req: Request, res: Response) => {
+    if (!isHikCentralConfigured()) {
+        // Standalone: sem terminais externos — captura usa os videoporteiros locais
+        return res.json({ data: [], total: 0 });
+    }
     try {
         const { type = 'acs' } = req.query;
         console.log(`[HikCentral] Buscando terminais (tipo: ${type})...`);
-        
+
         let result;
         if (type === 'acs') {
             result = await HikCentralService.getAcsDeviceList(1, 100);
@@ -301,6 +305,9 @@ router.get('/person-properties', async (req: Request, res: Response) => {
     try {
         // Fallback rígido garantido conforme requisito
         const defaultOptions = ['TORRE - PERFECTO', 'TORRE - NOBILE', 'TORRE - DESEO', 'TORRE - PARAÍSO'];
+
+        // Standalone: sem HikCentral, responde direto o fallback local
+        if (!isHikCentralConfigured()) return res.json({ options: defaultOptions });
 
         try {
             // Tentativa de buscar os campos customizados do HikCentral (Artemis OpenAPI)
@@ -364,6 +371,9 @@ router.get('/access-levels', async (req: Request, res: Response) => {
 });
 
 router.post('/residents/sync', async (req: Request, res: Response) => {
+    if (!isHikCentralConfigured()) {
+        return res.json({ success: true, count: 0, message: 'Sistema standalone: dados 100% locais, nada a sincronizar' });
+    }
     try {
         const orgs = await HikCentralService.getOrgList(1, 500);
         const orgList: any[] = orgs?.data?.list || [];
@@ -390,6 +400,10 @@ router.post('/remote-capture', async (req: Request, res: Response) => {
 
         if (!deviceIndexCode) {
             return res.status(400).json({ error: 'deviceIndexCode é obrigatório' });
+        }
+
+        if (!isHikCentralConfigured()) {
+            return res.status(400).json({ error: 'Sistema standalone: captura remota usa os videoporteiros locais (/api/doorbell)' });
         }
 
         console.log(`[Remote Capture] Requisição recebida para dispositivo: ${deviceIndexCode}`);

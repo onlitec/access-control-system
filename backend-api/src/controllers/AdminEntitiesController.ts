@@ -9,13 +9,24 @@ const prisma = new PrismaClient();
  * Usado na página /admin/settings para popular tree views e selects
  */
 export class AdminEntitiesController {
-    
+
+    /**
+     * Standalone (sem HikCentral configurado): responde lista vazia e retorna
+     * true — nenhum endpoint deste controller deve chamar a API externa.
+     */
+    private standaloneEmpty = async (res: Response): Promise<boolean> => {
+        if (await HikCentralService.isConfigured()) return false;
+        res.json({ success: true, data: [], total: 0 });
+        return true;
+    };
+
     /**
      * GET /api/admin/entities/organizations
      * Lista departamentos/organizações do HikCentral (tree view)
      */
     public getOrganizations = async (req: Request, res: Response) => {
         try {
+            if (await this.standaloneEmpty(res)) return;
             const result = await HikCentralService.getOrgListCached(1, 500);
             const list = result?.data?.list || [];
             
@@ -41,6 +52,7 @@ export class AdminEntitiesController {
      */
     public getAreas = async (req: Request, res: Response) => {
         try {
+            if (await this.standaloneEmpty(res)) return;
             const result = await HikCentralService.getRegionsList(1, 500);
             const list = result?.data?.list || [];
             
@@ -64,6 +76,7 @@ export class AdminEntitiesController {
      */
     public getAccessLevels = async (req: Request, res: Response) => {
         try {
+            if (await this.standaloneEmpty(res)) return;
             const type = parseInt(req.query.type as string) || 1; // 1=geral, 2=visitantes
             const result = await HikCentralService.getPrivilegeGroups(type, 1, 500);
             const list = result?.data?.list || [];
@@ -88,6 +101,7 @@ export class AdminEntitiesController {
      */
     public getCustomFields = async (req: Request, res: Response) => {
         try {
+            if (await this.standaloneEmpty(res)) return;
             const result = await HikCentralService.getCustomFieldsCached();
             const list = result?.data?.list || [];
             
@@ -111,6 +125,7 @@ export class AdminEntitiesController {
      */
     public getFloors = async (req: Request, res: Response) => {
         try {
+            if (await this.standaloneEmpty(res)) return;
             const result = await HikCentralService.getFloorsList(1, 500);
             const list = result?.data?.list || [];
             
@@ -133,6 +148,7 @@ export class AdminEntitiesController {
      */
     public getVisitorGroups = async (req: Request, res: Response) => {
         try {
+            if (await this.standaloneEmpty(res)) return;
             const result = await HikCentralService.getVisitorGroups(1, 500);
             const list = result?.data?.list || [];
             
