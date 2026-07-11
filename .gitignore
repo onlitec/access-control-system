@@ -44,3 +44,5 @@ monitoring/audit.log
 monitoring/cron/*.log
 *.orig
 docs/prints/
+# Configuracao local do Claude Code (caminhos e IPs da maquina do dev)
+.claude/settings.local.json
