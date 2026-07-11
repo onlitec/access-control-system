@@ -1,0 +1,32 @@
+# TURN do Onlitec Cloud — relay da MÍDIA WebRTC das câmeras.
+# Sem ele, o navegador do usuário (atrás do NAT da operadora) não consegue
+# receber o vídeo direto do servidor local: os candidatos ICE do servidor são
+# endereços privados. O relay elimina o buffer de segmentos do HLS e derruba a
+# latência remota de ~2-6s para menos de 1s.
+
+listening-port=3478
+fingerprint
+realm=cloud.onlitec.com.br
+
+# Credenciais efêmeras (HMAC time-limited): o MediaMTX e o navegador recebem
+# usuário/senha temporários derivados deste segredo. Nada de senha fixa no JS.
+use-auth-secret
+static-auth-secret=SUBSTITUA_PELO_SEGREDO_REAL_gerado_com_openssl_rand_hex_32
+
+external-ip=65.109.14.53
+min-port=49160
+max-port=49200
+
+total-quota=100
+stale-nonce=600
+no-multicast-peers
+no-cli
+no-tlsv1
+no-tlsv1_1
+
+# o relay nunca deve alcançar redes internas (evita usar o TURN como pivô)
+denied-peer-ip=10.0.0.0-10.255.255.255
+denied-peer-ip=172.16.0.0-172.31.255.255
+denied-peer-ip=192.168.0.0-192.168.255.255
+denied-peer-ip=169.254.0.0-169.254.255.255
+denied-peer-ip=127.0.0.0-127.255.255.255
