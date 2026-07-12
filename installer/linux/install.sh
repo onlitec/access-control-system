@@ -284,6 +284,9 @@ cat > /etc/sudoers.d/onliacesso <<EOF
 # Gerado pelo instalador do OnliAcesso — permite que a API reinicie os próprios
 # serviços pelo painel Admin, sem senha e sem nenhum outro poder de root.
 $APP_USER ALL=(root) NOPASSWD: ${SUDO_CMDS%, }
+# Botão "Habilitar acesso via nuvem" (painel Admin → Configurações): firewall
+# restrito ao VPS e entrada na tailnet. Nada além disso.
+$APP_USER ALL=(root) NOPASSWD: /usr/sbin/ufw status, /usr/sbin/ufw allow *, /usr/bin/tailscale ip -4, /usr/bin/tailscale up *
 EOF
 chmod 440 /etc/sudoers.d/onliacesso
 visudo -cf /etc/sudoers.d/onliacesso >/dev/null || {

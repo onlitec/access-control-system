@@ -44,25 +44,41 @@ enxerga as próprias câmeras.
 
 ## Onboarding de um cliente novo (Windows ou Linux)
 
-1. **Tailscale** na máquina do cliente: instalar e entrar na tailnet
-   (`tailscale up`). Anotar o nome MagicDNS (`tailscale status`).
-2. **Firewall** no servidor do cliente — liberar 3001/8888/8889 só para o VPS:
-   - Windows: `C:\OnliAcesso\scripts\enable-cloud-access.ps1 -VpsTailscaleIp 100.90.27.7`
-   - Linux: `sudo /opt/onliacesso/…/enable-cloud-access.sh 100.90.27.7`
-3. **TURN**: repor o segredo do coturn em `webrtcICEServers2` no `mediamtx.yml`
-   do cliente (endereço do TURN é o do VPS; sem isso o app cai para HLS).
-4. **Registrar o tenant** (do PC do dev):
+### Caminho normal: o botão do painel (auto-approve)
+
+No painel Admin do cliente → **Configurações → Acesso via nuvem**: informar o
+código do cliente e clicar **Habilitar**. O backend faz tudo sozinho:
+conecta/verifica o Tailscale (aceita a "chave de ativação" `tskey-auth-…` que
+a Onlitec fornece, na primeira vez), aplica o firewall, registra o tenant no
+`tenant-registry` do VPS e grava o TURN no `mediamtx.yml`. Em segundos o card
+mostra o link pronto.
+
+O registro é **auto-aprovado** porque a identidade do cliente é o IP Tailscale
+de origem da chamada (não-forjável dentro da tailnet) — e entrar na tailnet já
+exige uma chave que só a Onlitec emite. O registry recusa slug de outro
+cliente (409), slugs reservados e chamadas de fora da tailnet.
+
+Backend: `backend-api/src/routes/cloud.routes.ts` (`/api/cloud/status|enable|disable`).
+Serviço no VPS: `tenant-registry/` (systemd `onliacesso-registry`, escuta só em
+`100.90.27.7:8787`).
+
+### Caminho manual / socorro (do PC do dev)
+
+1. **Tailscale** na máquina do cliente: `tailscale up`, anotar o nome MagicDNS.
+2. **Firewall**: `enable-cloud-access.ps1 -VpsTailscaleIp 100.90.27.7` (Win) ou
+   `sudo enable-cloud-access.sh 100.90.27.7` (Linux).
+3. **TURN**: repor o segredo do coturn em `webrtcICEServers2` no `mediamtx.yml`.
+4. **Registrar**:
    ```bash
    bash deploy/cloud/add-tenant.sh <slug> <nome-magicdns-ou-ip100.x>
    bash deploy/cloud/add-tenant.sh --list   # conferir
    ```
-   O script resolve o nome→IP no host do VPS, atualiza o registry, roda
-   `nginx -t` (com rollback automático se falhar), recarrega e faz smoke test.
-5. Entregar ao cliente: `https://cloud.onlitec.com.br` + o código dele
-   (ou o atalho `https://cloud.onlitec.com.br/?t=<slug>`, que pré-preenche).
+5. Entregar: `https://cloud.onlitec.com.br/?t=<slug>` (pré-preenche o código).
 
-**Cliente reinstalou o servidor?** O IP 100.x muda junto com o nó novo — basta
-re-rodar `add-tenant.sh <slug> <nome-magicdns>` (o nome acompanha a máquina).
+**Cliente reinstalou o servidor?** O IP 100.x muda junto com o nó novo. O
+botão do painel resolve sozinho se o slug ficou órfão? Não — o slug antigo
+fica preso ao IP antigo; re-aponte manualmente com
+`add-tenant.sh <slug> <nome-magicdns>` (proteção anti-sequestro proposital).
 
 ## Regras que não podem ser quebradas
 

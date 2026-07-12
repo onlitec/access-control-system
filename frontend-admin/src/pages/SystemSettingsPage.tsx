@@ -1,11 +1,16 @@
 import React, { useState, useEffect } from 'react';
-import { Settings, Mail, DownloadCloud, Loader2, Send, Save, CheckCircle, AlertTriangle } from 'lucide-react';
+import { Settings, Mail, DownloadCloud, Loader2, Send, Save, CheckCircle, AlertTriangle, Cloud, Copy } from 'lucide-react';
 import {
   getSystemSettings,
   updateSystemSettings,
   testSmtp,
   checkForUpdate,
+  getCloudStatus,
+  enableCloud,
+  disableCloud,
   type SystemSettingsData,
+  type CloudStatus,
+  type CloudStep,
 } from '@/services/api';
 
 const inputStyle: React.CSSProperties = {
@@ -51,9 +56,75 @@ export default function SystemSettingsPage() {
   const [updateInfo, setUpdateInfo] = useState<Awaited<ReturnType<typeof checkForUpdate>> | null>(null);
   const [updateError, setUpdateError] = useState<string | null>(null);
 
+  // acesso via nuvem
+  const [cloud, setCloud] = useState<CloudStatus | null>(null);
+  const [cloudSlug, setCloudSlug] = useState('');
+  const [cloudAuthKey, setCloudAuthKey] = useState('');
+  const [cloudBusy, setCloudBusy] = useState(false);
+  const [cloudSteps, setCloudSteps] = useState<CloudStep[]>([]);
+  const [cloudError, setCloudError] = useState<string | null>(null);
+  const [cloudNeedsKey, setCloudNeedsKey] = useState(false);
+  const [copied, setCopied] = useState(false);
+
   useEffect(() => {
     loadSettings();
+    void loadCloud();
   }, []);
+
+  async function loadCloud() {
+    try {
+      const st = await getCloudStatus();
+      setCloud(st);
+      if (st.slug) setCloudSlug(st.slug);
+    } catch { /* backend antigo sem /api/cloud — o card mostra indisponível */ }
+  }
+
+  async function handleCloudEnable() {
+    const slug = cloudSlug.trim().toLowerCase();
+    if (!/^[a-z0-9-]{2,32}$/.test(slug)) {
+      setCloudError('Código inválido: use letras minúsculas, números e hífen (2 a 32 caracteres).');
+      return;
+    }
+    setCloudBusy(true);
+    setCloudError(null);
+    setCloudSteps([]);
+    try {
+      const r = await enableCloud(slug, cloudAuthKey.trim() || undefined);
+      setCloudSteps(r.steps || []);
+      setCloudNeedsKey(false);
+      setCloudAuthKey('');
+      await loadCloud();
+    } catch (err: any) {
+      const msg = err.message || 'Falha ao habilitar';
+      setCloudError(msg);
+      if (/Tailscale não está ativo/i.test(msg)) setCloudNeedsKey(true);
+    } finally {
+      setCloudBusy(false);
+    }
+  }
+
+  async function handleCloudDisable() {
+    if (!window.confirm('Desabilitar o acesso via nuvem? O link deixa de funcionar na hora.')) return;
+    setCloudBusy(true);
+    setCloudError(null);
+    try {
+      await disableCloud();
+      setCloudSteps([]);
+      await loadCloud();
+    } catch (err: any) {
+      setCloudError(err.message || 'Falha ao desabilitar');
+    } finally {
+      setCloudBusy(false);
+    }
+  }
+
+  function handleCopyCloudUrl() {
+    if (!cloud?.url) return;
+    void navigator.clipboard.writeText(cloud.url).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    });
+  }
 
   async function loadSettings() {
     setLoading(true);
@@ -278,6 +349,87 @@ export default function SystemSettingsPage() {
               )}
             </div>
           )}
+        </div>
+
+        {/* Acesso via nuvem */}
+        <div className="settings-card" style={{ margin: 0 }}>
+          <div className="settings-card-header">
+            <Cloud size={20} />
+            <h2>Acesso via nuvem</h2>
+          </div>
+          <p className="text-muted" style={{ fontSize: '0.85rem', margin: '10px 0 20px' }}>
+            Publica as câmeras em <strong>cloud.onlitec.com.br</strong> para acesso pelo
+            celular, de qualquer lugar. Os logins são os mesmos usuários deste painel.
+            Nada do servidor fica exposto à internet (o tráfego vai por VPN Tailscale).
+          </p>
+
+          {cloud?.enabled && cloud.url ? (
+            <>
+              <div style={{
+                display: 'flex', alignItems: 'center', gap: '10px', padding: '12px 14px',
+                background: 'rgba(34, 197, 94, 0.08)', border: '1px solid var(--green-500)',
+                borderRadius: 'var(--radius)',
+              }}>
+                <CheckCircle size={18} style={{ color: 'var(--green-400)', flexShrink: 0 }} />
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
+                    Ativo — código do cliente: <strong>{cloud.slug}</strong>
+                  </div>
+                  <a href={cloud.url} target="_blank" rel="noreferrer" style={{ fontSize: '0.9rem', wordBreak: 'break-all' }}>
+                    {cloud.url}
+                  </a>
+                </div>
+                <button className="btn btn-secondary" onClick={handleCopyCloudUrl} title="Copiar link"
+                  style={{ display: 'flex', alignItems: 'center', gap: '6px', whiteSpace: 'nowrap' }}>
+                  <Copy size={14} /> {copied ? 'Copiado!' : 'Copiar'}
+                </button>
+              </div>
+              {!cloud.registeredOnVps && (
+                <p className="text-muted" style={{ fontSize: '0.75rem', marginTop: '8px' }}>
+                  Aviso: o servidor da nuvem não confirmou o registro agora (VPN fora do ar?).
+                </p>
+              )}
+              <button className="btn btn-secondary" onClick={handleCloudDisable} disabled={cloudBusy}
+                style={{ display: 'flex', alignItems: 'center', gap: '6px', marginTop: '15px' }}>
+                {cloudBusy ? <Loader2 className="animate-spin" size={14} /> : <Cloud size={14} />} Desabilitar acesso via nuvem
+              </button>
+            </>
+          ) : (
+            <>
+              <label style={labelStyle}>Código do cliente (o que os usuários digitam no app)</label>
+              <input style={inputStyle} value={cloudSlug}
+                onChange={(e) => setCloudSlug(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ''))}
+                placeholder="ex.: onlitec" maxLength={32} />
+              {(cloudNeedsKey || (cloud && !cloud.tailscale.up)) && (
+                <div style={{ marginTop: '12px' }}>
+                  <label style={labelStyle}>Chave de ativação da nuvem (fornecida pela Onlitec)</label>
+                  <input style={inputStyle} value={cloudAuthKey} onChange={(e) => setCloudAuthKey(e.target.value)}
+                    placeholder="tskey-auth-..." type="password" />
+                  <p className="text-muted" style={{ fontSize: '0.75rem', marginTop: '6px' }}>
+                    Necessária só na primeira vez, para conectar este servidor à VPN da nuvem.
+                  </p>
+                </div>
+              )}
+              <button className="btn btn-primary" onClick={handleCloudEnable} disabled={cloudBusy || !cloudSlug.trim()}
+                style={{ display: 'flex', alignItems: 'center', gap: '6px', marginTop: '15px' }}>
+                {cloudBusy ? <Loader2 className="animate-spin" size={14} /> : <Cloud size={14} />} Habilitar acesso via nuvem
+              </button>
+            </>
+          )}
+
+          {cloudSteps.length > 0 && (
+            <div style={{ marginTop: '12px', fontSize: '0.8rem', display: 'grid', gap: '4px' }}>
+              {cloudSteps.map((s) => (
+                <div key={s.step} style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  {s.ok
+                    ? <CheckCircle size={13} style={{ color: 'var(--green-400)', flexShrink: 0 }} />
+                    : <AlertTriangle size={13} style={{ color: 'var(--red-400)', flexShrink: 0 }} />}
+                  <span style={{ color: 'var(--text-secondary)' }}><strong>{s.step}</strong>: {s.detail}</span>
+                </div>
+              ))}
+            </div>
+          )}
+          {cloudError && banner({ kind: 'err', text: cloudError })}
         </div>
       </div>
 

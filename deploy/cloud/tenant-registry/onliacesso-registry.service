@@ -1,0 +1,15 @@
+[Unit]
+Description=OnliAcesso Cloud - tenant registry (auto-approve via tailnet)
+After=network-online.target docker.service tailscaled.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/node /opt/onliacesso-registry/server.js
+Restart=always
+RestartSec=5
+# root: escreve o map no volume do NPM e da docker exec no proxy
+User=root
+
+[Install]
+WantedBy=multi-user.target

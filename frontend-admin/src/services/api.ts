@@ -479,6 +479,33 @@ export const checkForUpdate = async () => {
     }>('/ops/update-check');
 };
 
+// ── Acesso via nuvem (cloud.onlitec.com.br) ────────────────────────────────
+
+export interface CloudStep { step: string; ok: boolean; detail: string }
+
+export interface CloudStatus {
+    tailscale: { up: boolean; ip?: string };
+    enabled: boolean;
+    slug: string | null;
+    url: string | null;
+    registeredOnVps: boolean;
+}
+
+export const getCloudStatus = async () => {
+    return request<CloudStatus>('/cloud/status');
+};
+
+export const enableCloud = async (slug: string, authKey?: string) => {
+    return request<{ success: boolean; slug: string; url: string; steps: CloudStep[] }>(
+        '/cloud/enable',
+        { method: 'POST', body: JSON.stringify(authKey ? { slug, authKey } : { slug }) },
+    );
+};
+
+export const disableCloud = async () => {
+    return request<{ success: boolean }>('/cloud/disable', { method: 'POST' });
+};
+
 export interface BackupRun {
     id: string;
     status: 'running' | 'success' | 'failed';
