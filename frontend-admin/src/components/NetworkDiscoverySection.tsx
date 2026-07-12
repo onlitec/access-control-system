@@ -33,6 +33,8 @@ export interface DiscoveredDevice {
   isActivated:     boolean;
   isAdded:         boolean;
   friendlyName?:   string | null;
+  /** Já gerenciado por uma integração do sistema (ex.: "Terminal Facial · Facial Portaria"). */
+  knownAs?:        string | null;
 }
 
 interface Area { id: string; name: string; }
@@ -76,6 +78,8 @@ const NetworkDiscoverySection = forwardRef<NetworkDiscoveryHandle>(function Netw
   const [categories, setCategories] = useState<Category[]>([]);
   const [registerModal, setRegisterModal] = useState<DiscoveredDevice | null>(null);
   const sseRef = useRef<EventSource | null>(null);
+  const pollRef = useRef<number | null>(null);
+  const doneRef = useRef(false);
 
   // Form de cadastro
   const [regForm, setRegForm] = useState({ friendlyName: '', username: 'admin', password: '', categoryId: '', areaId: '' });
@@ -87,11 +91,62 @@ const NetworkDiscoverySection = forwardRef<NetworkDiscoveryHandle>(function Netw
   useEffect(() => {
     apiFetch('/access-areas').then((r: any) => setAreas(r?.data ?? [])).catch(() => {});
     apiFetch('/devices/categories').then((r: any) => setCategories(r?.data ?? [])).catch(() => {});
-    return () => { sseRef.current?.close(); };
+    return () => {
+      sseRef.current?.close();
+      if (pollRef.current) clearInterval(pollRef.current);
+    };
   }, []);
+
+  const mergeDevices = useCallback((incoming: DiscoveredDevice[]) => {
+    setDevices((prev) => {
+      const byIp = new Map(prev.map((d) => [d.ipAddress, d]));
+      let changed = false;
+      for (const device of incoming) {
+        const current = byIp.get(device.ipAddress);
+        if (!current) {
+          byIp.set(device.ipAddress, device);
+          changed = true;
+        } else {
+          // O servidor reemite o mesmo IP quando descobre modelo/serial reais
+          const merged = { ...current, ...device };
+          if (JSON.stringify(merged) !== JSON.stringify(current)) {
+            byIp.set(device.ipAddress, merged);
+            changed = true;
+          }
+        }
+      }
+      return changed ? [...byIp.values()] : prev;
+    });
+  }, []);
+
+  /**
+   * Polling de reserva: o SSE é o caminho normal, mas se o EventSource não
+   * entregar (proxy que bufferiza, extensão de navegador, conexão derrubada),
+   * a varredura ficaria "rodando" para sempre sem mostrar nada. Este loop
+   * busca o resultado acumulado no servidor até a varredura terminar.
+   */
+  const startPollingFallback = useCallback(() => {
+    if (pollRef.current) clearInterval(pollRef.current);
+    const startedAt = Date.now();
+    pollRef.current = window.setInterval(async () => {
+      try {
+        const res: any = await apiFetch('/discovery/devices');
+        mergeDevices(res?.data ?? []);
+      } catch { /* ignora falha pontual */ }
+
+      // Encerra o polling quando o SSE já concluiu ou após 90s de varredura
+      if (doneRef.current || Date.now() - startedAt > 90_000) {
+        if (pollRef.current) clearInterval(pollRef.current);
+        pollRef.current = null;
+        setScanStatus((s) => (s === 'scanning' || s === 'fast-done' ? 'complete' : s));
+      }
+    }, 2500);
+  }, [mergeDevices]);
 
   const startScan = useCallback(async () => {
     sseRef.current?.close();
+    if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
+    doneRef.current = false;
     setDevices([]);
     setScanError(null);
     setScanStatus('scanning');
@@ -105,41 +160,39 @@ const NetworkDiscoverySection = forwardRef<NetworkDiscoveryHandle>(function Netw
       return;
     }
 
-    // 2. Conectar ao SSE para receber resultados
+    // 2. Conectar ao SSE para receber resultados em tempo real
     const token = localStorage.getItem('auth_token') ?? '';
-    const sse = new EventSource(`/api/discovery/stream?token=${token}`);
+    const sse = new EventSource(`/api/discovery/stream?token=${encodeURIComponent(token)}`);
     sseRef.current = sse;
 
-    sse.addEventListener('device-found', (e) => {
-      try {
-        const device: DiscoveredDevice = JSON.parse(e.data);
-        setDevices((prev) => {
-          if (prev.some((d) => d.tempId === device.tempId || d.ipAddress === device.ipAddress)) return prev;
-          return [...prev, device];
-        });
-      } catch {}
+    sse.addEventListener('device-found', (e: MessageEvent) => {
+      try { mergeDevices([JSON.parse(e.data) as DiscoveredDevice]); } catch {}
     });
 
-    sse.addEventListener('fast-scan-complete', () => setScanStatus('fast-done'));
+    sse.addEventListener('fast-scan-complete', () => {
+      setScanStatus((s) => (s === 'scanning' ? 'fast-done' : s));
+    });
 
     sse.addEventListener('scan-complete', () => {
+      doneRef.current = true;
       setScanStatus('complete');
       sse.close();
     });
 
-    sse.addEventListener('scan-error', (e) => {
+    sse.addEventListener('scan-error', (e: MessageEvent) => {
+      doneRef.current = true;
       try { setScanError(JSON.parse(e.data).message); } catch {}
       setScanStatus('error');
       sse.close();
     });
 
-    sse.onerror = () => {
-      if (scanStatus === 'scanning' || scanStatus === 'fast-done') {
-        setScanStatus('complete');
-      }
-      sse.close();
-    };
-  }, []);
+    // Erro no SSE não é fatal: o polling de reserva assume e a varredura
+    // (que roda no servidor de qualquer forma) continua sendo exibida.
+    sse.onerror = () => { sse.close(); };
+
+    // 3. Rede de segurança, sempre ativa — só custa um GET a cada 2,5s
+    startPollingFallback();
+  }, [mergeDevices, startPollingFallback]);
 
   useImperativeHandle(ref, () => ({
     startScanAndReveal: () => {
@@ -322,6 +375,12 @@ const NetworkDiscoverySection = forwardRef<NetworkDiscoveryHandle>(function Netw
                         ✓ Cadastrado
                       </span>
                     )}
+                    {device.knownAs && (
+                      <span title="Este equipamento já é gerenciado por uma integração do sistema"
+                        style={{ fontSize: '11px', padding: '2px 8px', borderRadius: '999px', background: 'rgba(34,197,94,0.12)', color: '#22c55e', fontWeight: 600 }}>
+                        ✓ Já integrado: {device.knownAs}
+                      </span>
+                    )}
                   </div>
                   <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '3px', display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
                     {device.manufacturer && <span>{device.manufacturer}</span>}
@@ -330,7 +389,7 @@ const NetworkDiscoverySection = forwardRef<NetworkDiscoveryHandle>(function Netw
                     {device.serialNumber && <span>S/N: {device.serialNumber}</span>}
                   </div>
                 </div>
-                {!device.isAdded && (
+                {!device.isAdded && !device.knownAs && (
                   <button
                     onClick={() => openRegister(device)}
                     style={{

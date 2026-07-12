@@ -24,6 +24,17 @@ const OUI_MAP: Record<string, string> = {
   'BC96CF': 'Hikvision',
   '703519': 'Hikvision',
   '5CA358': 'Hikvision',
+  'A4D5C2': 'Hikvision', // DS-K1T673 (terminal facial em produção)
+  '18688F': 'Hikvision',
+  '2C0A2A': 'Hikvision',
+  '3CBDD8': 'Hikvision',
+  '440049': 'Hikvision',
+  '54C4C8': 'Hikvision',
+  '58032B': 'Hikvision',
+  'ACB9C4': 'Hikvision',
+  'BCAD28': 'Hikvision',
+  'E0BAAD': 'Hikvision',
+  'F84DFC': 'Hikvision',
   // Dahua
   'E0501E': 'Dahua',
   '90D7EB': 'Dahua',
@@ -135,4 +146,77 @@ export function fingerprint(
   const manufacturer = getManufacturerByMac(mac);
   const deviceType = inferDeviceType(onvifTypes, model, manufacturer);
   return { manufacturer, deviceType };
+}
+
+// ── Identificação por sonda HTTP ──────────────────────────────────────────────
+
+export interface HttpIdentity {
+  manufacturer: string | null;
+  model: string | null;
+  serialNumber: string | null;
+  firmwareVersion: string | null;
+}
+
+const tag = (xml: string, name: string): string | null =>
+  xml.match(new RegExp(`<${name}>([^<]+)</${name}>`, 'i'))?.[1]?.trim() ?? null;
+
+/**
+ * Identifica o equipamento consultando-o pela rede, sem credenciais — a tabela
+ * OUI cobre poucos prefixos e falha justamente nos modelos novos. Estratégia:
+ *
+ *  1. `GET /ISAPI/System/deviceInfo`: equipamentos Hikvision/OEM respondem 401
+ *     com `WWW-Authenticate: Digest realm="..."` (o realm costuma trazer o
+ *     modelo), ou 200 com o XML completo quando o acesso anônimo está ligado.
+ *  2. Header `Server:` da raiz HTTP — vários fabricantes se identificam nele.
+ *
+ * Best-effort: qualquer falha retorna campos nulos, sem quebrar a varredura.
+ */
+export async function probeHttpIdentity(ip: string, port: number, timeoutMs = 2500): Promise<HttpIdentity> {
+  const empty: HttpIdentity = { manufacturer: null, model: null, serialNumber: null, firmwareVersion: null };
+
+  const fetchSafe = async (path: string) => {
+    try {
+      return await fetch(`http://${ip}:${port}${path}`, {
+        method: 'GET',
+        signal: AbortSignal.timeout(timeoutMs),
+      } as any);
+    } catch {
+      return null;
+    }
+  };
+
+  // 1. ISAPI (Hikvision e OEMs)
+  const isapi = await fetchSafe('/ISAPI/System/deviceInfo');
+  if (isapi) {
+    if (isapi.status === 200) {
+      const xml = await isapi.text().catch(() => '');
+      if (/<DeviceInfo/i.test(xml)) {
+        return {
+          manufacturer:    tag(xml, 'manufacturer') ?? 'Hikvision',
+          model:           tag(xml, 'model'),
+          serialNumber:    tag(xml, 'serialNumber'),
+          firmwareVersion: tag(xml, 'firmwareVersion'),
+        };
+      }
+    }
+    if (isapi.status === 401) {
+      // 401 no endpoint ISAPI já é assinatura do ecossistema Hikvision/OEM.
+      // O realm normalmente vem como: Digest realm="DS-K1T673DX-BR", ...
+      const realm = isapi.headers.get('www-authenticate')?.match(/realm="([^"]+)"/i)?.[1] ?? null;
+      const looksLikeModel = realm && /^[A-Za-z0-9\-_.]+$/.test(realm) && !/^ip camera$/i.test(realm);
+      return { ...empty, manufacturer: 'Hikvision', model: looksLikeModel ? realm : null };
+    }
+  }
+
+  // 2. Header Server na raiz
+  const root = await fetchSafe('/');
+  const server = root?.headers.get('server') ?? '';
+  for (const [needle, name] of [
+    ['hikvision', 'Hikvision'], ['dahua', 'Dahua'], ['intelbras', 'Intelbras'],
+    ['axis', 'Axis'], ['uniview', 'Uniview'], ['control id', 'Control iD'],
+  ] as const) {
+    if (server.toLowerCase().includes(needle)) return { ...empty, manufacturer: name };
+  }
+
+  return empty;
 }

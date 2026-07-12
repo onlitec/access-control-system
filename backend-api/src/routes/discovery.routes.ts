@@ -17,6 +17,7 @@ import {
   unregisterScanClient,
   getLastScanDevices,
   getDeviceByTempId,
+  type KnownDevice,
 } from '../modules/discovery/discovery.orchestrator';
 import { createCipheriv, createDecipheriv, randomBytes, scryptSync } from 'crypto';
 import jwt from 'jsonwebtoken';
@@ -93,10 +94,55 @@ router.post('/scan', adminMiddleware, async (req: Request, res: Response) => {
     const addedIps  = new Set<string>(existing.map((d) => d.ipAddress));
     const addedMacs = new Set<string>(existing.flatMap((d) => d.macAddress ? [d.macAddress.toLowerCase()] : []));
 
+    // Equipamentos que JÁ são gerenciados por uma integração: a varredura passa a
+    // rotulá-los corretamente ("já integrado como X") e usa as credenciais deles
+    // para ler modelo/serial reais, em vez de adivinhar por OUI.
+    const [facials, videos, doorbells, guaritas] = await Promise.all([
+      prisma.facialAccessDevice.findMany({ where: { enabled: true } }),
+      prisma.videoDevice.findMany({ where: { enabled: true } }),
+      prisma.doorbellDevice.findMany({ where: { enabled: true } }),
+      prisma.guaritaDevice.findMany({ where: { enabled: true } }),
+    ]);
+
+    // Um mesmo IP pode estar em mais de uma integração (o terminal facial também
+    // é cadastrado como câmera no VMS, por exemplo). A primeira integração a
+    // registrar define tipo/credenciais — daí a ordem abaixo, do mais específico
+    // (controle de acesso) ao mais genérico (vídeo) — e as demais só acrescentam
+    // o rótulo, para o operador ver tudo o que aquele equipamento já é.
+    const knownByIp = new Map<string, KnownDevice>();
+    const addKnown = (ip: string, entry: KnownDevice) => {
+      const current = knownByIp.get(ip);
+      if (!current) { knownByIp.set(ip, entry); return; }
+      current.label = `${current.label} + ${entry.label}`;
+    };
+
+    for (const d of facials) {
+      addKnown(d.ip, {
+        label: `Terminal Facial · ${d.name}`, kind: 'facial',
+        port: d.port, username: d.username, password: d.password,
+      });
+    }
+    for (const d of doorbells) {
+      addKnown(d.ip, {
+        label: `Videoporteiro · ${d.name}`, kind: 'intercom',
+        port: d.port, username: d.username, password: d.password,
+      });
+    }
+    for (const d of guaritas) {
+      addKnown(d.ip, { label: `Guarita MG3000 · ${d.name}`, kind: 'controller' });
+    }
+    for (const d of videos) {
+      addKnown(d.ip, {
+        label: `${d.kind === 'nvr' ? 'NVR' : d.kind === 'dvr' ? 'DVR' : 'Câmera'} · ${d.name}`,
+        kind: d.kind === 'nvr' ? 'nvr' : d.kind === 'dvr' ? 'dvr' : 'camera',
+        port: d.httpPort, username: d.username, password: d.password,
+      });
+    }
+
     const { subnetPrefix, arpEnabled } = req.body ?? {};
 
     // Fire-and-forget: responde rapidamente e o scan corre em background
-    startScan({ subnetPrefix, arpEnabled: arpEnabled !== false, addedIps, addedMacs });
+    startScan({ subnetPrefix, arpEnabled: arpEnabled !== false, addedIps, addedMacs, knownByIp });
 
     res.json({ success: true, message: 'Varredura iniciada. Conecte-se ao endpoint /stream para receber os resultados.' });
   } catch (e: any) {

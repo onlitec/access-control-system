@@ -10,7 +10,7 @@ import { promisify } from 'util';
 import net from 'net';
 import os from 'os';
 import type { DiscoveredDevice } from './discovery.orchestrator';
-import { getManufacturerByMac, inferDeviceType } from './device-fingerprint.util';
+import { getManufacturerByMac, inferDeviceType, probeHttpIdentity } from './device-fingerprint.util';
 
 const execAsync = promisify(exec);
 
@@ -124,8 +124,14 @@ export async function arpScan(
 
         if (openPorts.length === 0) return;
 
-        const manufacturer = getManufacturerByMac(mac);
-        const deviceType = inferDeviceType([], undefined, manufacturer);
+        const httpPort = openPorts.includes(80) ? 80 : (openPorts.includes(8080) ? 8080 : openPorts[0]);
+
+        // A tabela OUI cobre poucos prefixos; a sonda HTTP identifica o
+        // equipamento de verdade (modelo/serial/firmware quando disponível).
+        const probed = await probeHttpIdentity(ip, httpPort).catch(() => null);
+        const manufacturer = probed?.manufacturer ?? getManufacturerByMac(mac);
+        const model = probed?.model ?? null;
+        const deviceType = inferDeviceType([], model, manufacturer);
 
         onDevice({
           tempId:          `arp-${ip}-${Date.now()}`,
@@ -133,11 +139,11 @@ export async function arpScan(
           macAddress:      mac,
           protocolType:    'arp',
           manufacturer,
-          model:           null,
-          serialNumber:    null,
-          firmwareVersion: null,
+          model,
+          serialNumber:    probed?.serialNumber ?? null,
+          firmwareVersion: probed?.firmwareVersion ?? null,
           deviceType,
-          httpPort:        openPorts.includes(80) ? 80 : (openPorts.includes(8080) ? 8080 : 80),
+          httpPort,
           sdkPort:         openPorts.includes(8000) ? 8000 : 8000,
           subnetMask:      null,
           gateway:         null,
