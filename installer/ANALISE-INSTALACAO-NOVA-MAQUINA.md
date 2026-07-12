@@ -5,7 +5,7 @@ Pergunta respondida aqui: *instalando o pacote numa VM Windows nova, na mesma re
 **Resposta: sim, com 3 passos manuais depois do instalador** (Google Drive, acesso remoto e recadastro dos equipamentos). O resto é automático — inclusive o IP novo, que é detectado na instalação.
 
 Pacote: `installer/dist/OnliAcessoSetup-2.2.0.exe` (286 MB)
-SHA256: `8f04c2810edc3a878232db9ffe5fe971af0f3487aa70222f4bfc3d05af8964a6`
+SHA256: `486fbf9c9c42c318eeec110a3a619e036fa2f4dc07b2110c83e607d22361fd25`
 
 ---
 
@@ -34,11 +34,26 @@ C:\OnliAcesso\binaries\rclone\rclone.exe config --config C:\OnliAcesso\config\rc
 Depois, no Admin → VMS → Armazenamento, cadastrar o destino (remote `local`, modo `copy`).
 *Alternativa mais rápida: copiar o `C:\OnliAcesso\config\rclone.conf` desta máquina — o token funciona em qualquer host.*
 
-### 2.2 Acesso remoto / cloud (só se for usar `cloud.onlitec.com.br`)
-Duas coisas ficam fora do instalador:
-- **Tailscale**: instalar e entrar na tailnet; depois apontar o VPS para o **novo** host.
-- **STUN/TURN**: o `mediamtx.yml` desta instalação tem `webrtcICEServers2` apontando para `65.109.14.53`. O pacote traz esse bloco **comentado** (na LAN não é necessário). Para o remoto voltar a funcionar com baixa latência, descomentar e repor o segredo do TURN.
-- Regras de firewall do cloud (TCP 3001/8888/8889 restritas ao Tailscale) também foram criadas à mão aqui.
+### 2.2 Acesso remoto / cloud (`cloud.onlitec.com.br`) — **onde o IP do servidor é configurado**
+
+O IP local (172.20.120.x) **não aparece em lugar nenhum** do cloud: o VPS fala com o servidor **pela Tailscale**. O que importa é o endereço Tailscale do servidor, e ele muda numa reinstalação. São exatamente **3 lugares**:
+
+**a) No VPS — é aqui que o VPS "descobre" o servidor.**
+Nginx Proxy Manager → proxy host de `cloud.onlitec.com.br` → aba **Advanced**. As 3 `location` apontam para o servidor (`/api/` → 3001, `/hls/` → 8888, `/webrtc/` → 8889). Fonte versionada: `deploy/cloud/nginx-proxy-manager.conf`.
+
+> **Use o nome MagicDNS, não o IP.** `proxy_pass http://desktop-b3mtp33:3001/api/` em vez de `http://100.77.220.32:3001/api/`. O nome acompanha a máquina, então **uma reinstalação não quebra o acesso remoto** — foi por isso que o arquivo do repositório passou a usar o nome. Exige MagicDNS ligado na tailnet (admin Tailscale → DNS → Enable MagicDNS). O nome da máquina nova sai de `tailscale status`.
+
+**b) No servidor novo — firewall.** As portas 3001/8888/8889 só devem aceitar o VPS. O instalador não cria essas regras (acesso remoto é opcional); use o script empacotado:
+
+```powershell
+cd C:\OnliAcesso\scripts
+.\enable-cloud-access.ps1 -VpsTailscaleIp 100.90.27.7
+# o IP do VPS NÃO muda; ele já imprime o nome MagicDNS da máquina para você colar no VPS
+```
+
+**c) No servidor novo — TURN (latência baixa no remoto).** O `mediamtx.yml` desta instalação tem `webrtcICEServers2` apontando para o coturn do VPS (`65.109.14.53`) — endereço do **VPS**, não do servidor, então **não muda**. O pacote traz o bloco comentado (na LAN é desnecessário): descomentar e repor o `static-auth-secret` do coturn. Sem isso o remoto ainda funciona, mas cai para HLS (alguns segundos de atraso).
+
+Além disso: instalar o Tailscale na VM e entrar na mesma tailnet.
 
 ### 2.3 Recadastro dos equipamentos (instalação limpa = banco vazio)
 Não há moradores, usuários nem dispositivos. Recadastrar pelo Admin:

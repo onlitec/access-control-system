@@ -16,7 +16,7 @@ sem expor o servidor local.
                  │  Tailscale (VPN privada)
                  ▼
   ┌──────────────────────────────┐
-  │  Servidor local (Windows)    │  100.77.220.32
+  │  Servidor local (Windows)    │  desktop-b3mtp33 (100.77.220.32)
   │  · backend-api      :3001    │  login + API das câmeras
   │  · MediaMTX HLS     :8888    │  vídeo (exige ?jwt=)
   │  · MediaMTX WebRTC  :8889    │  signaling
@@ -39,7 +39,25 @@ retorna senha.
 sistema passam — tokens de morador e de onboarding são recusados.
 
 **No firewall do Windows**, as portas 8888 (HLS), 8889 (signaling) e 3001 (API)
-só aceitam conexões do **IP Tailscale do VPS**.
+só aceitam conexões do **IP Tailscale do VPS** (100.90.27.7). Essas regras não
+vêm do instalador — crie-as com o script empacotado:
+
+```powershell
+C:\OnliAcesso\scripts\enable-cloud-access.ps1 -VpsTailscaleIp 100.90.27.7
+```
+
+## Trocando o servidor de máquina
+
+O endereço que o VPS usa é o **Tailscale do servidor**, e ele muda numa
+reinstalação. Para não depender disso, o proxy do VPS aponta para o **nome
+MagicDNS** (`desktop-b3mtp33`), não para o IP `100.x`. Ao instalar noutra
+máquina:
+
+1. Instalar o Tailscale na máquina nova e entrar na tailnet.
+2. Rodar `enable-cloud-access.ps1` (acima) — ele imprime o nome MagicDNS.
+3. No VPS, trocar o nome nas 3 `location` do proxy host (Advanced) e recarregar.
+4. Repor `webrtcICEServers2` no `mediamtx.yml` (o endereço do coturn é o do
+   **VPS**, não muda; só o segredo precisa ser recolocado).
 
 ## Transporte de vídeo
 
