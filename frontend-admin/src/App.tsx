@@ -22,6 +22,7 @@ import DepartmentsPage from '@/pages/DepartmentsPage';
 import OnboardingReviewPage from '@/pages/OnboardingReviewPage';
 import VmsDevicesPage from '@/pages/VmsDevicesPage';
 import VmsStoragePage from '@/pages/VmsStoragePage';
+import NetworkDevicesPage from '@/pages/NetworkDevicesPage';
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
     const { isAuthenticated, isLoading, user } = useAuth();
@@ -91,6 +92,9 @@ function AppRoutes() {
             {/* VMS — Gerenciador de Imagens */}
             <Route path="/admin/vms-devices" element={<ProtectedRoute><VmsDevicesPage /></ProtectedRoute>} />
             <Route path="/admin/vms-storage" element={<ProtectedRoute><VmsStoragePage /></ProtectedRoute>} />
+
+            {/* Dispositivos de Rede */}
+            <Route path="/admin/network-devices" element={<ProtectedRoute><NetworkDevicesPage /></ProtectedRoute>} />
 
             {/* Auditoria */}
             <Route path="/admin/audit-access" element={<ProtectedRoute><AuditAccessPage /></ProtectedRoute>} />

@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { apiFetch } from '@/services/api';
+import NetworkDiscoverySection from '@/components/NetworkDiscoverySection';
 import {
   Settings2, Plus, Trash2, Wifi, WifiOff, DoorOpen, Camera, Save,
   Loader2, CheckCircle, AlertTriangle, X, Eye, EyeOff,
@@ -1198,11 +1199,16 @@ export default function IntegrationsPage() {
                         </div>
                       </div>
                     )}
-                  </div>
-                ))}
-              </div>
-            )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
+
+        {/* Network Discovery Section */}
+        <div className="settings-card" style={{ margin: 0 }}>
+          <NetworkDiscoverySection />
         </div>
 
       </div>

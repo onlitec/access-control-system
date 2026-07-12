@@ -1,0 +1,138 @@
+/**
+ * device-fingerprint.util.ts
+ * Identifica fabricante e tipo provável de dispositivo a partir do prefixo
+ * OUI do endereço MAC (primeiros 3 octetos) e de flags ONVIF/SADP.
+ */
+
+export interface DeviceFingerprint {
+  manufacturer: string | null;
+  deviceType: 'camera' | 'nvr' | 'dvr' | 'facial' | 'intercom' | 'controller' | 'unknown';
+}
+
+/** Mapeamento OUI → fabricante (24 bits, upper-case, sem separadores). */
+const OUI_MAP: Record<string, string> = {
+  // Hikvision
+  '001F3F': 'Hikvision',
+  'C0561B': 'Hikvision',
+  'B40C25': 'Hikvision',
+  '4876BB': 'Hikvision',
+  '28579E': 'Hikvision',
+  'D4C4CA': 'Hikvision',
+  '68C90E': 'Hikvision',
+  'A4146B': 'Hikvision',
+  'C0EFAB': 'Hikvision',
+  'BC96CF': 'Hikvision',
+  '703519': 'Hikvision',
+  '5CA358': 'Hikvision',
+  // Dahua
+  'E0501E': 'Dahua',
+  '90D7EB': 'Dahua',
+  'F0545D': 'Dahua',
+  '3CE4D9': 'Dahua',
+  'C45141': 'Dahua',
+  '90EFA6': 'Dahua',
+  'B09A1A': 'Dahua',
+  'A4B806': 'Dahua',
+  // Intelbras
+  '00236C': 'Intelbras',
+  'E4A5C4': 'Intelbras',
+  '003087': 'Intelbras',
+  'B00C11': 'Intelbras',
+  '000C43': 'Intelbras',
+  // Control iD
+  '94C96D': 'Control iD',
+  'D8D5B9': 'Control iD',
+  // Axis Communications
+  '00408C': 'Axis',
+  'ACCC8E': 'Axis',
+  'B8A44F': 'Axis',
+  // Bosch
+  '00107D': 'Bosch',
+  '000992': 'Bosch',
+  // Uniview (UNV)
+  'DC2C6E': 'Uniview',
+  '14DDA9': 'Uniview',
+  // TP-Link (câmeras Tapo)
+  '9884E3': 'TP-Link',
+  'D46E5C': 'TP-Link',
+  // Reolink
+  'EC:2C:4D': 'Reolink',
+  // Nice / NICE Automation
+  '00236E': 'Nice',
+};
+
+/** Normaliza endereço MAC para 6 octetos uppercase sem separadores. */
+function normalizeMac(mac: string): string {
+  return mac.toUpperCase().replace(/[:\-\.]/g, '');
+}
+
+/** Extrai o OUI (primeiros 6 hex chars = 24 bits). */
+function extractOui(mac: string): string {
+  return normalizeMac(mac).substring(0, 6);
+}
+
+/**
+ * Identifica o fabricante pelo MAC address.
+ * Retorna null se o OUI não estiver na tabela interna.
+ */
+export function getManufacturerByMac(mac: string): string | null {
+  if (!mac) return null;
+  const oui = extractOui(mac);
+  return OUI_MAP[oui] ?? null;
+}
+
+/**
+ * Infere o tipo de dispositivo a partir de informações disponíveis:
+ * - tipos ONVIF (NetworkVideoTransmitter, Device)
+ * - modelo do dispositivo
+ * - fabricante inferido
+ */
+export function inferDeviceType(
+  onvifTypes: string[],
+  model?: string | null,
+  manufacturer?: string | null,
+): DeviceFingerprint['deviceType'] {
+  const typesLower = onvifTypes.map((t) => t.toLowerCase());
+  const modelLower = (model ?? '').toLowerCase();
+  const mfr = (manufacturer ?? '').toLowerCase();
+
+  if (typesLower.some((t) => t.includes('networkvideotransmitter'))) {
+    if (modelLower.includes('nvr') || modelLower.includes('ds-96') || modelLower.includes('ds-7') ) return 'nvr';
+    if (modelLower.includes('dvr') || modelLower.includes('turbo')) return 'dvr';
+    return 'camera';
+  }
+
+  if (typesLower.some((t) => t.includes('accesscontrol') || t.includes('door'))) return 'controller';
+
+  if (
+    modelLower.includes('facial') ||
+    modelLower.includes('ds-k1t') ||
+    modelLower.includes('ds-k2') ||
+    (mfr === 'control id' && modelLower.includes('id'))
+  ) return 'facial';
+
+  if (modelLower.includes('intercom') || modelLower.includes('ds-kv') || modelLower.includes('porteiro')) {
+    return 'intercom';
+  }
+
+  if (modelLower.includes('nvr')) return 'nvr';
+  if (modelLower.includes('dvr')) return 'dvr';
+  if (modelLower.includes('cam') || modelLower.includes('ipc') || modelLower.includes('ds-2c') || modelLower.includes('ds-2d')) {
+    return 'camera';
+  }
+
+  return 'unknown';
+}
+
+/**
+ * Fingerprint completo a partir do MAC + metadados ONVIF.
+ */
+export function fingerprint(
+  mac: string,
+  onvifTypes: string[] = [],
+  model?: string | null,
+): DeviceFingerprint {
+  const manufacturer = getManufacturerByMac(mac);
+  const deviceType = inferDeviceType(onvifTypes, model, manufacturer);
+  return { manufacturer, deviceType };
+}

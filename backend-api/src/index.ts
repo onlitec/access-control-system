@@ -39,6 +39,8 @@ import doorbellRoutes from './routes/doorbell.routes';
 import guaritaRoutes from './routes/guarita.routes';
 import facialAccessRoutes from './routes/facial-access.routes';
 import vmsRoutes from './routes/vms.routes';
+import discoveryRoutes from './routes/discovery.routes';
+import devicesRoutes from './routes/devices.routes';
 import deliveriesRoutes from './routes/deliveries.routes';
 import { config } from './config/unifiedConfig';
 import { AuditService } from './services/AuditService';
@@ -247,6 +249,8 @@ app.use('/api/staff', staffRoutes);
 app.use('/api/service-providers', providersRoutes);
 app.use('/api/events', eventsRoutes);
 app.use('/api/vms', vmsRoutes);
+app.use('/api/discovery', discoveryRoutes);
+app.use('/api/devices', devicesRoutes);
 
 // ============ Platform Routes (Integrated with HikCentral) ============
 app.use('/api/hikcentral', hikcentralVisitorsRouter);

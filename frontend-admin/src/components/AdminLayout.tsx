@@ -26,6 +26,7 @@ import {
     UserCheck,
     Video,
     HardDrive,
+    Network,
 } from 'lucide-react';
 import { avatarGradient } from '@/utils/avatarColor';
 
@@ -62,6 +63,12 @@ const menuSections = [
         items: [
             { to: '/admin/vms-devices', icon: Video, label: 'Câmeras / NVRs / DVRs', end: false },
             { to: '/admin/vms-storage', icon: HardDrive, label: 'Armazenamento', end: false },
+        ],
+    },
+    {
+        title: 'Dispositivos de Rede',
+        items: [
+            { to: '/admin/network-devices', icon: Network, label: 'Dispositivos e Servidores', end: false },
         ],
     },
     {

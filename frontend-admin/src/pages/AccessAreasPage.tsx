@@ -1,508 +1,843 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import AdminLayout from '@/components/AdminLayout';
 import { apiFetch as request } from '@/services/api';
+import {
+  Folder, FolderOpen, Star, Plus, Edit2, Trash2, Key, Network,
+  Camera, Cpu, Fingerprint, Mic, Wifi, ChevronDown, ChevronRight,
+  CheckCircle, AlertTriangle, X, Settings, ArrowRight, Loader2,
+  ListTodo
+} from 'lucide-react';
 
-interface AccessArea {
-    id: string;
-    name: string;
-    description: string | null;
-    icon: string | null;
-    isActive: boolean;
-    order: number;
+interface AccessAreaNode {
+  id: string;
+  name: string;
+  description: string | null;
+  icon: string | null;
+  isActive: boolean;
+  isFavorite: boolean;
+  order: number;
+  parentId: string | null;
+  deviceCount: number;
+  children: AccessAreaNode[];
 }
 
 interface FacialDoor {
-    id: string;
-    doorNo: number;
-    name: string;
-    actuatorType: string;
+  id: string;
+  doorNo: number;
+  name: string;
+  actuatorType: string;
 }
 
 interface FacialDevice {
-    id: string;
-    name: string;
-    role: string;
-    doors: FacialDoor[];
+  id: string;
+  name: string;
+  role: string;
+  doors: FacialDoor[];
+}
+
+interface NetworkDevice {
+  id: string;
+  friendlyName: string | null;
+  ipAddress: string;
+  deviceType: string;
+  manufacturer: string | null;
+  model: string | null;
+  status: string;
 }
 
 const ICON_OPTIONS = ['🏠','🏊','🏋️','⛹️','🎉','🔥','🚶','🧖','🚗','🛝','🎾','🎱','🏓','🎳','🎭','🎬','📚','🌿','🐾','🅿️'];
 
-const emptyForm = { name: '', description: '', icon: '🏠', isActive: true, order: 0 };
-
 export default function AccessAreasPage() {
-    const [areas, setAreas] = useState<AccessArea[]>([]);
-    const [loading, setLoading] = useState(true);
-    const [saving, setSaving] = useState(false);
-    const [error, setError] = useState<string | null>(null);
-    const [showForm, setShowForm] = useState(false);
-    const [editingArea, setEditingArea] = useState<AccessArea | null>(null);
-    const [form, setForm] = useState(emptyForm);
-    const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
+  const [tree, setTree] = useState<AccessAreaNode[]>([]);
+  const [flatAreas, setFlatAreas] = useState<AccessAreaNode[]>([]);
+  const [selectedArea, setSelectedArea] = useState<AccessAreaNode | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-    // Portas faciais vinculadas ao nível de acesso
-    const [facialDevices, setFacialDevices] = useState<FacialDevice[]>([]);
-    const [doorPanelAreaId, setDoorPanelAreaId] = useState<string | null>(null);
-    const [selectedDoorIds, setSelectedDoorIds] = useState<string[]>([]);
-    const [doorsLoading, setDoorsLoading] = useState(false);
-    const [doorsSaving, setDoorsSaving] = useState(false);
+  // States de Modais
+  const [showForm, setShowForm] = useState(false);
+  const [editingArea, setEditingArea] = useState<AccessAreaNode | null>(null);
+  const [parentIdForNew, setParentIdForNew] = useState<string | null>(null);
+  const [form, setForm] = useState({ name: '', description: '', icon: '🏠', isActive: true, order: 0, parentId: '' });
 
-    const load = async () => {
-        setLoading(true);
-        try {
-            const res = await request<{ data: AccessArea[] }>('/access-areas?all=true');
-            setAreas(res?.data ?? []);
-        } catch (e: any) {
-            setError(e.message);
-        } finally {
-            setLoading(false);
-        }
-    };
+  // Exclusão com mover dispositivos
+  const [areaToDelete, setAreaToDelete] = useState<AccessAreaNode | null>(null);
+  const [moveDevicesToId, setMoveDevicesToId] = useState<string>('null');
 
-    const loadFacialDevices = async () => {
-        try {
-            const res = await request<{ devices: FacialDevice[] }>('/facial-access/devices');
-            setFacialDevices(res?.devices ?? []);
-        } catch { setFacialDevices([]); }
-    };
+  // Associação de Dispositivos
+  const [showDeviceAssociation, setShowDeviceAssociation] = useState(false);
+  const [allAvailableDevices, setAllAvailableDevices] = useState<NetworkDevice[]>([]);
+  const [selectedDeviceIds, setSelectedDeviceIds] = useState<string[]>([]);
+  const [associating, setAssociating] = useState(false);
 
-    useEffect(() => { load(); loadFacialDevices(); }, []);
+  // Portas vinculadas (abas de detalhes da área)
+  const [activeTab, setActiveTab] = useState<'doors' | 'devices'>('doors');
+  const [facialDevices, setFacialDevices] = useState<FacialDevice[]>([]);
+  const [selectedDoorIds, setSelectedDoorIds] = useState<string[]>([]);
+  const [doorsLoading, setDoorsLoading] = useState(false);
+  const [doorsSaving, setDoorsSaving] = useState(false);
+  const [areaDevices, setAreaDevices] = useState<NetworkDevice[]>([]);
+  const [areaDevicesLoading, setAreaDevicesLoading] = useState(false);
 
-    const openDoorPanel = async (area: AccessArea) => {
-        setDoorPanelAreaId(area.id);
-        setDoorsLoading(true);
-        try {
-            const res = await request<{ data: FacialDoor[] }>(`/access-areas/${area.id}/doors`);
-            setSelectedDoorIds((res?.data ?? []).map(d => d.id));
-        } catch (e: any) {
-            setError(e.message);
-            setSelectedDoorIds([]);
-        } finally {
-            setDoorsLoading(false);
-        }
-    };
+  // Controle de nós expandidos na árvore
+  const [expandedNodes, setExpandedNodes] = useState<Set<string>>(new Set());
 
-    const toggleDoorSelection = (doorId: string) => {
-        setSelectedDoorIds(prev => prev.includes(doorId) ? prev.filter(id => id !== doorId) : [...prev, doorId]);
-    };
+  // ── Carregamento de Dados ──────────────────────────────────────────────────
 
-    const saveDoorPanel = async () => {
-        if (!doorPanelAreaId) return;
-        setDoorsSaving(true);
-        try {
-            await request(`/access-areas/${doorPanelAreaId}/doors`, {
-                method: 'PUT',
-                body: JSON.stringify({ doorIds: selectedDoorIds }),
-            });
-            setDoorPanelAreaId(null);
-        } catch (e: any) {
-            setError(e.message);
-        } finally {
-            setDoorsSaving(false);
-        }
-    };
+  const loadTree = async () => {
+    setLoading(true);
+    try {
+      const res = await request<{ data: AccessAreaNode[] }>('/access-areas/tree');
+      const data = res?.data ?? [];
+      setTree(data);
 
-    const actuatorLabel = (type: string) => type === 'gate' ? 'Portão' : type === 'barrier' ? 'Cancela' : 'Porta';
-
-    const openNew = () => {
-        setEditingArea(null);
-        setForm({ ...emptyForm, order: areas.length + 1 });
-        setShowForm(true);
-    };
-
-    const openEdit = (area: AccessArea) => {
-        setEditingArea(area);
-        setForm({
-            name: area.name,
-            description: area.description ?? '',
-            icon: area.icon ?? '🏠',
-            isActive: area.isActive,
-            order: area.order,
+      // Achata a árvore para popular select boxes
+      const flat: AccessAreaNode[] = [];
+      const flatten = (nodes: AccessAreaNode[]) => {
+        nodes.forEach(n => {
+          flat.push(n);
+          if (n.children && n.children.length > 0) flatten(n.children);
         });
-        setShowForm(true);
-    };
+      };
+      flatten(data);
+      setFlatAreas(flat);
 
-    const handleSave = async () => {
-        if (!form.name.trim()) return;
-        setSaving(true);
-        try {
-            if (editingArea) {
-                await request(`/access-areas/${editingArea.id}`, {
-                    method: 'PUT',
-                    body: JSON.stringify(form),
-                });
-            } else {
-                await request('/access-areas', {
-                    method: 'POST',
-                    body: JSON.stringify(form),
-                });
-            }
-            setShowForm(false);
-            load();
-        } catch (e: any) {
-            setError(e.message);
-        } finally {
-            setSaving(false);
-        }
-    };
+      // Auto-seleciona a primeira área se nenhuma selecionada
+      if (data.length > 0 && !selectedArea) {
+        setSelectedArea(data[0]);
+      } else if (selectedArea) {
+        // Atualiza a referência selecionada
+        const updated = flat.find(x => x.id === selectedArea.id);
+        if (updated) setSelectedArea(updated);
+      }
+    } catch (e: any) {
+      setError(e.message);
+    } finally {
+      setLoading(false);
+    }
+  };
 
-    const handleDelete = async (id: string) => {
-        try {
-            await request(`/access-areas/${id}`, { method: 'DELETE' });
-            setDeleteConfirm(null);
-            load();
-        } catch (e: any) {
-            setError(e.message);
-        }
-    };
+  const loadFacialDevices = async () => {
+    try {
+      const res = await request<{ devices: FacialDevice[] }>('/facial-access/devices');
+      setFacialDevices(res?.devices ?? []);
+    } catch {
+      setFacialDevices([]);
+    }
+  };
 
-    const toggleActive = async (area: AccessArea) => {
-        try {
-            await request(`/access-areas/${area.id}`, {
-                method: 'PUT',
-                body: JSON.stringify({ isActive: !area.isActive }),
-            });
-            load();
-        } catch (e: any) {
-            setError(e.message);
-        }
-    };
+  const loadAreaDevices = useCallback(async (areaId: string) => {
+    setAreaDevicesLoading(true);
+    try {
+      const res = await request<{ data: NetworkDevice[] }>(`/access-areas/${areaId}/devices`);
+      setAreaDevices(res?.data ?? []);
+    } catch {
+      setAreaDevices([]);
+    } finally {
+      setAreaDevicesLoading(false);
+    }
+  }, []);
+
+  const loadDoorsOfArea = useCallback(async (areaId: string) => {
+    setDoorsLoading(true);
+    try {
+      const res = await request<{ data: FacialDoor[] }>(`/access-areas/${areaId}/doors`);
+      setSelectedDoorIds((res?.data ?? []).map(d => d.id));
+    } catch {
+      setSelectedDoorIds([]);
+    } finally {
+      setDoorsLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadTree();
+    loadFacialDevices();
+  }, []);
+
+  useEffect(() => {
+    if (selectedArea) {
+      loadAreaDevices(selectedArea.id);
+      loadDoorsOfArea(selectedArea.id);
+    }
+  }, [selectedArea, loadAreaDevices, loadDoorsOfArea]);
+
+  // ── Ações da Árvore e Hierarquia ───────────────────────────────────────────
+
+  const toggleExpand = (id: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setExpandedNodes(prev => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  };
+
+  const toggleFavorite = async (area: AccessAreaNode, e: React.MouseEvent) => {
+    e.stopPropagation();
+    try {
+      await request(`/access-areas/${area.id}/favorite`, {
+        method: 'PUT',
+        body: JSON.stringify({ isFavorite: !area.isFavorite })
+      });
+      loadTree();
+    } catch (e: any) {
+      setError(e.message);
+    }
+  };
+
+  // ── Ações de CRUD ──────────────────────────────────────────────────────────
+
+  const openNew = (parentId: string | null = null) => {
+    setEditingArea(null);
+    setParentIdForNew(parentId);
+    setForm({ name: '', description: '', icon: '🏠', isActive: true, order: flatAreas.length + 1, parentId: parentId || '' });
+    setError(null);
+    setShowForm(true);
+  };
+
+  const openEdit = (area: AccessAreaNode, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setEditingArea(area);
+    setParentIdForNew(null);
+    setForm({
+      name: area.name,
+      description: area.description ?? '',
+      icon: area.icon ?? '🏠',
+      isActive: area.isActive,
+      order: area.order,
+      parentId: area.parentId ?? ''
+    });
+    setError(null);
+    setShowForm(true);
+  };
+
+  const handleSave = async () => {
+    if (!form.name.trim()) return;
+    setSaving(true);
+    try {
+      if (editingArea) {
+        await request(`/access-areas/${editingArea.id}`, {
+          method: 'PUT',
+          body: JSON.stringify(form)
+        });
+      } else {
+        await request('/access-areas', {
+          method: 'POST',
+          body: JSON.stringify(form)
+        });
+      }
+      setShowForm(false);
+      loadTree();
+    } catch (e: any) {
+      setError(e.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleDeleteConfirm = async () => {
+    if (!areaToDelete) return;
+    try {
+      await request(`/access-areas/${areaToDelete.id}?moveDevicesTo=${moveDevicesToId}`, {
+        method: 'DELETE'
+      });
+      setAreaToDelete(null);
+      setSelectedArea(null);
+      loadTree();
+    } catch (e: any) {
+      setError(e.message);
+    }
+  };
+
+  // ── Portas Vinculadas ──────────────────────────────────────────────────────
+
+  const toggleDoorSelection = (doorId: string) => {
+    setSelectedDoorIds(prev => prev.includes(doorId) ? prev.filter(id => id !== doorId) : [...prev, doorId]);
+  };
+
+  const saveDoors = async () => {
+    if (!selectedArea) return;
+    setDoorsSaving(true);
+    try {
+      await request(`/access-areas/${selectedArea.id}/doors`, {
+        method: 'PUT',
+        body: JSON.stringify({ doorIds: selectedDoorIds })
+      });
+      setError(null);
+    } catch (e: any) {
+      setError(e.message);
+    } finally {
+      setDoorsSaving(false);
+    }
+  };
+
+  // ── Associação de Dispositivos ─────────────────────────────────────────────
+
+  const openDeviceAssociation = async () => {
+    if (!selectedArea) return;
+    try {
+      // Busca todos os dispositivos cadastrados no banco
+      const res = await request<{ data: NetworkDevice[] }>('/devices?limit=200');
+      // Filtra os que não estão na área atual
+      const available = (res?.data ?? []).filter(d => d.id !== selectedArea.id);
+      setAllAvailableDevices(available);
+      setSelectedDeviceIds([]);
+      setShowDeviceAssociation(true);
+    } catch (e: any) {
+      setError(e.message);
+    }
+  };
+
+  const submitDeviceAssociation = async () => {
+    if (!selectedArea || selectedDeviceIds.length === 0) return;
+    setAssociating(true);
+    try {
+      await request(`/access-areas/${selectedArea.id}/devices`, {
+        method: 'PUT',
+        body: JSON.stringify({ deviceIds: selectedDeviceIds })
+      });
+      setShowDeviceAssociation(false);
+      loadTree();
+      if (selectedArea) loadAreaDevices(selectedArea.id);
+    } catch (e: any) {
+      setError(e.message);
+    } finally {
+      setAssociating(false);
+    }
+  };
+
+  const removeDeviceFromArea = async (deviceId: string) => {
+    try {
+      await request(`/devices/${deviceId}`, {
+        method: 'PUT',
+        body: JSON.stringify({ areaId: null })
+      });
+      loadTree();
+      if (selectedArea) loadAreaDevices(selectedArea.id);
+    } catch (e: any) {
+      setError(e.message);
+    }
+  };
+
+  // ── Render Helpers ──────────────────────────────────────────────────────────
+
+  const renderNode = (node: AccessAreaNode, depth = 0) => {
+    const hasChildren = node.children && node.children.length > 0;
+    const isExpanded = expandedNodes.has(node.id);
+    const isSelected = selectedArea?.id === node.id;
 
     return (
-        <AdminLayout>
-            <div style={{ padding: '32px 0', maxWidth: 860, margin: '0 auto' }}>
-                {/* Header */}
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 28 }}>
-                    <div>
-                        <h1 style={{ fontSize: 26, fontWeight: 700, margin: 0 }}>Áreas de Acesso</h1>
-                        <p style={{ color: 'var(--muted-fg, #888)', marginTop: 4, fontSize: 14 }}>
-                            Configure as áreas do condomínio disponíveis no cadastro de moradores.
-                        </p>
-                    </div>
+      <div key={node.id} style={{ display: 'flex', flexDirection: 'column' }}>
+        <div
+          onClick={() => setSelectedArea(node)}
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            padding: '8px 12px',
+            borderRadius: '8px',
+            cursor: 'pointer',
+            background: isSelected ? 'var(--accent-subtle, rgba(99,102,241,0.08))' : 'transparent',
+            borderLeft: isSelected ? '3px solid var(--accent)' : '3px solid transparent',
+            marginLeft: depth * 16,
+            transition: 'all 0.15s ease',
+            gap: '8px'
+          }}
+        >
+          {/* Collapse/Expand toggle */}
+          {hasChildren ? (
+            <button
+              onClick={(e) => toggleExpand(node.id, e)}
+              style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 2, color: 'var(--text-muted)' }}
+            >
+              {isExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+            </button>
+          ) : (
+            <span style={{ width: 18 }} />
+          )}
+
+          {/* Icon */}
+          <span style={{ fontSize: '18px', width: '22px', textAlign: 'center' }}>
+            {node.icon ?? '🏠'}
+          </span>
+
+          {/* Title & Count */}
+          <span style={{ flex: 1, fontSize: '13px', fontWeight: isSelected ? 600 : 500, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {node.name}
+            {node.deviceCount > 0 && (
+              <span style={{ fontSize: '10px', marginLeft: '6px', color: 'var(--text-muted)', background: 'var(--border)', padding: '1px 6px', borderRadius: '999px' }}>
+                {node.deviceCount}
+              </span>
+            )}
+          </span>
+
+          {/* Quick Actions */}
+          <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
+            <button
+              onClick={(e) => toggleFavorite(node, e)}
+              style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '4px', color: node.isFavorite ? '#fbbf24' : 'var(--text-muted)' }}
+            >
+              <Star size={13} fill={node.isFavorite ? '#fbbf24' : 'none'} />
+            </button>
+            <button
+              onClick={(e) => { e.stopPropagation(); openNew(node.id); }}
+              title="Adicionar sub-área"
+              style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '4px', color: 'var(--text-muted)' }}
+            >
+              <Plus size={13} />
+            </button>
+            <button
+              onClick={(e) => openEdit(node, e)}
+              style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '4px', color: 'var(--text-muted)' }}
+            >
+              <Edit2 size={12} />
+            </button>
+            <button
+              onClick={(e) => { e.stopPropagation(); setAreaToDelete(node); setMoveDevicesToId('null'); }}
+              style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '4px', color: '#f87171' }}
+            >
+              <Trash2 size={12} />
+            </button>
+          </div>
+        </div>
+
+        {/* Children Recursion */}
+        {hasChildren && isExpanded && (
+          <div style={{ display: 'flex', flexDirection: 'column', borderLeft: '1px dashed var(--border)', marginLeft: (depth * 16) + 20 }}>
+            {node.children.map(child => renderNode(child, 0))}
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  return (
+    <AdminLayout>
+      <div className="page" style={{ padding: '24px 28px', display: 'flex', flexDirection: 'column', height: '100%' }}>
+        {/* Header */}
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+          <div>
+            <h1 style={{ display: 'flex', alignItems: 'center', gap: '10px', fontSize: '22px', fontWeight: 700 }}>
+              <FolderOpen size={24} style={{ color: 'var(--accent)' }} /> Áreas de Acesso (Calabasas)
+            </h1>
+            <p style={{ color: 'var(--text-muted)', fontSize: '13px', margin: '4px 0 0' }}>
+              Organize os pontos físicos de segurança do condomínio e associe os leitores faciais e câmeras correspondentes.
+            </p>
+          </div>
+          <button
+            onClick={() => openNew(null)}
+            style={{
+              display: 'flex', alignItems: 'center', gap: '6px', padding: '10px 18px',
+              background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: '8px',
+              fontWeight: 600, fontSize: '13px', cursor: 'pointer'
+            }}
+          >
+            <Plus size={14} /> Criar Área Raiz
+          </button>
+        </div>
+
+        {error && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#f87171', fontSize: '13px', background: 'rgba(239,68,68,0.1)', padding: '10px 12px', borderRadius: '8px', marginBottom: '16px' }}>
+            <AlertTriangle size={14} /> {error}
+            <button onClick={() => setError(null)} style={{ marginLeft: 'auto', background: 'none', border: 'none', color: '#f87171', cursor: 'pointer', fontWeight: 700 }}>×</button>
+          </div>
+        )}
+
+        {/* Split Layout */}
+        <div style={{ display: 'grid', gridTemplateColumns: '320px 1fr', gap: '20px', flex: 1, minHeight: 0 }}>
+          
+          {/* Panel Esquerdo - Árvore de áreas */}
+          <div style={{ background: 'var(--card-bg)', border: '1px solid var(--border)', borderRadius: '12px', padding: '16px', display: 'flex', flexDirection: 'column', gap: '10px', overflowY: 'auto' }}>
+            <div style={{ fontSize: '11px', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: '4px' }}>
+              Estrutura Física
+            </div>
+
+            {loading ? (
+              <div style={{ textAlign: 'center', padding: '20px', color: 'var(--text-muted)' }}>
+                <Loader2 className="animate-spin" size={16} /> Carregando estrutura...
+              </div>
+            ) : tree.length === 0 ? (
+              <div style={{ textAlign: 'center', padding: '30px 10px', color: 'var(--text-muted)', border: '1px dashed var(--border)', borderRadius: '8px' }}>
+                Nenhuma área criada. Comece criando uma área raiz acima.
+              </div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                {tree.map(node => renderNode(node, 0))}
+              </div>
+            )}
+          </div>
+
+          {/* Panel Direito - Detalhes da Área Selecionada */}
+          <div style={{ background: 'var(--card-bg)', border: '1px solid var(--border)', borderRadius: '12px', padding: '20px', display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+            {selectedArea ? (
+              <>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', borderBottom: '1px solid var(--border)', paddingBottom: '16px', marginBottom: '16px' }}>
+                  <div>
+                    <h2 style={{ fontSize: '18px', fontWeight: 700, color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: '8px', margin: 0 }}>
+                      <span style={{ fontSize: '24px' }}>{selectedArea.icon}</span> {selectedArea.name}
+                    </h2>
+                    {selectedArea.description && (
+                      <p style={{ color: 'var(--text-muted)', fontSize: '13px', margin: '4px 0 0' }}>{selectedArea.description}</p>
+                    )}
+                  </div>
+                  <div style={{ display: 'flex', gap: '6px' }}>
                     <button
-                        onClick={openNew}
-                        style={{
-                            background: '#dc2626', color: '#fff', border: 'none', borderRadius: 10,
-                            padding: '10px 20px', fontWeight: 600, cursor: 'pointer', fontSize: 14,
-                            display: 'flex', alignItems: 'center', gap: 6,
-                        }}
+                      onClick={() => openEdit(selectedArea, { stopPropagation: () => {} } as any)}
+                      style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '6px 12px', background: 'transparent', border: '1px solid var(--border)', borderRadius: '6px', color: 'var(--text-primary)', fontSize: '12px', fontWeight: 600, cursor: 'pointer' }}
                     >
-                        + Nova Área
+                      <Edit2 size={12} /> Editar Área
                     </button>
+                    {activeTab === 'devices' && (
+                      <button
+                        onClick={openDeviceAssociation}
+                        style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '6px 12px', background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: '6px', fontSize: '12px', fontWeight: 600, cursor: 'pointer' }}
+                      >
+                        <Plus size={12} /> Vincular Dispositivo
+                      </button>
+                    )}
+                  </div>
                 </div>
 
-                {error && (
-                    <div style={{ background: '#fef2f2', border: '1px solid #fca5a5', borderRadius: 10, padding: '12px 16px', color: '#b91c1c', marginBottom: 20 }}>
-                        {error}
-                        <button onClick={() => setError(null)} style={{ float: 'right', background: 'none', border: 'none', cursor: 'pointer', color: '#b91c1c', fontWeight: 700 }}>×</button>
-                    </div>
-                )}
+                {/* Tabs */}
+                <div style={{ display: 'flex', gap: '16px', borderBottom: '1px solid var(--border)', marginBottom: '16px' }}>
+                  <button
+                    onClick={() => setActiveTab('doors')}
+                    style={{
+                      padding: '10px 4px', background: 'none', border: 'none',
+                      borderBottom: activeTab === 'doors' ? '2px solid var(--accent)' : '2px solid transparent',
+                      color: activeTab === 'doors' ? 'var(--accent)' : 'var(--text-muted)',
+                      fontWeight: 600, fontSize: '13px', cursor: 'pointer'
+                    }}
+                  >
+                    🚪 Portas Liberadas (HikCentral)
+                  </button>
+                  <button
+                    onClick={() => setActiveTab('devices')}
+                    style={{
+                      padding: '10px 4px', background: 'none', border: 'none',
+                      borderBottom: activeTab === 'devices' ? '2px solid var(--accent)' : '2px solid transparent',
+                      color: activeTab === 'devices' ? 'var(--accent)' : 'var(--text-muted)',
+                      fontWeight: 600, fontSize: '13px', cursor: 'pointer'
+                    }}
+                  >
+                    🔌 Dispositivos de Rede Associados
+                  </button>
+                </div>
 
-                {/* Form */}
-                {showForm && (
-                    <div style={{
-                        background: 'var(--card, #fff)', border: '1px solid var(--border, #e4e4e7)',
-                        borderRadius: 16, padding: 24, marginBottom: 24, boxShadow: '0 2px 12px rgba(0,0,0,0.06)'
-                    }}>
-                        <h3 style={{ margin: '0 0 18px', fontWeight: 700, fontSize: 16 }}>
-                            {editingArea ? 'Editar Área' : 'Nova Área'}
-                        </h3>
-
-                        {/* Icon picker */}
-                        <div style={{ marginBottom: 16 }}>
-                            <label style={{ fontSize: 13, fontWeight: 600, display: 'block', marginBottom: 8 }}>Ícone</label>
-                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-                                {ICON_OPTIONS.map(ic => (
-                                    <button
-                                        key={ic}
-                                        onClick={() => setForm(f => ({ ...f, icon: ic }))}
-                                        style={{
-                                            width: 40, height: 40, borderRadius: 8, border: form.icon === ic
-                                                ? '2px solid #dc2626' : '1px solid var(--border, #e4e4e7)',
-                                            background: form.icon === ic ? '#fef2f2' : 'transparent',
-                                            cursor: 'pointer', fontSize: 20,
-                                        }}
+                {/* Tab: Portas */}
+                {activeTab === 'doors' && (
+                  <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                    {doorsLoading ? (
+                      <div style={{ color: 'var(--text-muted)', padding: '20px' }}>Carregando portas do banco...</div>
+                    ) : facialDevices.every(d => d.doors.length === 0) ? (
+                      <div style={{ textAlign: 'center', padding: '40px 20px', color: 'var(--text-muted)' }}>
+                        Nenhuma porta de autenticação facial cadastrada. Crie uma conexão nas Integrações.
+                      </div>
+                    ) : (
+                      <>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                          {facialDevices.filter(d => d.doors.length > 0).map(device => (
+                            <div key={device.id} style={{ background: 'rgba(100,116,139,0.03)', padding: '12px', borderRadius: '8px', border: '1px solid var(--border)' }}>
+                              <span style={{ fontSize: '12px', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase' }}>
+                                {device.name}
+                              </span>
+                              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginTop: '8px' }}>
+                                {device.doors.map(door => {
+                                  const isSelected = selectedDoorIds.includes(door.id);
+                                  return (
+                                    <label
+                                      key={door.id}
+                                      style={{
+                                        display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer',
+                                        padding: '6px 12px', borderRadius: '6px', fontSize: '12px',
+                                        background: isSelected ? 'var(--accent-subtle, rgba(99,102,241,0.08))' : 'var(--card-bg)',
+                                        border: `1px solid ${isSelected ? 'var(--accent)' : 'var(--border)'}`,
+                                        color: isSelected ? 'var(--accent)' : 'var(--text-primary)',
+                                        fontWeight: 500, transition: 'all 0.15s ease'
+                                      }}
                                     >
-                                        {ic}
-                                    </button>
-                                ))}
+                                      <input
+                                        type="checkbox"
+                                        checked={isSelected}
+                                        onChange={() => toggleDoorSelection(door.id)}
+                                        style={{ accentColor: 'var(--accent)' }}
+                                      />
+                                      #{door.doorNo} {door.name}
+                                    </label>
+                                  );
+                                })}
+                              </div>
                             </div>
+                          ))}
                         </div>
-
-                        {/* Name */}
-                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 16 }}>
-                            <div>
-                                <label style={{ fontSize: 13, fontWeight: 600, display: 'block', marginBottom: 6 }}>Nome *</label>
-                                <input
-                                    value={form.name}
-                                    onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
-                                    placeholder="ex: Piscina"
-                                    style={{
-                                        width: '100%', padding: '9px 12px', borderRadius: 8,
-                                        border: '1px solid var(--border, #e4e4e7)',
-                                        background: 'var(--input, #fff)', fontSize: 14, boxSizing: 'border-box',
-                                        color: 'var(--foreground, #18181b)',
-                                    }}
-                                />
-                            </div>
-                            <div>
-                                <label style={{ fontSize: 13, fontWeight: 600, display: 'block', marginBottom: 6 }}>Ordem</label>
-                                <input
-                                    type="number"
-                                    value={form.order}
-                                    onChange={e => setForm(f => ({ ...f, order: Number(e.target.value) }))}
-                                    style={{
-                                        width: '100%', padding: '9px 12px', borderRadius: 8,
-                                        border: '1px solid var(--border, #e4e4e7)',
-                                        background: 'var(--input, #fff)', fontSize: 14, boxSizing: 'border-box',
-                                        color: 'var(--foreground, #18181b)',
-                                    }}
-                                />
-                            </div>
+                        <div style={{ marginTop: 'auto', paddingTop: '12px', borderTop: '1px solid var(--border)' }}>
+                          <button
+                            onClick={saveDoors}
+                            disabled={doorsSaving}
+                            style={{
+                              display: 'flex', alignItems: 'center', gap: '6px', padding: '10px 20px',
+                              background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: '8px',
+                              fontWeight: 600, fontSize: '13px', cursor: 'pointer'
+                            }}
+                          >
+                            {doorsSaving ? <Loader2 className="animate-spin" size={14} /> : <CheckCircle size={14} />} Salvar Vínculos
+                          </button>
                         </div>
-
-                        <div style={{ marginBottom: 16 }}>
-                            <label style={{ fontSize: 13, fontWeight: 600, display: 'block', marginBottom: 6 }}>Descrição</label>
-                            <input
-                                value={form.description}
-                                onChange={e => setForm(f => ({ ...f, description: e.target.value }))}
-                                placeholder="ex: Área da piscina e deck molhado"
-                                style={{
-                                    width: '100%', padding: '9px 12px', borderRadius: 8,
-                                    border: '1px solid var(--border, #e4e4e7)',
-                                    background: 'var(--input, #fff)', fontSize: 14, boxSizing: 'border-box',
-                                    color: 'var(--foreground, #18181b)',
-                                }}
-                            />
-                        </div>
-
-                        <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', marginBottom: 20 }}>
-                            <input
-                                type="checkbox"
-                                checked={form.isActive}
-                                onChange={e => setForm(f => ({ ...f, isActive: e.target.checked }))}
-                            />
-                            <span style={{ fontSize: 13, fontWeight: 500 }}>Área ativa (visível no cadastro de moradores)</span>
-                        </label>
-
-                        <div style={{ display: 'flex', gap: 10 }}>
-                            <button
-                                onClick={handleSave}
-                                disabled={saving || !form.name.trim()}
-                                style={{
-                                    background: saving || !form.name.trim() ? '#e4e4e7' : '#dc2626',
-                                    color: saving || !form.name.trim() ? '#aaa' : '#fff',
-                                    border: 'none', borderRadius: 8, padding: '9px 20px',
-                                    fontWeight: 600, cursor: saving || !form.name.trim() ? 'default' : 'pointer', fontSize: 14,
-                                }}
-                            >
-                                {saving ? 'Salvando…' : 'Salvar'}
-                            </button>
-                            <button
-                                onClick={() => setShowForm(false)}
-                                style={{
-                                    background: 'transparent', border: '1px solid var(--border, #e4e4e7)',
-                                    borderRadius: 8, padding: '9px 20px', fontWeight: 500, cursor: 'pointer', fontSize: 14,
-                                    color: 'var(--foreground, #18181b)',
-                                }}
-                            >
-                                Cancelar
-                            </button>
-                        </div>
-                    </div>
+                      </>
+                    )}
+                  </div>
                 )}
 
-                {/* List */}
-                {loading ? (
-                    <div style={{ textAlign: 'center', padding: '48px 0', color: '#aaa' }}>Carregando…</div>
-                ) : areas.length === 0 ? (
-                    <div style={{
-                        background: 'var(--card, #fff)', border: '2px dashed var(--border, #e4e4e7)',
-                        borderRadius: 16, padding: '48px 24px', textAlign: 'center', color: '#aaa',
-                    }}>
-                        <div style={{ fontSize: 40, marginBottom: 12 }}>🏢</div>
-                        <p style={{ fontWeight: 600, marginBottom: 4 }}>Nenhuma área cadastrada</p>
-                        <p style={{ fontSize: 13 }}>Clique em "Nova Área" para adicionar as áreas do condomínio.</p>
-                    </div>
-                ) : (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-                        {areas.map(area => (
-                            <div key={area.id}>
+                {/* Tab: Dispositivos de Rede */}
+                {activeTab === 'devices' && (
+                  <div style={{ flex: 1, overflowY: 'auto' }}>
+                    {areaDevicesLoading ? (
+                      <div style={{ color: 'var(--text-muted)', padding: '20px' }}>Buscando dispositivos...</div>
+                    ) : areaDevices.length === 0 ? (
+                      <div style={{ textAlign: 'center', padding: '40px 20px', color: 'var(--text-muted)' }}>
+                        Nenhum hardware associado a esta sub-área. Clique em "Vincular Dispositivo" para adicionar.
+                      </div>
+                    ) : (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                        {areaDevices.map(d => {
+                          const isOnline = d.status === 'online';
+                          return (
                             <div
-                                style={{
-                                    background: 'var(--card, #fff)', border: '1px solid var(--border, #e4e4e7)',
-                                    borderRadius: doorPanelAreaId === area.id ? '14px 14px 0 0' : 14, padding: '14px 18px',
-                                    display: 'flex', alignItems: 'center', gap: 14,
-                                    opacity: area.isActive ? 1 : 0.55,
-                                }}
+                              key={d.id}
+                              style={{
+                                display: 'flex', alignItems: 'center', gap: '12px',
+                                padding: '10px 14px', borderRadius: '8px', border: '1px solid var(--border)',
+                                background: 'rgba(100,116,139,0.02)'
+                              }}
                             >
-                                <span style={{ fontSize: 28, minWidth: 36, textAlign: 'center' }}>{area.icon}</span>
-                                <div style={{ flex: 1, minWidth: 0 }}>
-                                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                                        <span style={{ fontWeight: 700, fontSize: 15 }}>{area.name}</span>
-                                        {!area.isActive && (
-                                            <span style={{
-                                                fontSize: 11, fontWeight: 600, color: '#6b7280',
-                                                background: '#f3f4f6', borderRadius: 6, padding: '2px 7px',
-                                            }}>INATIVA</span>
-                                        )}
-                                    </div>
-                                    {area.description && (
-                                        <p style={{ fontSize: 13, color: '#888', margin: '2px 0 0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                                            {area.description}
-                                        </p>
-                                    )}
-                                </div>
-                                <div style={{ display: 'flex', gap: 8, flexShrink: 0 }}>
-                                    <button
-                                        onClick={() => toggleActive(area)}
-                                        title={area.isActive ? 'Desativar' : 'Ativar'}
-                                        style={{
-                                            background: area.isActive ? '#f0fdf4' : '#f3f4f6',
-                                            border: '1px solid ' + (area.isActive ? '#bbf7d0' : '#e4e4e7'),
-                                            borderRadius: 8, padding: '6px 12px', cursor: 'pointer', fontSize: 12,
-                                            fontWeight: 600, color: area.isActive ? '#16a34a' : '#6b7280',
-                                        }}
-                                    >
-                                        {area.isActive ? 'Ativa' : 'Inativa'}
-                                    </button>
-                                    <button
-                                        onClick={() => doorPanelAreaId === area.id ? setDoorPanelAreaId(null) : openDoorPanel(area)}
-                                        title="Escolher quais portas/portões/cancelas este nível libera"
-                                        style={{
-                                            background: doorPanelAreaId === area.id ? '#eff6ff' : '#fafafa',
-                                            border: '1px solid ' + (doorPanelAreaId === area.id ? '#bfdbfe' : 'var(--border, #e4e4e7)'),
-                                            borderRadius: 8, padding: '6px 12px', cursor: 'pointer', fontSize: 12, fontWeight: 600,
-                                            color: doorPanelAreaId === area.id ? '#2563eb' : 'var(--foreground, #18181b)',
-                                        }}
-                                    >
-                                        🚪 Portas vinculadas
-                                    </button>
-                                    <button
-                                        onClick={() => openEdit(area)}
-                                        style={{
-                                            background: '#fafafa', border: '1px solid var(--border, #e4e4e7)',
-                                            borderRadius: 8, padding: '6px 12px', cursor: 'pointer', fontSize: 12, fontWeight: 600,
-                                            color: 'var(--foreground, #18181b)',
-                                        }}
-                                    >
-                                        Editar
-                                    </button>
-                                    {deleteConfirm === area.id ? (
-                                        <>
-                                            <button
-                                                onClick={() => handleDelete(area.id)}
-                                                style={{
-                                                    background: '#dc2626', color: '#fff', border: 'none',
-                                                    borderRadius: 8, padding: '6px 12px', cursor: 'pointer', fontSize: 12, fontWeight: 700,
-                                                }}
-                                            >
-                                                Confirmar
-                                            </button>
-                                            <button
-                                                onClick={() => setDeleteConfirm(null)}
-                                                style={{
-                                                    background: 'transparent', border: '1px solid var(--border, #e4e4e7)',
-                                                    borderRadius: 8, padding: '6px 12px', cursor: 'pointer', fontSize: 12,
-                                                    color: 'var(--foreground, #18181b)',
-                                                }}
-                                            >
-                                                Cancelar
-                                            </button>
-                                        </>
-                                    ) : (
-                                        <button
-                                            onClick={() => setDeleteConfirm(area.id)}
-                                            style={{
-                                                background: '#fef2f2', border: '1px solid #fca5a5',
-                                                borderRadius: 8, padding: '6px 12px', cursor: 'pointer', fontSize: 12,
-                                                fontWeight: 600, color: '#dc2626',
-                                            }}
-                                        >
-                                            Excluir
-                                        </button>
-                                    )}
-                                </div>
+                              <div style={{ width: '8px', height: '8px', borderRadius: '50%', background: isOnline ? '#22c55e' : '#ef4444' }} />
+                              <div style={{ flex: 1 }}>
+                                <span style={{ fontWeight: 600, fontSize: '13px' }}>{d.friendlyName ?? d.ipAddress}</span>
+                                <span style={{ fontSize: '11px', color: 'var(--text-muted)', marginLeft: '8px' }}>({d.ipAddress})</span>
+                              </div>
+                              <button
+                                onClick={() => removeDeviceFromArea(d.id)}
+                                style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#f87171', fontSize: '12px', fontWeight: 600 }}
+                              >
+                                Desvincular
+                              </button>
                             </div>
-
-                            {doorPanelAreaId === area.id && (
-                                <div style={{
-                                    background: '#fafafa', border: '1px solid var(--border, #e4e4e7)', borderTop: 'none',
-                                    borderRadius: '0 0 14px 14px', padding: '14px 18px',
-                                }}>
-                                    {doorsLoading ? (
-                                        <p style={{ fontSize: 13, color: '#888', margin: 0 }}>Carregando portas…</p>
-                                    ) : facialDevices.every(d => d.doors.length === 0) ? (
-                                        <p style={{ fontSize: 13, color: '#888', margin: 0 }}>
-                                            Nenhuma porta/portão/cancela facial cadastrada ainda. Cadastre um dispositivo em
-                                            "Painel de Integrações" primeiro.
-                                        </p>
-                                    ) : (
-                                        <>
-                                            <p style={{ fontSize: 13, fontWeight: 600, margin: '0 0 10px' }}>
-                                                Quais portas este nível de acesso libera?
-                                            </p>
-                                            <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginBottom: 14 }}>
-                                                {facialDevices.filter(d => d.doors.length > 0).map(device => (
-                                                    <div key={device.id}>
-                                                        <span style={{ fontSize: 12, fontWeight: 700, color: '#6b7280' }}>
-                                                            {device.name} {device.role === 'controller' ? '(controladora)' : '(terminal)'}
-                                                        </span>
-                                                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 6 }}>
-                                                            {device.doors.map(door => (
-                                                                <label
-                                                                    key={door.id}
-                                                                    style={{
-                                                                        display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer',
-                                                                        padding: '5px 10px', borderRadius: 8, fontSize: 12,
-                                                                        background: selectedDoorIds.includes(door.id) ? '#eff6ff' : '#fff',
-                                                                        border: '1px solid ' + (selectedDoorIds.includes(door.id) ? '#bfdbfe' : 'var(--border, #e4e4e7)'),
-                                                                    }}
-                                                                >
-                                                                    <input
-                                                                        type="checkbox"
-                                                                        checked={selectedDoorIds.includes(door.id)}
-                                                                        onChange={() => toggleDoorSelection(door.id)}
-                                                                    />
-                                                                    #{door.doorNo} {door.name} · {actuatorLabel(door.actuatorType)}
-                                                                </label>
-                                                            ))}
-                                                        </div>
-                                                    </div>
-                                                ))}
-                                            </div>
-                                            <div style={{ display: 'flex', gap: 10 }}>
-                                                <button
-                                                    onClick={saveDoorPanel}
-                                                    disabled={doorsSaving}
-                                                    style={{
-                                                        background: doorsSaving ? '#e4e4e7' : '#dc2626',
-                                                        color: doorsSaving ? '#aaa' : '#fff',
-                                                        border: 'none', borderRadius: 8, padding: '7px 16px',
-                                                        fontWeight: 600, cursor: doorsSaving ? 'default' : 'pointer', fontSize: 13,
-                                                    }}
-                                                >
-                                                    {doorsSaving ? 'Salvando…' : 'Salvar vínculos'}
-                                                </button>
-                                                <button
-                                                    onClick={() => setDoorPanelAreaId(null)}
-                                                    style={{
-                                                        background: 'transparent', border: '1px solid var(--border, #e4e4e7)',
-                                                        borderRadius: 8, padding: '7px 16px', fontWeight: 500, cursor: 'pointer', fontSize: 13,
-                                                        color: 'var(--foreground, #18181b)',
-                                                    }}
-                                                >
-                                                    Cancelar
-                                                </button>
-                                            </div>
-                                        </>
-                                    )}
-                                </div>
-                            )}
-                            </div>
-                        ))}
-                    </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
                 )}
+              </>
+            ) : (
+              <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-muted)' }}>
+                Selecione uma área na árvore para visualizar seus dispositivos e configurações.
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* ── Modal: Form de Cadastro/Edição de Área ────────────────────────── */}
+      {showForm && (
+        <div style={modalOverlayStyle}>
+          <div style={modalContentStyle}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+              <h3 style={{ margin: 0, fontSize: '16px', fontWeight: 700 }}>
+                {editingArea ? 'Editar Área Física' : 'Nova Área Física'}
+              </h3>
+              <button onClick={() => setShowForm(false)} style={closeBtnStyle}><X size={20} /></button>
             </div>
-        </AdminLayout>
-    );
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+              {/* Icon */}
+              <label style={labelStyle}>
+                Ícone
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginTop: '4px' }}>
+                  {ICON_OPTIONS.map(ic => (
+                    <button
+                      key={ic}
+                      onClick={() => setForm(f => ({ ...f, icon: ic }))}
+                      style={{
+                        width: '32px', height: '32px', borderRadius: '6px', border: form.icon === ic ? '2px solid var(--accent)' : '1px solid var(--border)',
+                        background: form.icon === ic ? 'var(--accent-subtle, rgba(99,102,241,0.08))' : 'transparent',
+                        cursor: 'pointer', fontSize: '16px'
+                      }}
+                    >
+                      {ic}
+                    </button>
+                  ))}
+                </div>
+              </label>
+
+              {/* Name */}
+              <label style={labelStyle}>
+                Nome da Área *
+                <input value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} placeholder="Ex: Academia, Hall A" style={inputStyle} />
+              </label>
+
+              {/* Description */}
+              <label style={labelStyle}>
+                Descrição
+                <input value={form.description} onChange={e => setForm(f => ({ ...f, description: e.target.value }))} placeholder="Descrição opcional..." style={inputStyle} />
+              </label>
+
+              {/* Parent */}
+              <label style={labelStyle}>
+                Área Pai (Hierarquia)
+                <select
+                  value={form.parentId}
+                  onChange={e => setForm(f => ({ ...f, parentId: e.target.value }))}
+                  style={inputStyle}
+                >
+                  <option value="">Nenhuma (Área Raiz)</option>
+                  {flatAreas.filter(a => !editingArea || a.id !== editingArea.id).map(a => (
+                    <option key={a.id} value={a.id}>{a.name}</option>
+                  ))}
+                </select>
+              </label>
+
+              <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '13px', cursor: 'pointer', marginTop: '6px' }}>
+                <input type="checkbox" checked={form.isActive} onChange={e => setForm(f => ({ ...f, isActive: e.target.checked }))} />
+                Área ativa e visível no condomínio
+              </label>
+
+              <div style={{ display: 'flex', gap: '10px', marginTop: '12px' }}>
+                <button onClick={() => setShowForm(false)} style={cancelBtnStyle}>Cancelar</button>
+                <button onClick={handleSave} disabled={saving || !form.name.trim()} style={primaryBtnStyle}>
+                  {saving ? 'Salvando...' : 'Salvar'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Modal: Confirmar Exclusão com mover dispositivos ───────────────── */}
+      {areaToDelete && (
+        <div style={modalOverlayStyle}>
+          <div style={modalContentStyle}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+              <h3 style={{ margin: 0, fontSize: '16px', fontWeight: 700 }}>Confirmar Exclusão</h3>
+              <button onClick={() => setAreaToDelete(null)} style={closeBtnStyle}><X size={20} /></button>
+            </div>
+            
+            <p style={{ fontSize: '13px', margin: '0 0 12px' }}>
+              Deseja realmente remover a área <strong>{areaToDelete.name}</strong>? Esta ação excluirá também suas sub-áreas.
+            </p>
+
+            {areaToDelete.deviceCount > 0 && (
+              <div style={{ background: 'rgba(251,146,60,0.07)', border: '1px solid #fb923c', padding: '12px', borderRadius: '8px', marginBottom: '16px' }}>
+                <span style={{ fontSize: '12px', fontWeight: 700, color: '#fb923c', display: 'block', marginBottom: '6px' }}>
+                  ⚠️ Dispositivos Órfãos Detectados
+                </span>
+                <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
+                  Existem {areaToDelete.deviceCount} dispositivos associados a esta área ou sub-áreas. Escolha para onde movê-los:
+                </span>
+                <select
+                  value={moveDevicesToId}
+                  onChange={e => setMoveDevicesToId(e.target.value)}
+                  style={{ ...inputStyle, marginTop: '8px' }}
+                >
+                  <option value="null">Desvincular (Mover para "Sem área")</option>
+                  {flatAreas.filter(a => a.id !== areaToDelete.id).map(a => (
+                    <option key={a.id} value={a.id}>Mover para: {a.name}</option>
+                  ))}
+                </select>
+              </div>
+            )}
+
+            <div style={{ display: 'flex', gap: '10px' }}>
+              <button onClick={() => setAreaToDelete(null)} style={cancelBtnStyle}>Cancelar</button>
+              <button onClick={handleDeleteConfirm} style={{ ...primaryBtnStyle, background: '#ef4444' }}>
+                Excluir Área
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Modal: Vincular Dispositivos em Lote ───────────────────────────── */}
+      {showDeviceAssociation && selectedArea && (
+        <div style={modalOverlayStyle}>
+          <div style={modalContentStyle}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+              <h3 style={{ margin: 0, fontSize: '16px', fontWeight: 700 }}>Vincular Dispositivos a {selectedArea.name}</h3>
+              <button onClick={() => setShowDeviceAssociation(false)} style={closeBtnStyle}><X size={20} /></button>
+            </div>
+
+            <p style={{ fontSize: '13px', color: 'var(--text-muted)', margin: '0 0 12px' }}>
+              Selecione quais equipamentos cadastrados na plataforma deseja mover para esta área física.
+            </p>
+
+            {allAvailableDevices.length === 0 ? (
+              <p style={{ textAlign: 'center', padding: '20px', color: 'var(--text-muted)' }}>
+                Nenhum dispositivo disponível para vincular.
+              </p>
+            ) : (
+              <div style={{ maxHeight: '240px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '6px', marginBottom: '16px', border: '1px solid var(--border)', borderRadius: '8px', padding: '10px' }}>
+                {allAvailableDevices.map(d => {
+                  const isChecked = selectedDeviceIds.includes(d.id);
+                  return (
+                    <label key={d.id} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 8px', borderRadius: '6px', cursor: 'pointer', background: isChecked ? 'rgba(99,102,241,0.05)' : 'transparent' }}>
+                      <input
+                        type="checkbox"
+                        checked={isChecked}
+                        onChange={() => setSelectedDeviceIds(prev => prev.includes(d.id) ? prev.filter(id => id !== d.id) : [...prev, d.id])}
+                      />
+                      <span style={{ fontSize: '12px', fontWeight: 600 }}>{d.friendlyName ?? d.ipAddress}</span>
+                      <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>({d.ipAddress})</span>
+                    </label>
+                  );
+                })}
+              </div>
+            )}
+
+            <div style={{ display: 'flex', gap: '10px' }}>
+              <button onClick={() => setShowDeviceAssociation(false)} style={cancelBtnStyle}>Cancelar</button>
+              <button onClick={submitDeviceAssociation} disabled={associating || selectedDeviceIds.length === 0} style={primaryBtnStyle}>
+                {associating ? 'Vinculando...' : 'Confirmar Vínculo'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </AdminLayout>
+  );
 }
+
+// ── Estilos Locais ────────────────────────────────────────────────────────────
+
+const modalOverlayStyle: React.CSSProperties = {
+  position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', zIndex: 1000,
+  display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px'
+};
+
+const modalContentStyle: React.CSSProperties = {
+  background: 'var(--card-bg)', borderRadius: '12px', border: '1px solid var(--border)',
+  padding: '24px', width: '100%', maxWidth: '440px', boxShadow: '0 24px 64px rgba(0,0,0,0.4)'
+};
+
+const closeBtnStyle: React.CSSProperties = {
+  background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', padding: '4px'
+};
+
+const labelStyle: React.CSSProperties = {
+  display: 'flex', flexDirection: 'column', gap: '4px', fontSize: '13px', fontWeight: 600, color: 'var(--text-primary)'
+};
+
+const inputStyle: React.CSSProperties = {
+  padding: '8px 12px', background: 'var(--card-bg)', border: '1px solid var(--border)',
+  borderRadius: '6px', color: 'var(--text-primary)', fontSize: '13px', width: '100%', boxSizing: 'border-box'
+};
+
+const cancelBtnStyle: React.CSSProperties = {
+  flex: 1, padding: '10px', background: 'transparent', border: '1px solid var(--border)',
+  borderRadius: '8px', color: 'var(--text-muted)', cursor: 'pointer', fontWeight: 600, fontSize: '13px', textAlign: 'center'
+};
+
+const primaryBtnStyle: React.CSSProperties = {
+  flex: 1, padding: '10px', background: 'var(--accent)', border: 'none', borderRadius: '8px',
+  color: '#fff', cursor: 'pointer', fontWeight: 600, fontSize: '13px', textAlign: 'center'
+};

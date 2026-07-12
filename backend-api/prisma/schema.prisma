@@ -750,9 +750,14 @@ model AccessArea {
   description    String?
   icon           String?              @default("🏠")
   isActive       Boolean              @default(true) @map("is_active")
+  isFavorite     Boolean              @default(false) @map("is_favorite")
   order          Int                  @default(0)
   createdAt      DateTime             @default(now()) @map("created_at")
   updatedAt      DateTime             @updatedAt @map("updated_at")
+  parentId       String?              @map("parent_id")
+  parent         AccessArea?          @relation("AreaToArea", fields: [parentId], references: [id], onDelete: Cascade)
+  children       AccessArea[]         @relation("AreaToArea")
+  devices        NetworkDevice[]
   residentAccess ResidentAccessArea[]
   doors          AccessAreaDoor[]
 
@@ -816,4 +821,69 @@ model AccessSchedule {
   isActive  Boolean @default(true) @map("is_active")
 
   @@map("access_schedules")
+}
+
+// ============ Network Discovery: dispositivos de rede descobertos/cadastrados ============
+// Fonte de verdade para câmeras IP, NVRs, DVRs, leitores faciais,
+// interfones e controladoras descobertos via ONVIF, SADP, mDNS ou ARP.
+
+model DeviceCategory {
+  id      String          @id @default(cuid())
+  code    String          @unique // "encoding" | "access_control" | "facial" | "intercom" | "network_transmission"
+  name    String
+  devices NetworkDevice[]
+
+  @@map("device_categories")
+}
+
+model NetworkDevice {
+  id                          String          @id @default(cuid())
+  macAddress                  String?         @unique @map("mac_address")
+  ipAddress                   String          @map("ip_address")
+  protocolType                String          @map("protocol_type") // "onvif" | "sadp" | "mdns" | "arp" | "manual" | "nice"
+  manufacturer                String?
+  model                       String?
+  serialNumber                String?         @unique @map("serial_number")
+  deviceType                  String?         @map("device_type") // "camera" | "nvr" | "dvr" | "facial" | "intercom" | "controller"
+  firmwareVersion             String?         @map("firmware_version")
+  isAdded                     Boolean         @default(false) @map("is_added")
+  lastDiscoveredAt            DateTime        @default(now()) @map("last_discovered_at")
+
+  // Campos preenchidos após adição manual/promoção do discovery
+  categoryId                  String?         @map("category_id")
+  category                    DeviceCategory? @relation(fields: [categoryId], references: [id])
+  areaId                      String?         @map("area_id")
+  area                        AccessArea?     @relation(fields: [areaId], references: [id], onDelete: SetNull)
+  friendlyName                String?         @map("friendly_name")
+  channelCount                Int             @default(0) @map("channel_count")
+  httpPort                    Int             @default(80) @map("http_port")
+  sdkPort                     Int             @default(8000) @map("sdk_port")
+  subnetMask                  String?         @map("subnet_mask")
+  gateway                     String?
+  dhcpEnabled                 Boolean         @default(false) @map("dhcp_enabled")
+  credentialUsername          String?         @map("credential_username")
+  credentialPasswordEncrypted String?         @map("credential_password_encrypted")
+  status                      String          @default("unknown") @map("status") // "online" | "offline" | "error" | "unknown"
+  lastSyncAt                  DateTime?       @map("last_sync_at")
+
+  syncLogs                    DeviceSyncLog[]
+
+  createdAt                   DateTime        @default(now()) @map("created_at")
+  updatedAt                   DateTime        @updatedAt @map("updated_at")
+
+  @@index([ipAddress])
+  @@index([isAdded])
+  @@map("network_devices")
+}
+
+model DeviceSyncLog {
+  id        String        @id @default(cuid())
+  deviceId  String        @map("device_id")
+  device    NetworkDevice @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  status    String        // "success" | "error"
+  message   String?
+  createdAt DateTime      @default(now()) @map("created_at")
+
+  @@index([deviceId])
+  @@map("device_sync_logs")
 }

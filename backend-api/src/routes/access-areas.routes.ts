@@ -6,6 +6,51 @@ import { FacialAccessService } from '../services/FacialAccessService';
 const router = Router();
 router.use(authMiddleware);
 
+// Helper recursivo para formatar a árvore
+async function buildAreaTree(parentId: string | null): Promise<any[]> {
+    const areas = await prisma.accessArea.findMany({
+        where: { parentId },
+        orderBy: { order: 'asc' },
+        include: {
+            devices: { select: { id: true } }
+        }
+    });
+
+    const tree = [];
+    for (const area of areas) {
+        const children = await buildAreaTree(area.id);
+        
+        let deviceCount = area.devices.length;
+        children.forEach(c => {
+            deviceCount += c.deviceCount;
+        });
+
+        tree.push({
+            id: area.id,
+            name: area.name,
+            description: area.description,
+            icon: area.icon,
+            isActive: area.isActive,
+            isFavorite: area.isFavorite,
+            order: area.order,
+            parentId: area.parentId,
+            deviceCount,
+            children
+        });
+    }
+    return tree;
+}
+
+// GET /api/access-areas/tree — retorna a árvore hierárquica
+router.get('/tree', async (req: Request, res: Response) => {
+    try {
+        const tree = await buildAreaTree(null);
+        res.json({ data: tree });
+    } catch (error: any) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
 // GET /api/access-areas — lista todas as áreas ativas (painel e admin)
 router.get('/', async (req: Request, res: Response) => {
     try {
@@ -24,7 +69,7 @@ router.get('/', async (req: Request, res: Response) => {
 // POST /api/access-areas — cria nova área (admin)
 router.post('/', async (req: Request, res: Response) => {
     try {
-        const { name, description, icon, isActive, order } = req.body;
+        const { name, description, icon, isActive, order, parentId } = req.body;
         if (!name?.trim()) return res.status(400).json({ error: 'Nome é obrigatório' });
 
         const maxOrder = await prisma.accessArea.aggregate({ _max: { order: true } });
@@ -35,9 +80,62 @@ router.post('/', async (req: Request, res: Response) => {
                 icon: icon?.trim() || '🏠',
                 isActive: isActive !== undefined ? Boolean(isActive) : true,
                 order: order !== undefined ? Number(order) : (maxOrder._max.order ?? 0) + 1,
+                parentId: parentId || null,
             },
         });
         res.status(201).json({ success: true, data: area });
+    } catch (error: any) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// PUT /api/access-areas/:id/favorite — favorita/desfavorita área
+router.put('/:id/favorite', async (req: Request, res: Response) => {
+    try {
+        const { id } = req.params;
+        const { isFavorite } = req.body;
+
+        const area = await prisma.accessArea.update({
+            where: { id },
+            data: { isFavorite: Boolean(isFavorite) }
+        });
+        res.json({ success: true, data: area });
+    } catch (error: any) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// PUT /api/access-areas/:id/devices — associa dispositivos em lote
+router.put('/:id/devices', async (req: Request, res: Response) => {
+    try {
+        const { id } = req.params;
+        const { deviceIds }: { deviceIds: string[] } = req.body;
+
+        if (!Array.isArray(deviceIds)) return res.status(400).json({ error: 'deviceIds deve ser um array' });
+
+        const area = await prisma.accessArea.findUnique({ where: { id } });
+        if (!area) return res.status(404).json({ error: 'Área não encontrada' });
+
+        await prisma.networkDevice.updateMany({
+            where: { id: { in: deviceIds } },
+            data: { areaId: id }
+        });
+
+        res.json({ success: true });
+    } catch (error: any) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// GET /api/access-areas/:id/devices — lista dispositivos de uma área
+router.get('/:id/devices', async (req: Request, res: Response) => {
+    try {
+        const { id } = req.params;
+        const devices = await prisma.networkDevice.findMany({
+            where: { areaId: id },
+            orderBy: { friendlyName: 'asc' }
+        });
+        res.json({ success: true, data: devices });
     } catch (error: any) {
         res.status(500).json({ error: error.message });
     }
@@ -47,7 +145,7 @@ router.post('/', async (req: Request, res: Response) => {
 router.put('/:id', async (req: Request, res: Response) => {
     try {
         const { id } = req.params;
-        const { name, description, icon, isActive, order } = req.body;
+        const { name, description, icon, isActive, order, parentId, isFavorite } = req.body;
 
         const existing = await prisma.accessArea.findUnique({ where: { id } });
         if (!existing) return res.status(404).json({ error: 'Área não encontrada' });
@@ -60,6 +158,8 @@ router.put('/:id', async (req: Request, res: Response) => {
                 icon: icon?.trim() ?? existing.icon,
                 isActive: isActive !== undefined ? Boolean(isActive) : existing.isActive,
                 order: order !== undefined ? Number(order) : existing.order,
+                parentId: parentId !== undefined ? (parentId || null) : existing.parentId,
+                isFavorite: isFavorite !== undefined ? Boolean(isFavorite) : existing.isFavorite,
             },
         });
         res.json({ success: true, data: area });
@@ -72,6 +172,15 @@ router.put('/:id', async (req: Request, res: Response) => {
 router.delete('/:id', async (req: Request, res: Response) => {
     try {
         const { id } = req.params;
+        const { moveDevicesTo } = req.query;
+
+        const targetAreaId = moveDevicesTo && moveDevicesTo !== 'null' ? String(moveDevicesTo) : null;
+
+        await prisma.networkDevice.updateMany({
+            where: { areaId: id },
+            data: { areaId: targetAreaId }
+        });
+
         await prisma.accessArea.delete({ where: { id } });
         res.json({ success: true });
     } catch (error: any) {
