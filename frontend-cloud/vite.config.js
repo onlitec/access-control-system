@@ -58,7 +58,7 @@ export default defineConfig({
       },
       workbox: {
         // o vídeo e a API nunca podem ser servidos do cache
-        navigateFallbackDenylist: [/^\/api/, /^\/hls/, /^\/webrtc/],
+        navigateFallbackDenylist: [/^\/api/, /^\/hls/, /^\/webrtc/, /^\/t\//],
         runtimeCaching: []
       }
     })

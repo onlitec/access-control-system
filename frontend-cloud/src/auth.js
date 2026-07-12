@@ -8,6 +8,8 @@
  * de login quando o refresh também não vale mais.
  */
 
+import { apiUrl } from './tenant';
+
 const TOKEN_KEY = 'onlitec_cloud_token';
 const REFRESH_KEY = 'onlitec_cloud_refresh';
 const USER_KEY = 'onlitec_cloud_user';
@@ -32,11 +34,16 @@ export function clearSession() {
 }
 
 export async function login(email, password) {
-  const res = await fetch('/api/auth/login', {
+  const res = await fetch(apiUrl('/api/auth/login'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ email: email.trim(), password }),
   });
+  // 404 aqui é o nginx do cloud dizendo que o slug não existe no registry —
+  // sem isso a mensagem viraria um falso "usuário ou senha inválidos"
+  if (res.status === 404) {
+    throw new Error('Código do cliente não encontrado — confira o campo "Código do cliente"');
+  }
   const data = await res.json().catch(() => ({}));
   if (!res.ok || !data.token) {
     throw new Error(data.error || data.message || 'Usuário ou senha inválidos');
@@ -52,7 +59,7 @@ async function refreshAccessToken() {
   const refreshToken = getRefreshToken();
   if (!refreshToken) return null;
 
-  const res = await fetch('/api/auth/refresh', {
+  const res = await fetch(apiUrl('/api/auth/refresh'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ refreshToken }),
@@ -85,7 +92,7 @@ export async function authFetch(path, options = {}) {
     headers: { ...(options.headers || {}), Authorization: `Bearer ${token}` },
   });
 
-  let res = await fetch(path, withAuth(getToken()));
+  let res = await fetch(apiUrl(path), withAuth(getToken()));
   if (res.status !== 401) return res;
 
   const newToken = await ensureFreshToken();
@@ -93,5 +100,5 @@ export async function authFetch(path, options = {}) {
     clearSession();
     return res; // sessão realmente acabou — o App volta para o login
   }
-  return fetch(path, withAuth(newToken));
+  return fetch(apiUrl(path), withAuth(newToken));
 }

@@ -1,0 +1,8 @@
+# Registry de tenants do OnliAcesso Cloud: slug → IP Tailscale do servidor.
+# Arquivo real: {volume npm_data}/nginx/custom/onliacesso-tenants.map
+# Gerado por deploy/cloud/add-tenant.sh — não editar à mão.
+#
+# O IP 100.x é estável por nó da tailnet; se a máquina do cliente for
+# reinstalada (novo nó), basta re-rodar: add-tenant.sh <slug> <nome-magicdns>
+onlitec 100.107.189.31;
+galvatec 100.77.220.32;

@@ -6,6 +6,7 @@ import {
 } from 'lucide-react';
 import VideoPlayer from '../components/VideoPlayer';
 import { authFetch, getToken } from '../auth';
+import { apiUrl, tenantKey } from '../tenant';
 
 /** Divisões fixas do mosaico, como num NVR (o "2" é útil para comparar duas câmeras). */
 const LAYOUTS = [
@@ -51,7 +52,7 @@ export default function LiveView({ cameras, statusMap, token, onStatusChange }) 
   const [draft, setDraft] = useState(() => custom ?? { cols: 3, rows: 2 });
 
   const [slots, setSlots] = useState(() => {
-    try { return JSON.parse(localStorage.getItem('onlitec_slots') || 'null') || []; } catch { return []; }
+    try { return JSON.parse(localStorage.getItem(tenantKey('onlitec_slots')) || 'null') || []; } catch { return []; }
   });
   const [selected, setSelected] = useState(0);
   const [expanded, setExpanded] = useState(null);
@@ -95,7 +96,7 @@ export default function LiveView({ cameras, statusMap, token, onStatusChange }) 
     if (cameras.length === 0) return;
 
     let seen = [];
-    try { seen = JSON.parse(localStorage.getItem('onlitec_seen_cams') || '[]'); } catch { seen = []; }
+    try { seen = JSON.parse(localStorage.getItem(tenantKey('onlitec_seen_cams')) || '[]'); } catch { seen = []; }
 
     setSlots((prev) => {
       const base = Array.from({ length: layoutSize }, (_, i) => prev[i] ?? null);
@@ -115,13 +116,13 @@ export default function LiveView({ cameras, statusMap, token, onStatusChange }) 
       return base;
     });
 
-    localStorage.setItem('onlitec_seen_cams', JSON.stringify(cameras.map((c) => c.id)));
+    localStorage.setItem(tenantKey('onlitec_seen_cams'), JSON.stringify(cameras.map((c) => c.id)));
   }, [cameras, layoutSize]);
 
   // o mosaico montado é preferência do operador — persiste no dispositivo
   useEffect(() => {
     localStorage.setItem('onlitec_layout', String(layoutSize));
-    localStorage.setItem('onlitec_slots', JSON.stringify(slots));
+    localStorage.setItem(tenantKey('onlitec_slots'), JSON.stringify(slots));
     if (custom) localStorage.setItem('onlitec_custom', JSON.stringify(custom));
     else localStorage.removeItem('onlitec_custom');
     localStorage.setItem('onlitec_fit', fitMode);
@@ -263,7 +264,7 @@ export default function LiveView({ cameras, statusMap, token, onStatusChange }) 
   /** Baixa um trecho gravado para o dispositivo do usuário. */
   const downloadSegment = (segmentId) => {
     const a = document.createElement('a');
-    a.href = `/api/vms/recordings/${segmentId}/file?token=${encodeURIComponent(getToken())}&download=1`;
+    a.href = apiUrl(`/api/vms/recordings/${segmentId}/file?token=${encodeURIComponent(getToken())}&download=1`);
     a.download = '';
     document.body.appendChild(a);
     a.click();

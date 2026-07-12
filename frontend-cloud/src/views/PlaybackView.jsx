@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Film, RefreshCw, Download, Play, SkipBack, SkipForward } from 'lucide-react';
 import { authFetch, getToken } from '../auth';
+import { apiUrl } from '../tenant';
 
 const TRIGGER_LABEL = {
   continuous: 'Contínua',
@@ -75,7 +76,7 @@ export default function PlaybackView({ cameras }) {
   useEffect(() => { void load(); }, [load]);
 
   const fileUrl = (rec, download = false) =>
-    `/api/vms/recordings/${rec.id}/file?token=${encodeURIComponent(getToken())}${download ? '&download=1' : ''}`;
+    apiUrl(`/api/vms/recordings/${rec.id}/file?token=${encodeURIComponent(getToken())}${download ? '&download=1' : ''}`);
 
   const index = current ? recordings.findIndex((r) => r.id === current.id) : -1;
 

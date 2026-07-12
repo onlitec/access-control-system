@@ -1,6 +1,7 @@
 import React, { memo, useEffect, useImperativeHandle, useRef, useState, forwardRef } from 'react';
 import { AlertCircle } from 'lucide-react';
 import { getToken, ensureFreshToken } from '../auth';
+import { apiUrl } from '../tenant';
 
 /**
  * O hls.js (~400 KB, metade do bundle) só é usado quando o WebRTC falha — o que
@@ -240,7 +241,7 @@ const VideoPlayer = forwardRef(function VideoPlayer(
           maxBufferLength: 4,
           xhrSetup: (xhr, url) => { xhr.open('GET', withJwt(url), true); },
         });
-        hls.loadSource(withJwt(`/hls/${path}/index.m3u8`));
+        hls.loadSource(withJwt(apiUrl(`/hls/${path}/index.m3u8`)));
         hls.attachMedia(video);
         hls.on(Hls.Events.MANIFEST_PARSED, () => {
           setError(null);
@@ -262,7 +263,7 @@ const VideoPlayer = forwardRef(function VideoPlayer(
           retryTimer = setTimeout(start, 5000);
         });
       } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
-        video.src = withJwt(`/hls/${path}/index.m3u8`); // Safari
+        video.src = withJwt(apiUrl(`/hls/${path}/index.m3u8`)); // Safari
         if (autoPlay) video.play().catch(() => { /* autoplay bloqueado */ });
       } else {
         setError('Navegador sem suporte a vídeo ao vivo');
@@ -272,7 +273,7 @@ const VideoPlayer = forwardRef(function VideoPlayer(
     // ── WebRTC/WHEP com TURN (caminho principal: latência < 1s) ──
     const startWebRtc = async () => {
       if (disposed) return;
-      const whep = withJwt(`/webrtc/${path}/whep`);
+      const whep = withJwt(apiUrl(`/webrtc/${path}/whep`));
 
       try {
         // ICE servers (TURN) vêm do cache — não custa um round-trip por câmera

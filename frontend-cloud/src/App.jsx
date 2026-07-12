@@ -1,10 +1,11 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Camera, Lock, User, LogOut, RefreshCw, AlertCircle, MonitorPlay, Film } from 'lucide-react';
+import { Camera, Lock, User, LogOut, RefreshCw, AlertCircle, MonitorPlay, Film, Building2 } from 'lucide-react';
 import LiveView from './views/LiveView';
 import PlaybackView from './views/PlaybackView';
 import InstallButton from './components/InstallButton';
 import ThemeToggle from './components/ThemeToggle';
 import { login, clearSession, getToken, getUser, authFetch, ensureFreshToken } from './auth';
+import { getTenant, setTenant, normalizeSlug, tenantKey } from './tenant';
 import './index.css';
 
 /**
@@ -19,6 +20,12 @@ function App() {
   const [token, setToken] = useState(() => getToken());
   const [user, setUser] = useState(() => getUser());
 
+  // ?t=slug num link/QR code pré-preenche o código do cliente
+  const [tenantInput, setTenantInput] = useState(() => {
+    const fromUrl = normalizeSlug(new URLSearchParams(window.location.search).get('t'));
+    if (fromUrl) setTenant(fromUrl);
+    return fromUrl || getTenant();
+  });
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loginError, setLoginError] = useState('');
@@ -33,7 +40,8 @@ function App() {
    * seguida — se algo mudou, o mosaico se corrige sozinho.
    */
   const [cameras, setCameras] = useState(() => {
-    try { return JSON.parse(localStorage.getItem('onlitec_cameras') || '[]'); } catch { return []; }
+    localStorage.removeItem('onlitec_cameras'); // chave da era single-tenant
+    try { return JSON.parse(localStorage.getItem(tenantKey('onlitec_cameras')) || '[]'); } catch { return []; }
   });
   const [statusMap, setStatusMap] = useState({});
   const [loading, setLoading] = useState(false);
@@ -41,7 +49,7 @@ function App() {
 
   const handleLogout = useCallback(() => {
     clearSession();
-    localStorage.removeItem('onlitec_cameras');
+    localStorage.removeItem(tenantKey('onlitec_cameras'));
     setToken('');
     setUser(null);
     setCameras([]);
@@ -58,6 +66,11 @@ function App() {
     setLoggingIn(true);
     setLoginError('');
     try {
+      const slug = normalizeSlug(tenantInput);
+      if (!slug) throw new Error('Informe o código do cliente (ex.: onlitec)');
+      const previous = getTenant();
+      setTenant(slug);
+      if (previous && previous !== slug) setCameras([]); // sem câmeras "fantasma" do tenant anterior
       const data = await login(email, password);
       setToken(data.token);
       setUser(data.user || null);
@@ -107,7 +120,7 @@ function App() {
         }
       }
       setCameras(list);
-      localStorage.setItem('onlitec_cameras', JSON.stringify(list));
+      localStorage.setItem(tenantKey('onlitec_cameras'), JSON.stringify(list));
     } catch (err) {
       // com cache em tela, um erro de rede não precisa apagar as câmeras
       if (cameras.length === 0) setLoadError(err.message || 'Falha ao carregar câmeras');
@@ -135,6 +148,19 @@ function App() {
             <p>Monitoramento de câmeras</p>
           </div>
           <form onSubmit={handleLogin} className="login-form">
+            <label className="input-group">
+              <Building2 className="input-icon" size={18} />
+              <input
+                type="text"
+                placeholder="Código do cliente (ex.: onlitec)"
+                value={tenantInput}
+                onChange={(e) => setTenantInput(e.target.value)}
+                autoCapitalize="none"
+                autoCorrect="off"
+                spellCheck={false}
+                required
+              />
+            </label>
             <label className="input-group">
               <User className="input-icon" size={18} />
               <input
