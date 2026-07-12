@@ -86,7 +86,7 @@ const DERIVED_URL_PROTOCOLS = ['hikvision_isapi', 'xiongmai', 'dahua'];
 const emptyDevice = {
   name: '', kind: 'ip_camera', protocol: 'hikvision_isapi', ip: '',
   httpPort: '80', rtspPort: '554', username: 'admin', password: '', location: '',
-  rtspUrlMain: '', rtspUrlSub: '',
+  rtspUrlMain: '', rtspUrlSub: '', rtspTransport: 'tcp',
 };
 
 // ── Main Component ──────────────────────────────────────────────────────────
@@ -173,6 +173,8 @@ export default function VmsDevicesPage() {
           location: newDevice.location || null,
           rtspUrlMain: newDevice.rtspUrlMain || null,
           rtspUrlSub: newDevice.rtspUrlSub || null,
+          // câmeras que só falam UDP (ex.: Yoosee/Gwelltimes) precisam de udp
+          sdkConfig: { rtspTransport: newDevice.rtspTransport },
         }),
       });
       setNewDevice(emptyDevice); setShowForm(false); setTestResult(null);
@@ -326,6 +328,13 @@ export default function VmsDevicesPage() {
                 <option value="dahua">Dahua / Intelbras</option>
                 <option value="onvif">ONVIF</option>
                 <option value="rtsp">RTSP genérico</option>
+              </select>
+            </Field>
+            <Field label="Transporte RTSP">
+              <select value={newDevice.rtspTransport} onChange={(e) => setNewDevice((d) => ({ ...d, rtspTransport: e.target.value }))} style={inputStyle}>
+                <option value="tcp">TCP (padrão)</option>
+                <option value="udp">UDP (Yoosee/Gwelltimes e afins)</option>
+                <option value="automatic">Automático (tenta UDP, cai p/ TCP)</option>
               </select>
             </Field>
           </div>
