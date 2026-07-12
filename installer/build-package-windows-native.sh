@@ -29,11 +29,13 @@ STAGE_DIR="$WIN_DIR/stage"
 DIST_DIR="$INSTALLER_DIR/dist"
 
 BUNDLED_NODE_DIR="$BINARIES_DIR/node"
-ISCC_EXE="$LOCALAPPDATA/Programs/Inno Setup 6/ISCC.exe"
+# ISCC: env ISCC > winget (%LOCALAPPDATA%) > choco/instalador oficial (Program Files x86)
+ISCC_EXE="${ISCC:-$LOCALAPPDATA/Programs/Inno Setup 6/ISCC.exe}"
+[ -f "$ISCC_EXE" ] || ISCC_EXE="/c/Program Files (x86)/Inno Setup 6/ISCC.exe"
 
 log() { echo; echo "==> $*"; }
 
-[ -f "$ISCC_EXE" ] || { echo "ERRO: ISCC.exe nao encontrado em $ISCC_EXE"; exit 1; }
+[ -f "$ISCC_EXE" ] || { echo "ERRO: ISCC.exe nao encontrado (defina ISCC=caminho/ISCC.exe)"; exit 1; }
 [ -f "$BUNDLED_NODE_DIR/node.exe" ] || { echo "ERRO: Node empacotado ausente em $BUNDLED_NODE_DIR"; exit 1; }
 
 ROOT_DIR_WIN="$(cygpath -m "$ROOT_DIR")"

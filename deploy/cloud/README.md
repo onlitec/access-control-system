@@ -129,6 +129,15 @@ porque o token expira em 1 dia, mas não recorte logs para terceiros.
 bash deploy/cloud/deploy-pwa.sh
 ```
 
+## Downloads / Releases
+
+`https://cloud.onlitec.com.br/downloads/` serve os instaladores e o
+`latest.json` (manifesto que o Admin de cada cliente consulta em "Verificar
+atualizações"). Arquivos ficam em
+`/var/lib/docker/volumes/npm_data/_data/onliacesso-downloads/` no VPS e são
+publicados pela CI (`.github/workflows/release.yml`) a cada tag `v*` — ver
+`docs/INSTALL.md` para o fluxo de release completo.
+
 ## Legado (transição)
 
 As locations sem prefixo (`/api/`, `/hls/`, `/webrtc/`) continuam apontando

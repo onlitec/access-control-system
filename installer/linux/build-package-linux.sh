@@ -37,6 +37,10 @@ trap 'rm -rf "$STAGE"' EXIT
 PKG="$STAGE/onliacesso-linux-$VERSION"
 mkdir -p "$PKG"/{apps,systemd,nginx,mediamtx}
 
+# versão vai DENTRO do pacote: o install.sh grava APP_VERSION no .env a partir
+# daqui (fonte única = package.json; nada de número hardcoded no instalador)
+printf '%s\n' "$VERSION" > "$PKG/VERSION"
+
 # ── backend-api: dist + prisma + package.json ─────────────────────────────────
 log "backend-api..."
 mkdir -p "$PKG/apps/backend-api/prisma"

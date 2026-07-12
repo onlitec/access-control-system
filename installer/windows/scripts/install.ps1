@@ -266,6 +266,7 @@ PostgreSQL (usuario postgres, porta $PgPort): $DbPassword
         }
     }
     Set-EnvKey "APP_VERSION" $AppVersion $true
+    Set-EnvKey "UPDATE_MANIFEST_URL" "https://cloud.onlitec.com.br/downloads/latest.json"
     Set-EnvKey "BACKUP_DIR" "$TargetDir\backups"
     Set-EnvKey "PG_BIN" "$Bin\pgsql\bin"
     # WinSW v3 grava os logs dos servicos ao lado dos wrappers (services\)

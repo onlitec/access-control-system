@@ -1,0 +1,181 @@
+# Release do OnliAcesso: tag v* → compila os DOIS instaladores e publica em
+# https://cloud.onlitec.com.br/downloads/ (+ latest.json para o update-check
+# do painel Admin de cada cliente).
+#
+# Fluxo de release:
+#   1. editar "version" no package.json raiz (fonte única da versão)
+#   2. commit + git tag -a vX.Y.Z -m "notas da versão" + git push --tags
+#   3. este workflow faz o resto (validando que a tag == package.json)
+#
+# Secrets exigidos (Settings → Secrets → Actions):
+#   VPS_SSH_KEY        chave privada dedicada do CI (pública no authorized_keys
+#                      do alfreire no VPS)
+#   VPS_HOST           65.109.14.53 (IP público; a 4450 está aberta na Hetzner)
+#   VPS_PORT           4450
+#   SMTP_DEFAULTS_ENV  (opcional) conteúdo do smtp-defaults.env — sem ele o
+#                      instalador sai sem SMTP pré-configurado
+name: release
+
+on:
+  push:
+    tags: ['v*']
+
+jobs:
+  linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Versão da tag deve bater com o package.json
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          PKG="$(node -p "require('./package.json').version")"
+          [ "$TAG" = "$PKG" ] || { echo "tag v$TAG != package.json $PKG"; exit 1; }
+
+      - name: Instalar dependências e compilar os 4 apps
+        run: |
+          npm install --no-audit --no-fund --loglevel=error
+          npm run build
+
+      - name: Empacotar (tar.gz)
+        run: bash installer/linux/build-package-linux.sh
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-package
+          path: |
+            installer/dist/onliacesso-linux-*.tar.gz
+            installer/dist/onliacesso-linux-*.tar.gz.sha256
+          if-no-files-found: error
+
+  windows:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Versão da tag deve bater com o package.json
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          PKG="$(node -p "require('./package.json').version")"
+          [ "$TAG" = "$PKG" ] || { echo "tag v$TAG != package.json $PKG"; exit 1; }
+
+      - name: Instalar dependências e compilar os 4 apps
+        run: |
+          npm install --no-audit --no-fund --loglevel=error
+          npm run build
+
+      - name: Inno Setup
+        run: choco install innosetup -y --no-progress
+        shell: powershell
+
+      - name: SMTP defaults (secret opcional)
+        env:
+          SMTP_DEFAULTS: ${{ secrets.SMTP_DEFAULTS_ENV }}
+        run: |
+          if [ -n "$SMTP_DEFAULTS" ]; then
+            printf '%s\n' "$SMTP_DEFAULTS" > installer/windows/scripts/smtp-defaults.env
+            echo "smtp-defaults.env gravado"
+          else
+            echo "sem SMTP_DEFAULTS_ENV — instalador sai sem SMTP default"
+          fi
+
+      - name: Baixar binários embutidos (Node/PG/nginx/ffmpeg/WinSW/MediaMTX/rclone)
+        run: bash installer/windows/scripts/download-binaries.sh
+
+      - name: Compilar o instalador (.exe)
+        env:
+          ISCC: 'C:\Program Files (x86)\Inno Setup 6\ISCC.exe'
+        run: bash installer/build-package-windows-native.sh
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-package
+          path: |
+            installer/dist/OnliAcessoSetup-*.exe
+            installer/dist/OnliAcessoSetup-*.exe.sha256
+          if-no-files-found: error
+
+  publish:
+    needs: [linux, windows]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4   # para ler a mensagem da tag (notas)
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Chave SSH do CI
+        env:
+          SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/id_ci
+          chmod 600 ~/.ssh/id_ci
+          ssh-keyscan -p "${{ secrets.VPS_PORT }}" "${{ secrets.VPS_HOST }}" >> ~/.ssh/known_hosts 2>/dev/null
+
+      - name: Publicar no VPS (atômico: sobe .tmp, valida sha, renomeia; latest.json por último)
+        env:
+          HOST: ${{ secrets.VPS_HOST }}
+          PORT: ${{ secrets.VPS_PORT }}
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF_NAME#v}"
+          NOTES="$(git tag -l --format='%(contents:subject)' "$GITHUB_REF_NAME")"
+          [ -n "$NOTES" ] || NOTES="OnliAcesso $VERSION"
+          EXE="dist/OnliAcessoSetup-$VERSION.exe"
+          TGZ="dist/onliacesso-linux-$VERSION.tar.gz"
+          EXE_SHA="$(awk '{print $1}' "$EXE.sha256")"
+          TGZ_SHA="$(awk '{print $1}' "$TGZ.sha256")"
+
+          BASE="https://cloud.onlitec.com.br/downloads"
+          python3 - "$VERSION" "$NOTES" "$BASE" "$EXE_SHA" "$TGZ_SHA" <<'EOF' > dist/latest.json
+          import json, sys
+          v, notes, base, exe_sha, tgz_sha = sys.argv[1:6]
+          print(json.dumps({
+            "version": v,
+            "notes": notes,
+            "windows": {"url": f"{base}/OnliAcessoSetup-{v}.exe", "sha256": exe_sha},
+            "linux":   {"url": f"{base}/onliacesso-linux-{v}.tar.gz", "sha256": tgz_sha},
+          }, indent=2, ensure_ascii=False))
+          EOF
+          cat dist/latest.json
+
+          SSH="ssh -i ~/.ssh/id_ci -p $PORT alfreire@$HOST"
+          SCP="scp -i ~/.ssh/id_ci -P $PORT"
+          DL=/var/lib/docker/volumes/npm_data/_data/onliacesso-downloads
+
+          $SCP "$EXE" "alfreire@$HOST:/tmp/$(basename "$EXE").tmp"
+          $SCP "$TGZ" "alfreire@$HOST:/tmp/$(basename "$TGZ").tmp"
+          $SCP "$EXE.sha256" "$TGZ.sha256" dist/latest.json "alfreire@$HOST:/tmp/"
+
+          $SSH "set -e
+            echo '$EXE_SHA  /tmp/$(basename "$EXE").tmp' | sha256sum -c - >/dev/null
+            echo '$TGZ_SHA  /tmp/$(basename "$TGZ").tmp' | sha256sum -c - >/dev/null
+            sudo -n mv /tmp/$(basename "$EXE").tmp $DL/$(basename "$EXE")
+            sudo -n mv /tmp/$(basename "$TGZ").tmp $DL/$(basename "$TGZ")
+            sudo -n mv /tmp/$(basename "$EXE").sha256 /tmp/$(basename "$TGZ").sha256 $DL/
+            sudo -n mv /tmp/latest.json $DL/latest.json
+            sudo -n chmod 644 $DL/$(basename "$EXE") $DL/$(basename "$TGZ") $DL/*.sha256 $DL/latest.json
+          "
+          echo "Publicado: $BASE/latest.json"
+
+      - name: Smoke test público
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          curl -fsS https://cloud.onlitec.com.br/downloads/latest.json | grep -q "\"$VERSION\""
+          curl -fsSI "https://cloud.onlitec.com.br/downloads/onliacesso-linux-$VERSION.tar.gz" >/dev/null
+          curl -fsSI "https://cloud.onlitec.com.br/downloads/OnliAcessoSetup-$VERSION.exe" >/dev/null
+          echo "downloads no ar"

@@ -8,8 +8,13 @@
 #   sudo ./bootstrap.sh                # compila e instala (a partir deste repo)
 #   sudo ./bootstrap.sh --no-vms       # sem o Gerenciador de Imagens (câmeras)
 #
-# Se rodado FORA do repositório, clona-o antes (repositório privado — exige
-# credencial git, veja o README):
+#   sudo ./bootstrap.sh --from-release # SEM código-fonte: baixa o pacote oficial
+#                                      # de cloud.onlitec.com.br/downloads (não
+#                                      # exige credencial nenhuma — é o caminho
+#                                      # para instalar na casa do cliente)
+#
+# Se rodado FORA do repositório (e sem --from-release), clona-o antes
+# (repositório privado — exige credencial git, veja o README):
 #   sudo ONLIACESSO_REPO=https://github.com/onlitec/access-control-system.git ./bootstrap.sh
 #
 # Idempotente: rodar de novo recompila e atualiza, preservando banco, .env e
@@ -20,11 +25,14 @@ NODE_MAJOR="20"
 REPO_URL="${ONLIACESSO_REPO:-https://github.com/onlitec/access-control-system.git}"
 REPO_BRANCH="${ONLIACESSO_BRANCH:-main}"
 SRC_DIR="${ONLIACESSO_SRC:-/opt/onliacesso-src}"
+DOWNLOADS_URL="${ONLIACESSO_DOWNLOADS:-https://cloud.onlitec.com.br/downloads}"
+FROM_RELEASE=0
 INSTALL_ARGS=()
 
 for arg in "$@"; do
     case "$arg" in
         --no-vms) INSTALL_ARGS+=("--no-vms") ;;
+        --from-release) FROM_RELEASE=1 ;;
         *) echo "Argumento desconhecido: $arg"; exit 1 ;;
     esac
 done
@@ -37,6 +45,41 @@ die()  { echo -e "\033[1;31m[ERRO]\033[0m $*" >&2; exit 1; }
 command -v apt-get >/dev/null || die "Este script suporta Ubuntu/Debian (apt)."
 
 START_TS=$(date +%s)
+
+# ── Modo --from-release: baixa o pacote oficial e instala, sem compilar nada ──
+if [ "$FROM_RELEASE" -eq 1 ]; then
+    log "Instalação a partir do release oficial ($DOWNLOADS_URL)..."
+    export DEBIAN_FRONTEND=noninteractive
+    apt-get update -qq --allow-releaseinfo-change 2>/dev/null || true
+    apt-get install -y -qq curl ca-certificates python3 rsync
+
+    VERSION="$(curl -fsSL "$DOWNLOADS_URL/latest.json" \
+        | python3 -c 'import sys,json;print(json.load(sys.stdin)["version"])')" \
+        || die "Não consegui ler $DOWNLOADS_URL/latest.json"
+    SHA="$(curl -fsSL "$DOWNLOADS_URL/latest.json" \
+        | python3 -c 'import sys,json;print(json.load(sys.stdin).get("linux",{}).get("sha256",""))')"
+    TARBALL_NAME="onliacesso-linux-$VERSION.tar.gz"
+
+    log "Baixando OnliAcesso $VERSION ..."
+    WORK="$(mktemp -d)"
+    curl -fSL --progress-bar -o "$WORK/$TARBALL_NAME" "$DOWNLOADS_URL/$TARBALL_NAME" \
+        || die "Falha ao baixar $DOWNLOADS_URL/$TARBALL_NAME"
+    if [ -n "$SHA" ]; then
+        echo "$SHA  $WORK/$TARBALL_NAME" | sha256sum -c - >/dev/null \
+            || die "SHA256 do pacote não confere — download corrompido ou adulterado."
+        log "SHA256 conferido."
+    else
+        warn "latest.json sem sha256 do Linux — instalando sem conferência."
+    fi
+
+    tar -xzf "$WORK/$TARBALL_NAME" -C "$WORK"
+    bash "$WORK/onliacesso-linux-$VERSION/install.sh" "${INSTALL_ARGS[@]+"${INSTALL_ARGS[@]}"}"
+    rm -rf "$WORK"
+
+    ELAPSED=$(( ($(date +%s) - START_TS) / 60 ))
+    echo -e "\n\033[1;32m✓ Instalação do release $VERSION concluída em ~${ELAPSED} min.\033[0m"
+    exit 0
+fi
 
 # ── 1. Ferramentas de compilação ──────────────────────────────────────────────
 log "Instalando ferramentas de compilação..."

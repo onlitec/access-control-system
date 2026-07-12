@@ -568,12 +568,16 @@ router.get('/update-check', authMiddleware, adminMiddleware, async (_req: Reques
             return res.status(502).json({ error: 'manifesto inválido (campo version ausente)', currentVersion });
         }
 
+        // manifesto multi-OS: { version, notes, windows: {url,sha256}, linux: {url,sha256} };
+        // url/sha256 no topo seguem valendo como fallback (manifestos antigos)
+        const osEntry = manifest?.[process.platform === 'win32' ? 'windows' : 'linux'];
+
         return res.json({
             currentVersion,
             latestVersion,
             updateAvailable: compareVersions(latestVersion, currentVersion) > 0,
-            downloadUrl: manifest?.url || null,
-            sha256: manifest?.sha256 || null,
+            downloadUrl: osEntry?.url || manifest?.url || null,
+            sha256: osEntry?.sha256 || manifest?.sha256 || null,
             notes: manifest?.notes || null,
             checkedAt: new Date().toISOString(),
         });

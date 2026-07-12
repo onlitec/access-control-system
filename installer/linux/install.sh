@@ -26,6 +26,8 @@ for arg in "$@"; do
 done
 
 SRC_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# versão vem do arquivo VERSION gerado pelo build (fonte única: package.json)
+PKG_VERSION="$(cat "$SRC_DIR/VERSION" 2>/dev/null || echo 0.0.0)"
 
 log()  { echo -e "\n\033[1;36m==>\033[0m $*"; }
 warn() { echo -e "\033[1;33m[!]\033[0m $*"; }
@@ -171,7 +173,10 @@ FFMPEG_PATH=/usr/bin/ffmpeg
 BACKUP_DIR=$APP_DIR/backups
 PG_BIN=$PG_BIN_DIR
 SERVICE_LOGS_DIR=$APP_DIR/logs
-APP_VERSION=2.2.0
+APP_VERSION=$PKG_VERSION
+
+# Manifesto de atualizações (o Admin compara e avisa quando há versão nova)
+UPDATE_MANIFEST_URL=https://cloud.onlitec.com.br/downloads/latest.json
 
 # ── VMS (Gerenciador de Imagens) ──
 MEDIAMTX_API_URL=http://127.0.0.1:9997

@@ -21,7 +21,7 @@ NODE_SHASUMS_URL="https://nodejs.org/dist/v${NODE_VERSION}/SHASUMS256.txt"
 PG_URL="https://get.enterprisedb.com/postgresql/postgresql-${PG_VERSION}-windows-x64-binaries.zip"
 NGINX_URL="https://nginx.org/download/nginx-${NGINX_VERSION}.zip"
 WINSW_URL="https://github.com/winsw/winsw/releases/download/v${WINSW_VERSION}/WinSW-x64.exe"
-FFMPEG_URL="https://github.com/BtbN/FFmpeg-Builds/releases/latest/download/ffmpeg-master-latest-win64-gpl.zip"
+FFMPEG_URL="https://github.com/BtbN/FFmpeg-Builds/releases/latest/download/ffmpeg-n7.1-latest-win64-gpl-7.1.zip"
 FFMPEG_API_URL="https://api.github.com/repos/BtbN/FFmpeg-Builds/releases/latest"
 
 CHECKSUM_FILE="$ASSETS_DIR/CHECKSUMS.sha256"
@@ -109,14 +109,16 @@ record_sha "$WINSW_EXE"
 log "WinSW v${WINSW_VERSION} pronto em assets/binaries/winsw"
 
 # ----------------------------------------------------------------- ffmpeg ---
-FFMPEG_ZIP="$DOWNLOAD_DIR/ffmpeg-master-latest-win64-gpl.zip"
+# Pinado na série estável n7.1 (asset "latest" da série, não o master rolling):
+# release reproduzível dentro da série, e o asset nunca some do release latest.
+FFMPEG_ZIP="$DOWNLOAD_DIR/ffmpeg-n7.1-latest-win64-gpl-7.1.zip"
 fetch "$FFMPEG_URL" "$FFMPEG_ZIP"
 FFMPEG_EXPECTED=$(curl -fsSL "$FFMPEG_API_URL" | node -e "
 const fs = require('fs');
 try {
   const data = fs.readFileSync(0, 'utf-8');
   const release = JSON.parse(data);
-  const asset = release.assets.find(a => a.name === 'ffmpeg-master-latest-win64-gpl.zip');
+  const asset = release.assets.find(a => a.name === 'ffmpeg-n7.1-latest-win64-gpl-7.1.zip');
   if (asset) console.log(asset.digest.replace('sha256:', ''));
 } catch (e) {
   process.exit(1);
@@ -127,7 +129,7 @@ verify_sha "$FFMPEG_ZIP" "$FFMPEG_EXPECTED"
 record_sha "$FFMPEG_ZIP"
 if [ ! -d "$ASSETS_DIR/ffmpeg" ]; then
     unzip -q "$FFMPEG_ZIP" -d "$DOWNLOAD_DIR/ffmpeg-tmp"
-    mv "$DOWNLOAD_DIR/ffmpeg-tmp/ffmpeg-master-latest-win64-gpl" "$ASSETS_DIR/ffmpeg"
+    mv "$DOWNLOAD_DIR/ffmpeg-tmp/ffmpeg-n7.1-latest-win64-gpl-7.1" "$ASSETS_DIR/ffmpeg"
     rmdir "$DOWNLOAD_DIR/ffmpeg-tmp"
 fi
 log "ffmpeg (BtbN win64 gpl) pronto em assets/binaries/ffmpeg"
