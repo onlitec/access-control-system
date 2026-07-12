@@ -219,6 +219,16 @@ log "Aplicando migrações do banco..."
 pushd "$APP_DIR/apps/backend-api" >/dev/null
 set -a; . "$ENV_FILE"; set +a
 npx prisma migrate deploy --schema prisma/schema.prisma
+
+# Usuário administrador inicial, a partir das chaves INITIAL_ADMIN_* do .env.
+# NÃO usar bootstrap-admin.js: ele lê ADMIN_*/ADMIN_PASSWORD (nomes diferentes)
+# e falha. Sem este passo o banco fica sem nenhum usuário e o login é impossível.
+if [ -f dist/scripts/create-protected-admin.js ]; then
+    log "Criando o usuário administrador inicial..."
+    node dist/scripts/create-protected-admin.js
+else
+    warn "create-protected-admin.js não encontrado — admin inicial NÃO criado."
+fi
 popd >/dev/null
 
 # ── 8. VMS: MediaMTX e rclone ─────────────────────────────────────────────────
@@ -306,7 +316,11 @@ fi
 
 # ── 13. Subir tudo ────────────────────────────────────────────────────────────
 log "Iniciando serviços..."
-systemctl enable --now "${SERVICES[@]}" >/dev/null 2>&1
+# `enable --now` NÃO reinicia um serviço que já está rodando: numa atualização,
+# os processos continuariam com o código (e o unit) antigos. O restart explícito
+# é o que faz a nova versão realmente entrar em vigor.
+systemctl enable "${SERVICES[@]}" >/dev/null 2>&1
+systemctl restart "${SERVICES[@]}"
 systemctl restart nginx
 sleep 3
 

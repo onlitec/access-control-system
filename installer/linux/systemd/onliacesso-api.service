@@ -18,8 +18,14 @@ RestartSec=10
 StandardOutput=append:/opt/onliacesso/logs/api.log
 StandardError=append:/opt/onliacesso/logs/api.err.log
 
-# Endurecimento: o serviço só precisa escrever em data/ e logs/
-NoNewPrivileges=yes
+# Endurecimento: o serviço só precisa escrever em data/, logs/ e backups/.
+#
+# NoNewPrivileges fica DESLIGADO aqui de propósito: a tela "Serviços" do Admin
+# reinicia os processos com `sudo -n systemctl restart <unit>`, e o sudo é um
+# binário setuid — com NoNewPrivileges=yes o kernel bloqueia a elevação e o
+# botão falha silenciosamente. O poder concedido continua mínimo: a regra em
+# /etc/sudoers.d/onliacesso só permite `systemctl restart` dos units do
+# OnliAcesso, nada mais.
 PrivateTmp=yes
 ProtectSystem=full
 ProtectHome=yes
