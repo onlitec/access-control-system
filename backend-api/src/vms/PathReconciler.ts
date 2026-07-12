@@ -1,29 +1,57 @@
+import path from 'path';
+import { promises as fs } from 'fs';
 import { prisma } from '../database';
 import { MediaMtxClient, MtxPathConf } from './MediaMtxClient';
 import { buildStreamUrls, subPathName } from './rtsp';
-import { VMS_PORT, VMS_INTERNAL_TOKEN, VMS_ALWAYS_ON } from './config';
+import { VMS_PORT, VMS_INTERNAL_TOKEN, VMS_ALWAYS_ON, VMS_RECORDINGS_DIR } from './config';
 
 /**
  * Hook executado pelo MediaMTX ao fechar cada segmento de gravação.
  *
- * O MediaMTX NÃO roda o comando através de um shell: ele o executa direto,
- * passando MTX_PATH/MTX_SEGMENTPATH como variáveis de ambiente. Sem shell não
- * há ninguém para expandir `%VAR%` — o hook chegava ao vms-service com a string
- * literal "%MTX_PATH%" e o segmento era descartado ("path desconhecido"), então
- * o upload só acontecia pela varredura de reserva (a cada 5 min). Invocando via
- * `cmd.exe /C` no Windows (e `sh -c` no POSIX) a expansão volta a acontecer.
+ * Dois detalhes do MediaMTX no Windows tornam o comando inline inviável:
+ *  1. Ele NÃO roda o comando através de um shell — apenas separa a string em
+ *     campos e executa, passando MTX_PATH/MTX_SEGMENT_PATH como variáveis de
+ *     ambiente. Sem shell, ninguém expande `%VAR%`: o vms-service recebia a
+ *     string literal "%MTX_PATH%" e descartava o segmento ("path desconhecido").
+ *  2. Ao separar em campos, as aspas do comando se perdem — então embutir
+ *     `cmd.exe /C curl ... -H "x-vms-token: ..."` também não funciona.
+ *
+ * A saída é um script gerado em disco: o MediaMTX chama o script, e o script
+ * (rodando no shell) expande as variáveis e monta a chamada com as aspas certas.
+ * Sem isso, as gravações só entravam na fila de upload pela varredura de reserva
+ * (a cada 5 min), nunca no fechamento do arquivo.
  */
-function segmentCompleteHook(): string {
+function hookScriptPath(): string {
   const isWin = process.platform === 'win32';
-  const pathVar = isWin ? '%MTX_PATH%' : '$MTX_PATH';
-  const fileVar = isWin ? '%MTX_SEGMENTPATH%' : '$MTX_SEGMENTPATH';
-  const curl = isWin ? 'curl.exe' : 'curl';
+  return path.join(path.dirname(VMS_RECORDINGS_DIR), isWin ? 'vms-segment-hook.bat' : 'vms-segment-hook.sh');
+}
 
-  const post = `${curl} -s -m 10 -X POST http://127.0.0.1:${VMS_PORT}/internal/segment-complete `
-    + `-H "x-vms-token: ${VMS_INTERNAL_TOKEN}" `
-    + `--data-urlencode "path=${pathVar}" --data-urlencode "file=${fileVar}"`;
+/** Escreve o script do hook (idempotente — reescrito a cada boot do vms-service). */
+export async function ensureSegmentHookScript(): Promise<void> {
+  const isWin = process.platform === 'win32';
+  const file = hookScriptPath();
+  const url = `http://127.0.0.1:${VMS_PORT}/internal/segment-complete`;
 
-  return isWin ? `cmd.exe /C ${post}` : `sh -c '${post}'`;
+  const content = isWin
+    ? '@echo off\r\n'
+      + `curl.exe -s -m 10 -X POST ${url} `
+      + `-H "x-vms-token: ${VMS_INTERNAL_TOKEN}" `
+      + '--data-urlencode "path=%MTX_PATH%" --data-urlencode "file=%MTX_SEGMENT_PATH%"\r\n'
+    : '#!/bin/sh\n'
+      + `curl -s -m 10 -X POST ${url} `
+      + `-H "x-vms-token: ${VMS_INTERNAL_TOKEN}" `
+      + '--data-urlencode "path=$MTX_PATH" --data-urlencode "file=$MTX_SEGMENT_PATH"\n';
+
+  await fs.mkdir(path.dirname(file), { recursive: true });
+  await fs.writeFile(file, content, { mode: isWin ? undefined : 0o755 });
+}
+
+function segmentCompleteHook(): string {
+  // .bat não é executável pelo CreateProcess do Windows — precisa do cmd.exe;
+  // o caminho não tem espaços, então não há aspas para o MediaMTX perder.
+  return process.platform === 'win32'
+    ? `cmd.exe /C ${hookScriptPath()}`
+    : `sh ${hookScriptPath()}`;
 }
 
 /**

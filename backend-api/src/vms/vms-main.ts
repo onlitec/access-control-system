@@ -5,7 +5,7 @@ import express, { Request, Response, NextFunction } from 'express';
 import { promises as fs } from 'fs';
 import { prisma } from '../database';
 import { MediaMtxClient } from './MediaMtxClient';
-import { PathReconciler } from './PathReconciler';
+import { PathReconciler, ensureSegmentHookScript } from './PathReconciler';
 import { RecordingScheduler } from './RecordingScheduler';
 import { SegmentIndexer } from './SegmentIndexer';
 import { MotionWatcher } from './MotionWatcher';
@@ -151,6 +151,10 @@ async function main(): Promise<void> {
     await new Promise((r) => setTimeout(r, 5000));
   }
   console.log('[VMS] MediaMTX disponível');
+
+  // O hook de fechamento de segmento é um script em disco (o MediaMTX não roda
+  // comandos via shell) — regravado a cada boot para acompanhar token/porta.
+  await ensureSegmentHookScript();
 
   await reconciler.reconcile();
   await scheduler.tick();
