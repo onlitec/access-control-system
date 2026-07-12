@@ -1,6 +1,6 @@
 {
   "name": "access-control-system",
-  "version": "1.0.0-alpha",
+  "version": "2.2.0",
   "private": true,
   "workspaces": [
     "backend-api",

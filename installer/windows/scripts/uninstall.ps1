@@ -42,9 +42,11 @@ foreach ($svc in $ServiceOrder) {
     }
 }
 
-if (Get-NetFirewallRule -DisplayName "OnliAcesso HTTP" -ErrorAction SilentlyContinue) {
-    Remove-NetFirewallRule -DisplayName "OnliAcesso HTTP"
-    Write-Host "Regra de firewall removida."
+foreach ($rule in @("OnliAcesso HTTP", "OnliAcesso VMS WebRTC (UDP 8189)")) {
+    if (Get-NetFirewallRule -DisplayName $rule -ErrorAction SilentlyContinue) {
+        Remove-NetFirewallRule -DisplayName $rule
+        Write-Host "Regra de firewall removida: $rule"
+    }
 }
 
 # Parada graciosa do PostgreSQL, se sobrou um processo fora de servico

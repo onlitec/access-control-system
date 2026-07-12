@@ -515,6 +515,15 @@ PostgreSQL (usuario postgres, porta $PgPort): $DbPassword
         Log "Regra de firewall criada (TCP 80)."
     }
 
+    # WebRTC do VMS: a midia trafega em UDP 8189 DIRETO do MediaMTX para o
+    # navegador do operador (nao passa pelo nginx da porta 80). Sem esta regra o
+    # video ao vivo so funciona na propria maquina — de outro PC da rede a
+    # imagem nunca aparece, mesmo com o painel abrindo normalmente.
+    if ($InstallVms -eq "1" -and -not (Get-NetFirewallRule -DisplayName "OnliAcesso VMS WebRTC (UDP 8189)" -ErrorAction SilentlyContinue)) {
+        New-NetFirewallRule -DisplayName "OnliAcesso VMS WebRTC (UDP 8189)" -Direction Inbound -Protocol UDP -LocalPort 8189 -Action Allow | Out-Null
+        Log "Regra de firewall criada (UDP 8189 - WebRTC do VMS)."
+    }
+
     $failed = @()
     foreach ($svc in $ServiceOrder) {
         Set-Status "Iniciando o servico $svc..."
