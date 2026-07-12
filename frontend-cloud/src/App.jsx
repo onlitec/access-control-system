@@ -58,6 +58,14 @@ function App() {
   // renova o token ao abrir: as URLs de vídeo o carregam embutido
   useEffect(() => {
     if (!getToken()) return;
+    // sessão da era single-tenant (sem código de cliente): não dá para renovar
+    // nem buscar câmeras — descarta e volta para o login
+    if (!getTenant()) {
+      clearSession();
+      setToken('');
+      setUser(null);
+      return;
+    }
     void ensureFreshToken().then((fresh) => { if (fresh) setToken(fresh); });
   }, []);
 

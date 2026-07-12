@@ -8,7 +8,7 @@
  * de login quando o refresh também não vale mais.
  */
 
-import { apiUrl } from './tenant';
+import { apiUrl, getTenant } from './tenant';
 
 const TOKEN_KEY = 'onlitec_cloud_token';
 const REFRESH_KEY = 'onlitec_cloud_refresh';
@@ -56,6 +56,10 @@ export async function login(email, password) {
 let refreshInFlight = null;
 
 async function refreshAccessToken() {
+  // sessão da era single-tenant (token salvo, mas sem código de cliente):
+  // sem o slug a URL sairia /t//api/... e voltaria HTML da SPA — descarta a
+  // sessão antiga e deixa o App cair na tela de login
+  if (!getTenant()) { clearSession(); return null; }
   const refreshToken = getRefreshToken();
   if (!refreshToken) return null;
 
@@ -87,6 +91,10 @@ export function ensureFreshToken() {
  * renova pelo refresh e repete a chamada uma vez.
  */
 export async function authFetch(path, options = {}) {
+  if (!getTenant()) {
+    clearSession();
+    return new Response(JSON.stringify({ error: 'sessão sem código de cliente' }), { status: 401 });
+  }
   const withAuth = (token) => ({
     ...options,
     headers: { ...(options.headers || {}), Authorization: `Bearer ${token}` },
