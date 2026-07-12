@@ -1,5 +1,9 @@
 # Instalação do OnliAcesso (Windows e Linux)
 
+> Manuais detalhados passo-a-passo por sistema operacional:
+> **[INSTALL-WINDOWS.md](INSTALL-WINDOWS.md)** · **[INSTALL-LINUX.md](INSTALL-LINUX.md)**
+> Este arquivo é a visão geral da estratégia de distribuição.
+
 Um único produto, uma única versão (`package.json` raiz), **dois instaladores**
 gerados a cada release pela CI (`.github/workflows/release.yml`) e publicados em
 `https://cloud.onlitec.com.br/downloads/`:
