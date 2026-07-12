@@ -46,6 +46,21 @@ export async function ensureSegmentHookScript(): Promise<void> {
   await fs.writeFile(file, content, { mode: isWin ? undefined : 0o755 });
 }
 
+/**
+ * Transporte RTSP que o MediaMTX deve usar para puxar a câmera, lido do
+ * sdkConfig do dispositivo (`{"rtspTransport":"udp"}`). Padrão "tcp".
+ * Valores aceitos pelo MediaMTX: automatic | udp | multicast | tcp.
+ */
+function rtspTransportOf(sdkConfig: unknown): string {
+  const allowed = ['automatic', 'udp', 'multicast', 'tcp'];
+  try {
+    const cfg = typeof sdkConfig === 'string' ? JSON.parse(sdkConfig) : sdkConfig;
+    const t = cfg && typeof cfg === 'object' ? String((cfg as any).rtspTransport || '').toLowerCase() : '';
+    if (allowed.includes(t)) return t;
+  } catch { /* sdkConfig malformado — cai no padrão */ }
+  return 'tcp';
+}
+
 function segmentCompleteHook(): string {
   // .bat não é executável pelo CreateProcess do Windows — precisa do cmd.exe;
   // o caminho não tem espaços, então não há aspas para o MediaMTX perder.
@@ -72,17 +87,22 @@ export class PathReconciler {
       include: { channels: { where: { enabled: true } } },
     });
 
-    const desired = new Map<string, string>(); // pathName -> source RTSP
+    // pathName -> { source RTSP, transporte }. O transporte é TCP por padrão
+    // (mais confiável e o que os DVRs Hik/Xiongmai/Dahua usam); câmeras que só
+    // falam UDP (ex.: Yoosee/Gwelltimes) declaram {"rtspTransport":"udp"} no
+    // sdkConfig do dispositivo.
+    const desired = new Map<string, { source: string; transport: string }>();
     for (const device of devices) {
+      const transport = rtspTransportOf(device.sdkConfig);
       for (const channel of device.channels) {
         const urls = buildStreamUrls(device, channel);
         if (!urls.main) {
           console.warn(`[VMS] Canal ${channel.name} (${channel.streamPath}) sem URL RTSP — cadastre a URL manual`);
           continue;
         }
-        desired.set(channel.streamPath, urls.main);
+        desired.set(channel.streamPath, { source: urls.main, transport });
         if (urls.sub && urls.sub !== urls.main) {
-          desired.set(subPathName(channel.streamPath), urls.sub);
+          desired.set(subPathName(channel.streamPath), { source: urls.sub, transport });
         }
       }
     }
@@ -102,7 +122,7 @@ export class PathReconciler {
     }
 
     const hook = segmentCompleteHook();
-    for (const [name, source] of desired) {
+    for (const [name, { source, transport }] of desired) {
       const current = existingByName.get(name);
       // sourceOnDemand=false mantém a câmera conectada o tempo todo: quando o
       // operador abre o app, o vídeo já está fluindo (sem esperar o RTSP subir
@@ -110,7 +130,7 @@ export class PathReconciler {
       const onDemand = !VMS_ALWAYS_ON;
       const conf: MtxPathConf = {
         source,
-        rtspTransport: 'tcp',
+        rtspTransport: transport,
         runOnRecordSegmentComplete: hook,
       };
       try {
@@ -119,6 +139,7 @@ export class PathReconciler {
           console.log(`[VMS] Path criado no MediaMTX: ${name}${onDemand ? '' : ' (sempre conectado)'}`);
         } else if (
           current.source !== source
+          || current.rtspTransport !== transport
           || current.runOnRecordSegmentComplete !== hook
           || (VMS_ALWAYS_ON && current.sourceOnDemand)
         ) {
