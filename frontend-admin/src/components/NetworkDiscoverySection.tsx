@@ -5,7 +5,7 @@
  * Exibe os resultados com filtros por tipo/protocolo e modal de cadastro.
  */
 
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, forwardRef, useImperativeHandle } from 'react';
 import {
   Wifi, WifiOff, Search, RefreshCw, Plus, Loader2, CheckCircle,
   AlertTriangle, X, Camera, Cpu, Mic, Network, Fingerprint, Eye, EyeOff,
@@ -58,8 +58,14 @@ const PROTOCOL_LABELS: Record<string, string> = {
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
-export default function NetworkDiscoverySection() {
+export interface NetworkDiscoveryHandle {
+  /** Rola até a seção e inicia a varredura (usado pelo estado vazio da tabela de cadastrados). */
+  startScanAndReveal: () => void;
+}
+
+const NetworkDiscoverySection = forwardRef<NetworkDiscoveryHandle>(function NetworkDiscoverySection(_props, ref) {
   const [scanStatus, setScanStatus] = useState<ScanStatus>('idle');
+  const sectionRef = useRef<HTMLElement | null>(null);
   const [devices, setDevices] = useState<DiscoveredDevice[]>([]);
   const [search, setSearch] = useState('');
   const [filterProtocol, setFilterProtocol] = useState('');
@@ -135,6 +141,13 @@ export default function NetworkDiscoverySection() {
     };
   }, []);
 
+  useImperativeHandle(ref, () => ({
+    startScanAndReveal: () => {
+      sectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      void startScan();
+    },
+  }), [startScan]);
+
   // ── Filtros ───────────────────────────────────────────────────────────────────
   const filtered = devices.filter((d) => {
     if (hideAdded && d.isAdded) return false;
@@ -189,31 +202,38 @@ export default function NetworkDiscoverySection() {
   };
 
   // ── Render ────────────────────────────────────────────────────────────────────
+  const scanButton = (big = false) => (
+    <button
+      onClick={startScan}
+      disabled={scanStatus === 'scanning'}
+      style={{
+        display: 'inline-flex', alignItems: 'center', gap: '8px',
+        background: 'var(--accent)', color: '#fff', border: 'none',
+        borderRadius: '8px', padding: big ? '11px 22px' : '10px 18px',
+        cursor: scanStatus === 'scanning' ? 'not-allowed' : 'pointer',
+        fontWeight: 600, fontSize: '14px', opacity: scanStatus === 'scanning' ? 0.7 : 1,
+      }}
+    >
+      {scanStatus === 'scanning' ? <Loader2 className="animate-spin" size={16} /> : <Search size={16} />}
+      {scanStatus === 'scanning' ? 'Varrendo...' : 'Buscar na rede'}
+    </button>
+  );
+
   return (
-    <section style={{ marginTop: '32px' }}>
+    <section ref={sectionRef} id="network-discovery"
+      style={{ marginTop: '24px', background: 'var(--card-bg)', border: '1px solid var(--border)', borderRadius: '12px', padding: '20px 22px' }}>
       {/* Header */}
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px' }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '16px', flexWrap: 'wrap', marginBottom: '16px' }}>
         <div>
-          <h2 style={{ fontSize: '18px', fontWeight: 700, color: 'var(--text-primary)', margin: 0 }}>
+          <h2 style={{ fontSize: '15px', fontWeight: 700, color: 'var(--text-primary)', margin: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <Wifi size={16} style={{ color: 'var(--accent)' }} />
             Descoberta de Dispositivos na Rede
           </h2>
           <p style={{ color: 'var(--text-muted)', fontSize: '13px', margin: '4px 0 0' }}>
             Varre ONVIF, SADP, mDNS e ARP para encontrar câmeras, NVRs, leitores faciais e interfones na rede local.
           </p>
         </div>
-        <button
-          onClick={startScan}
-          disabled={scanStatus === 'scanning'}
-          style={{
-            display: 'flex', alignItems: 'center', gap: '8px',
-            background: 'var(--accent)', color: '#fff', border: 'none',
-            borderRadius: '8px', padding: '10px 18px', cursor: scanStatus === 'scanning' ? 'not-allowed' : 'pointer',
-            fontWeight: 600, fontSize: '14px', opacity: scanStatus === 'scanning' ? 0.7 : 1,
-          }}
-        >
-          {scanStatus === 'scanning' ? <Loader2 className="animate-spin" size={16} /> : <RefreshCw size={16} />}
-          {scanStatus === 'scanning' ? 'Varrendo...' : 'Buscar na rede'}
-        </button>
+        {scanStatus !== 'idle' && scanButton()}
       </div>
 
       {/* Status bar */}
@@ -328,24 +348,29 @@ export default function NetworkDiscoverySection() {
           })}
         </div>
       ) : scanStatus === 'idle' ? (
-        <div style={{ textAlign: 'center', padding: '40px 20px', background: 'var(--card-bg)', borderRadius: '10px', border: '1px dashed var(--border)' }}>
+        <div style={{ textAlign: 'center', padding: '36px 20px', borderRadius: '10px', border: '1px dashed var(--border)' }}>
           <Wifi size={32} style={{ color: 'var(--text-muted)', marginBottom: '12px' }} />
-          <p style={{ color: 'var(--text-muted)', margin: 0, fontSize: '14px' }}>
-            Clique em <strong>"Buscar na rede"</strong> para descobrir câmeras, NVRs, leitores faciais e interfones.
+          <p style={{ color: 'var(--text-primary)', margin: '0 0 4px', fontSize: '14px', fontWeight: 600 }}>
+            Descubra os equipamentos da rede automaticamente
           </p>
-          <p style={{ color: 'var(--text-muted)', margin: '8px 0 0', fontSize: '12px' }}>
-            Certifique-se de que o servidor está na mesma VLAN/sub-rede dos dispositivos. Portas usadas: UDP 3702, 37020, 5353.
+          <p style={{ color: 'var(--text-muted)', margin: '0 0 18px', fontSize: '13px' }}>
+            Câmeras, NVRs, leitores faciais e interfones na mesma VLAN/sub-rede do servidor.
+          </p>
+          {scanButton(true)}
+          <p style={{ color: 'var(--text-muted)', margin: '14px 0 0', fontSize: '11px' }}>
+            Portas usadas: UDP 3702 (ONVIF) · 37020 (SADP) · 5353 (mDNS) · ARP scan na sub-rede local
           </p>
         </div>
-      ) : devices.length === 0 && (
-        <div style={{ textAlign: 'center', padding: '40px 20px', background: 'var(--card-bg)', borderRadius: '10px', border: '1px dashed var(--border)' }}>
+      ) : devices.length === 0 && scanStatus !== 'scanning' && (
+        <div style={{ textAlign: 'center', padding: '36px 20px', borderRadius: '10px', border: '1px dashed var(--border)' }}>
           <WifiOff size={32} style={{ color: 'var(--text-muted)', marginBottom: '12px' }} />
-          <p style={{ color: 'var(--text-muted)', margin: 0, fontSize: '14px' }}>
+          <p style={{ color: 'var(--text-muted)', margin: '0 0 4px', fontSize: '14px' }}>
             Nenhum dispositivo encontrado até o momento.
           </p>
-          <p style={{ color: 'var(--text-muted)', margin: '8px 0 0', fontSize: '12px' }}>
+          <p style={{ color: 'var(--text-muted)', margin: '0 0 16px', fontSize: '12px' }}>
             Verifique se os dispositivos estão ligados e na mesma rede/VLAN que o servidor OnliAcesso.
           </p>
+          {scanButton()}
         </div>
       )}
 
@@ -448,4 +473,6 @@ export default function NetworkDiscoverySection() {
       )}
     </section>
   );
-}
+});
+
+export default NetworkDiscoverySection;

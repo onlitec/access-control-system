@@ -15,7 +15,7 @@ import {
   AlertTriangle, X, Eye, EyeOff, Search, ChevronRight,
   MoreHorizontal, Key, Globe, Layers, ScanLine,
 } from 'lucide-react';
-import NetworkDiscoverySection from '@/components/NetworkDiscoverySection';
+import NetworkDiscoverySection, { NetworkDiscoveryHandle } from '@/components/NetworkDiscoverySection';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -108,6 +108,9 @@ export default function NetworkDevicesPage() {
   // Delete
   const [deleteLoading, setDeleteLoading] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+
+  // Atalho para a seção de descoberta (estado vazio da tabela)
+  const discoveryRef = useRef<NetworkDiscoveryHandle>(null);
 
   // ── Data loading ────────────────────────────────────────────────────────────
 
@@ -316,8 +319,8 @@ export default function NetworkDevicesPage() {
         <div style={{ flex: 1, overflow: 'auto', padding: '0 28px 28px' }}>
 
           {/* ── Section: Dispositivos Adicionados ─────────────────────────── */}
-          <div style={{ marginBottom: '32px' }}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '16px 0 12px', borderBottom: '1px solid var(--border)' }}>
+          <div style={{ marginTop: '16px', background: 'var(--card-bg)', border: '1px solid var(--border)', borderRadius: '12px', padding: '4px 22px 20px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', flexWrap: 'wrap', padding: '16px 0 12px', borderBottom: '1px solid var(--border)' }}>
               <h2 style={{ margin: 0, fontSize: '15px', fontWeight: 700, color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: '8px' }}>
                 <ScanLine size={16} style={{ color: 'var(--accent)' }} />
                 Dispositivos Adicionados
@@ -339,12 +342,12 @@ export default function NetworkDevicesPage() {
                     </button>
                   </>
                 )}
-                {/* Search */}
+                {/* Filtro dos cadastrados (não confundir com a varredura de rede) */}
                 <div style={{ position: 'relative' }}>
                   <Search size={13} style={{ position: 'absolute', left: '9px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} />
                   <input value={search} onChange={(e) => { setSearch(e.target.value); setPage(1); }}
-                    placeholder="Buscar..."
-                    style={{ paddingLeft: '28px', padding: '7px 10px 7px 28px', background: 'var(--card-bg)', border: '1px solid var(--border)', borderRadius: '6px', color: 'var(--text-primary)', fontSize: '12px', width: '180px' }} />
+                    placeholder="Filtrar por nome, IP, modelo..."
+                    style={{ padding: '7px 10px 7px 28px', background: 'var(--bg-primary, transparent)', border: '1px solid var(--border)', borderRadius: '6px', color: 'var(--text-primary)', fontSize: '12px', width: '210px' }} />
                 </div>
               </div>
             </div>
@@ -355,12 +358,28 @@ export default function NetworkDevicesPage() {
                 <Loader2 className="animate-spin" size={18} /> Carregando dispositivos...
               </div>
             ) : devices.length === 0 ? (
-              <div style={{ padding: '40px', textAlign: 'center', color: 'var(--text-muted)' }}>
+              <div style={{ padding: '40px 20px', textAlign: 'center', color: 'var(--text-muted)' }}>
                 <Network size={32} style={{ margin: '0 auto 12px', display: 'block', opacity: 0.4 }} />
-                <p style={{ margin: 0 }}>Nenhum dispositivo cadastrado.</p>
-                <p style={{ margin: '6px 0 0', fontSize: '12px' }}>
-                  Use "Adicionar dispositivo" ou a seção de descoberta automática abaixo.
+                <p style={{ margin: '0 0 4px', fontSize: '14px', fontWeight: 600, color: 'var(--text-primary)' }}>
+                  {search || activeCategoryId || activeAreaId ? 'Nenhum dispositivo corresponde aos filtros.' : 'Nenhum dispositivo cadastrado ainda.'}
                 </p>
+                <p style={{ margin: '0 0 18px', fontSize: '13px' }}>
+                  {search || activeCategoryId || activeAreaId
+                    ? 'Limpe o filtro ou a busca para ver todos os dispositivos.'
+                    : 'Cadastre manualmente ou deixe o sistema encontrar os equipamentos na rede.'}
+                </p>
+                {!(search || activeCategoryId || activeAreaId) && (
+                  <div style={{ display: 'flex', gap: '10px', justifyContent: 'center', flexWrap: 'wrap' }}>
+                    <button onClick={() => setAddModal(true)}
+                      style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', padding: '10px 18px', background: 'transparent', border: '1px solid var(--border)', borderRadius: '8px', color: 'var(--text-primary)', cursor: 'pointer', fontSize: '13px', fontWeight: 600 }}>
+                      <Plus size={14} /> Adicionar manualmente
+                    </button>
+                    <button onClick={() => discoveryRef.current?.startScanAndReveal()}
+                      style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', padding: '10px 18px', background: 'var(--accent)', border: 'none', borderRadius: '8px', color: '#fff', cursor: 'pointer', fontSize: '13px', fontWeight: 600 }}>
+                      <Search size={14} /> Buscar na rede
+                    </button>
+                  </div>
+                )}
               </div>
             ) : (
               <table style={{ width: '100%', borderCollapse: 'collapse', marginTop: '2px' }}>
@@ -447,7 +466,7 @@ export default function NetworkDevicesPage() {
           </div>
 
           {/* ── Section: Dispositivos Online (Discovery) ─────────────────── */}
-          <NetworkDiscoverySection />
+          <NetworkDiscoverySection ref={discoveryRef} />
         </div>
       </div>
 
