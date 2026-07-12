@@ -76,6 +76,13 @@ const EVENT_TYPE_OPTIONS: Array<{ value: string; label: string; vca: boolean }> 
   { value: 'scenechangedetection', label: 'Câmera deslocada/coberta', vca: true },
 ];
 
+/**
+ * Protocolos em que a URL RTSP é derivada do IP/credenciais/canal — o operador
+ * não precisa colar URL nenhuma. Para os demais (ONVIF/RTSP genérico), a URL
+ * manual é obrigatória.
+ */
+const DERIVED_URL_PROTOCOLS = ['hikvision_isapi', 'xiongmai', 'dahua'];
+
 const emptyDevice = {
   name: '', kind: 'ip_camera', protocol: 'hikvision_isapi', ip: '',
   httpPort: '80', rtspPort: '554', username: 'admin', password: '', location: '',
@@ -315,6 +322,8 @@ export default function VmsDevicesPage() {
             <Field label="Protocolo">
               <select value={newDevice.protocol} onChange={(e) => setNewDevice((d) => ({ ...d, protocol: e.target.value }))} style={inputStyle}>
                 <option value="hikvision_isapi">Hikvision (ISAPI)</option>
+                <option value="xiongmai">Xiongmai / XMeye (Giga, Multilaser…)</option>
+                <option value="dahua">Dahua / Intelbras</option>
                 <option value="onvif">ONVIF</option>
                 <option value="rtsp">RTSP genérico</option>
               </select>
@@ -328,7 +337,7 @@ export default function VmsDevicesPage() {
             <Field label="Senha"><input type="password" value={newDevice.password} onChange={(e) => setNewDevice((d) => ({ ...d, password: e.target.value }))} placeholder="••••••••" style={inputStyle} /></Field>
             <Field label="Localização"><input value={newDevice.location} onChange={(e) => setNewDevice((d) => ({ ...d, location: e.target.value }))} placeholder="Ex: Guarita" style={inputStyle} /></Field>
           </div>
-          {newDevice.protocol !== 'hikvision_isapi' && newDevice.kind === 'ip_camera' && (
+          {!DERIVED_URL_PROTOCOLS.includes(newDevice.protocol) && newDevice.kind === 'ip_camera' && (
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '15px' }}>
               <Field label="URL RTSP (stream principal)"><input value={newDevice.rtspUrlMain} onChange={(e) => setNewDevice((d) => ({ ...d, rtspUrlMain: e.target.value }))} placeholder="rtsp://user:senha@192.168.1.100:554/stream1" style={inputStyle} /></Field>
               <Field label="URL RTSP (sub-stream, opcional)"><input value={newDevice.rtspUrlSub} onChange={(e) => setNewDevice((d) => ({ ...d, rtspUrlSub: e.target.value }))} placeholder="rtsp://user:senha@192.168.1.100:554/stream2" style={inputStyle} /></Field>
@@ -526,7 +535,7 @@ export default function VmsDevicesPage() {
                   <div style={{ display: 'flex', gap: '10px', alignItems: 'flex-end', flexWrap: 'wrap' }}>
                     <Field label="Nº do canal"><input value={newChannel.channelNo} onChange={(e) => setNewChannel((c) => ({ ...c, channelNo: e.target.value }))} placeholder="1" style={{ ...inputStyle, width: '80px' }} /></Field>
                     <Field label="Nome do canal"><input value={newChannel.name} onChange={(e) => setNewChannel((c) => ({ ...c, name: e.target.value }))} placeholder="Ex: Garagem" style={{ ...inputStyle, width: '180px' }} /></Field>
-                    {device.protocol !== 'hikvision_isapi' && (
+                    {!DERIVED_URL_PROTOCOLS.includes(device.protocol) && (
                       <>
                         <Field label="URL RTSP main"><input value={newChannel.rtspUrlMain} onChange={(e) => setNewChannel((c) => ({ ...c, rtspUrlMain: e.target.value }))} placeholder="rtsp://..." style={{ ...inputStyle, width: '220px' }} /></Field>
                         <Field label="URL RTSP sub (opcional)"><input value={newChannel.rtspUrlSub} onChange={(e) => setNewChannel((c) => ({ ...c, rtspUrlSub: e.target.value }))} placeholder="rtsp://..." style={{ ...inputStyle, width: '220px' }} /></Field>

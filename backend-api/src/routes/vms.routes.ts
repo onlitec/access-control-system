@@ -98,6 +98,9 @@ function tcpProbe(ip: string, port: number, timeoutMs = 4000): Promise<boolean> 
   });
 }
 
+/** Protocolos aceitos no cadastro — ver buildStreamUrls() em vms/rtsp.ts. */
+const VALID_PROTOCOLS = ['hikvision_isapi', 'xiongmai', 'dahua', 'onvif', 'rtsp'];
+
 async function testDevice(protocol: string, ip: string, httpPort: number, rtspPort: number, username: string, password: string): Promise<boolean> {
   if (protocol === 'hikvision_isapi') {
     try {
@@ -107,7 +110,8 @@ async function testDevice(protocol: string, ip: string, httpPort: number, rtspPo
       return false;
     }
   }
-  // onvif/rtsp genérico: alcance TCP na porta RTSP já indica que a câmera está lá
+  // xiongmai/dahua/onvif/rtsp: alcance TCP na porta RTSP já indica que o
+  // equipamento está lá (a URL real é validada pelo MediaMTX ao publicar)
   return tcpProbe(ip, rtspPort);
 }
 
@@ -244,8 +248,8 @@ router.post('/devices', adminMiddleware, async (req: Request, res: Response): Pr
       res.status(400).json({ error: 'kind deve ser "nvr", "dvr" ou "ip_camera"' });
       return;
     }
-    if (protocol && !['hikvision_isapi', 'onvif', 'rtsp'].includes(protocol)) {
-      res.status(400).json({ error: 'protocol deve ser "hikvision_isapi", "onvif" ou "rtsp"' });
+    if (protocol && !VALID_PROTOCOLS.includes(protocol)) {
+      res.status(400).json({ error: `protocol deve ser um de: ${VALID_PROTOCOLS.join(', ')}` });
       return;
     }
     const device = await prisma.videoDevice.create({
