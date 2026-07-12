@@ -5,17 +5,25 @@ import { VMS_PORT, VMS_INTERNAL_TOKEN, VMS_ALWAYS_ON } from './config';
 
 /**
  * Hook executado pelo MediaMTX ao fechar cada segmento de gravação.
- * No Windows o MediaMTX roda comandos via cmd.exe, que expande %VAR%;
- * em POSIX é /bin/sh, que expande $VAR.
+ *
+ * O MediaMTX NÃO roda o comando através de um shell: ele o executa direto,
+ * passando MTX_PATH/MTX_SEGMENTPATH como variáveis de ambiente. Sem shell não
+ * há ninguém para expandir `%VAR%` — o hook chegava ao vms-service com a string
+ * literal "%MTX_PATH%" e o segmento era descartado ("path desconhecido"), então
+ * o upload só acontecia pela varredura de reserva (a cada 5 min). Invocando via
+ * `cmd.exe /C` no Windows (e `sh -c` no POSIX) a expansão volta a acontecer.
  */
 function segmentCompleteHook(): string {
   const isWin = process.platform === 'win32';
   const pathVar = isWin ? '%MTX_PATH%' : '$MTX_PATH';
   const fileVar = isWin ? '%MTX_SEGMENTPATH%' : '$MTX_SEGMENTPATH';
   const curl = isWin ? 'curl.exe' : 'curl';
-  return `${curl} -s -m 10 -X POST http://127.0.0.1:${VMS_PORT}/internal/segment-complete `
+
+  const post = `${curl} -s -m 10 -X POST http://127.0.0.1:${VMS_PORT}/internal/segment-complete `
     + `-H "x-vms-token: ${VMS_INTERNAL_TOKEN}" `
     + `--data-urlencode "path=${pathVar}" --data-urlencode "file=${fileVar}"`;
+
+  return isWin ? `cmd.exe /C ${post}` : `sh -c '${post}'`;
 }
 
 /**
