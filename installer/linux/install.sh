@@ -42,17 +42,41 @@ fi
 # ── 1. Dependências do sistema ────────────────────────────────────────────────
 log "Instalando dependências do sistema (apt)..."
 export DEBIAN_FRONTEND=noninteractive
-apt-get update -qq
+# Um PPA de terceiro quebrado (ou que mudou de Label) faz o `apt-get update`
+# retornar erro e, com `set -e`, derrubaria a instalação inteira. O que importa
+# são os repositórios oficiais; avisos de terceiros não podem ser fatais.
+apt-get update -qq --allow-releaseinfo-change 2>/dev/null \
+    || apt-get update -qq 2>/dev/null \
+    || warn "apt-get update retornou avisos (repositório de terceiros?) — seguindo assim mesmo."
+
 # net-tools: o discovery de rede lê a tabela ARP com `arp -a`
 # libcairo2/libpango/libjpeg/libgif: runtime do `canvas` (comparação facial)
 apt-get install -y -qq \
-    curl ca-certificates gnupg unzip \
-    postgresql postgresql-contrib \
-    nginx ffmpeg net-tools iproute2 \
-    libcairo2 libpango-1.0-0 libpangocairo-1.0-0 libjpeg62-turbo libgif7 librsvg2-2 \
-    >/dev/null 2>&1 || apt-get install -y \
-    curl ca-certificates gnupg unzip postgresql postgresql-contrib nginx ffmpeg \
-    net-tools iproute2 libcairo2 libpango-1.0-0 libpangocairo-1.0-0 libjpeg-turbo8 libgif7 librsvg2-2
+    curl ca-certificates gnupg unzip rsync openssl \
+    ffmpeg net-tools iproute2 \
+    libcairo2 libpango-1.0-0 libpangocairo-1.0-0 libgif7 librsvg2-2
+
+# libjpeg: o nome do pacote muda entre Ubuntu e Debian — tenta os dois em vez de
+# derrubar a instalação inteira por causa de um nome.
+apt-get install -y -qq libjpeg-turbo8 2>/dev/null \
+    || apt-get install -y -qq libjpeg62-turbo 2>/dev/null \
+    || warn "libjpeg não instalada — a comparação facial (canvas) pode falhar."
+
+# PostgreSQL e nginx: instalados apenas se AINDA NÃO existirem. Numa máquina que
+# já tem um cluster (ou um repositório pgdg com versão mais nova), instalar o
+# meta-pacote `postgresql` dispara um pg_upgradecluster que pode falhar e
+# abortar a instalação inteira — visto num servidor com PostGIS instalado.
+if command -v psql >/dev/null 2>&1; then
+    log "PostgreSQL já presente ($(psql --version | awk '{print $3}')) — reaproveitando."
+else
+    apt-get install -y -qq postgresql postgresql-contrib
+fi
+
+if command -v nginx >/dev/null 2>&1; then
+    log "nginx já presente — reaproveitando."
+else
+    apt-get install -y -qq nginx
+fi
 
 # ── 2. Node.js ────────────────────────────────────────────────────────────────
 if ! command -v node >/dev/null || [ "$(node -v | sed 's/v\([0-9]*\).*/\1/')" -lt "$NODE_MAJOR" ]; then
@@ -84,6 +108,25 @@ popd >/dev/null
 # ── 5. PostgreSQL ─────────────────────────────────────────────────────────────
 systemctl enable --now postgresql >/dev/null 2>&1 || true
 
+# `postgresql.service` no Debian/Ubuntu é um META-serviço: ele reporta "active"
+# mesmo quando o cluster está DOWN (visto numa máquina com dois clusters
+# instalados). O que vale é o servidor aceitar conexões.
+if ! pg_isready -q 2>/dev/null; then
+    CLUSTER="$(pg_lsclusters -h 2>/dev/null | awk '$4 != "online" { print $1 "-" $2; exit }')"
+    if [ -n "$CLUSTER" ]; then
+        log "Subindo o cluster PostgreSQL $CLUSTER ..."
+        systemctl start "postgresql@$CLUSTER" 2>/dev/null || pg_ctlcluster ${CLUSTER%%-*} ${CLUSTER#*-} start 2>/dev/null || true
+    fi
+    for _ in $(seq 1 10); do pg_isready -q 2>/dev/null && break; sleep 2; done
+fi
+pg_isready -q 2>/dev/null || die "PostgreSQL não está aceitando conexões. Verifique com: pg_lsclusters e journalctl -u postgresql@*"
+
+# O cluster pode não estar na 5432 (outra instância na máquina, como o próprio
+# instalador Windows faz ao desviar para 5433) — o DATABASE_URL segue o cluster.
+PG_PORT="$(pg_lsclusters -h 2>/dev/null | awk '$4 == "online" { print $3; exit }')"
+[ -n "$PG_PORT" ] || PG_PORT=5432
+log "PostgreSQL online na porta $PG_PORT."
+
 if sudo -u postgres psql -tAc "SELECT 1 FROM pg_roles WHERE rolname='$DB_USER'" | grep -q 1; then
     log "Banco de dados já existe — preservando dados."
     DB_PASSWORD="$(grep -oP '(?<=postgresql://'"$DB_USER"':)[^@]+' "$APP_DIR/config/.env" 2>/dev/null || true)"
@@ -100,6 +143,12 @@ ENV_FILE="$APP_DIR/config/.env"
 LOCAL_IP="$(ip -4 route get 1.1.1.1 2>/dev/null | awk '{print $7; exit}')"
 [ -n "$LOCAL_IP" ] || LOCAL_IP="127.0.0.1"
 
+# O backup do painel chama $PG_BIN/pg_dump. Em Debian/Ubuntu os binários em
+# /usr/bin são wrappers que despacham para a versão do cluster ativo — mais
+# seguro que apontar para /usr/lib/postgresql/<versão>/bin, que pode ter mais de
+# uma versão instalada (visto numa máquina com os clusters 16 e 18).
+PG_BIN_DIR="$(dirname "$(command -v pg_dump || echo /usr/bin/pg_dump)")"
+
 if [ ! -f "$ENV_FILE" ]; then
     log "Gerando configuração inicial (IP detectado: $LOCAL_IP)..."
     JWT_SECRET="$(openssl rand -hex 32)"
@@ -110,7 +159,7 @@ if [ ! -f "$ENV_FILE" ]; then
 NODE_ENV=production
 PORT=3001
 APP_URL=http://$LOCAL_IP
-DATABASE_URL=postgresql://$DB_USER:$DB_PASSWORD@127.0.0.1:5432/$DB_NAME?schema=public
+DATABASE_URL=postgresql://$DB_USER:$DB_PASSWORD@127.0.0.1:$PG_PORT/$DB_NAME?schema=public
 JWT_SECRET=$JWT_SECRET
 PROVIDER_TYPE=local
 
@@ -120,7 +169,7 @@ INITIAL_ADMIN_PASSWORD=$ADMIN_PASSWORD
 
 FFMPEG_PATH=/usr/bin/ffmpeg
 BACKUP_DIR=$APP_DIR/backups
-PG_BIN=/usr/lib/postgresql/$(ls /usr/lib/postgresql | sort -V | tail -1)/bin
+PG_BIN=$PG_BIN_DIR
 SERVICE_LOGS_DIR=$APP_DIR/logs
 APP_VERSION=2.2.0
 

@@ -2,29 +2,66 @@
 
 Instala o sistema completo num servidor **Debian/Ubuntu**, com o mesmo comportamento da versão Windows: mesmas portas, mesmas rotas, mesmos dados. Os serviços rodam no **systemd** (não em Docker) e o PostgreSQL e o nginx são os do próprio sistema.
 
-## Como gerar o pacote
+O servidor **precisa de internet** durante a instalação (pacotes apt, Node, dependências npm e o MediaMTX).
 
-Na máquina de desenvolvimento (Windows/Git Bash ou Linux), com os apps já compilados:
+---
+
+## Instalação no Ubuntu — caminho recomendado
+
+Um único script (`bootstrap.sh`) faz **tudo**: instala as dependências, o Node, compila os quatro aplicativos e deixa o sistema no ar.
 
 ```bash
-cd installer/linux
-bash build-package-linux.sh
-# → installer/dist/onliacesso-linux-2.2.0.tar.gz
+# 1. Dependências mínimas para baixar o código
+sudo apt update && sudo apt install -y git
+
+# 2. Baixar o sistema (repositório PRIVADO — ver "Acesso ao repositório" abaixo)
+git clone https://github.com/onlitec/access-control-system.git
+cd access-control-system/installer/linux
+
+# 3. Instalar tudo
+sudo ./bootstrap.sh                # ou: sudo ./bootstrap.sh --no-vms
 ```
 
-## Como instalar no servidor
+Leva de 5 a 15 minutos (a compilação é a parte demorada). Ao final o script mostra as URLs de acesso e onde estão as credenciais iniciais.
+
+### Acesso ao repositório (é privado)
+
+O `git clone` vai pedir credencial. Use um **token de acesso pessoal** do GitHub (Settings → Developer settings → Personal access tokens, com escopo `repo`):
 
 ```bash
+git clone https://SEU_USUARIO:SEU_TOKEN@github.com/onlitec/access-control-system.git
+```
+
+Ou configure uma chave SSH e use `git@github.com:onlitec/access-control-system.git`.
+
+### Atualizar depois
+
+```bash
+cd access-control-system && git pull
+sudo ./installer/linux/bootstrap.sh
+```
+Recompila e atualiza **preservando** banco, `.env` e gravações.
+
+---
+
+## Caminho alternativo: pacote pronto (sem compilar no servidor)
+
+Gere o pacote na máquina de desenvolvimento e envie só ele — útil quando o servidor não pode clonar o repositório.
+
+```bash
+# na máquina de desenvolvimento (Windows/Git Bash ou Linux), com os apps compilados:
+cd installer/linux && bash build-package-linux.sh
+# → installer/dist/onliacesso-linux-2.2.0.tar.gz  (8 MB)
+
+# no servidor:
 scp onliacesso-linux-2.2.0.tar.gz usuario@servidor:/tmp/
 ssh usuario@servidor
 tar -xzf /tmp/onliacesso-linux-2.2.0.tar.gz -C /tmp
 cd /tmp/onliacesso-linux-2.2.0
-sudo ./install.sh              # ou: sudo ./install.sh --no-vms
+sudo ./install.sh
 ```
 
-O servidor **precisa de internet** durante a instalação: o pacote não traz `node_modules` (as dependências nativas — `canvas`, engines do Prisma — têm de ser baixadas/compiladas para o Linux), nem o MediaMTX, que é baixado na hora.
-
-Ao final o script mostra as URLs e onde estão as credenciais iniciais.
+O pacote não traz `node_modules` — as dependências nativas (`canvas`, engines do Prisma) são baixadas/compiladas pelo `install.sh` no destino.
 
 ## O que o install.sh faz
 
