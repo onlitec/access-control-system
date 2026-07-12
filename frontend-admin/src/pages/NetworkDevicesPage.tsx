@@ -120,9 +120,9 @@ export default function NetworkDevicesPage() {
       if (activeAreaId)     params.set('areaId', activeAreaId);
 
       const [devRes, catRes, areaRes] = await Promise.all([
-        apiFetch(`/api/devices?${params}`) as Promise<any>,
-        apiFetch('/api/devices/categories') as Promise<any>,
-        apiFetch('/api/access-areas') as Promise<any>,
+        apiFetch(`/devices?${params}`) as Promise<any>,
+        apiFetch('/devices/categories') as Promise<any>,
+        apiFetch('/access-areas') as Promise<any>,
       ]);
 
       setDevices(devRes?.data ?? []);
@@ -143,7 +143,7 @@ export default function NetworkDevicesPage() {
   const syncDevice = async (id: string) => {
     setSyncingId(id);
     try {
-      const res: any = await apiFetch(`/api/devices/${id}/sync`, { method: 'POST' });
+      const res: any = await apiFetch(`/devices/${id}/sync`, { method: 'POST' });
       setDevices((prev) => prev.map((d) => d.id === id ? res.data : d));
     } catch (e: any) {
       alert(e.message);
@@ -155,7 +155,7 @@ export default function NetworkDevicesPage() {
   const syncAll = async () => {
     setSyncingAll(true);
     try {
-      await apiFetch('/api/devices/sync-all', { method: 'POST' });
+      await apiFetch('/devices/sync-all', { method: 'POST' });
       setTimeout(() => { loadData(); setSyncingAll(false); }, 3000);
     } catch (e: any) {
       alert(e.message);
@@ -176,7 +176,7 @@ export default function NetworkDevicesPage() {
     try {
       const body: any = { friendlyName: editForm.friendlyName, username: editForm.username, categoryId: editForm.categoryId || null, areaId: editForm.areaId || null };
       if (editForm.password) body.password = editForm.password;
-      const res: any = await apiFetch(`/api/devices/${editDevice.id}`, { method: 'PUT', body: JSON.stringify(body) });
+      const res: any = await apiFetch(`/devices/${editDevice.id}`, { method: 'PUT', body: JSON.stringify(body) });
       setDevices((prev) => prev.map((d) => d.id === editDevice.id ? res.data : d));
       setEditDevice(null);
     } catch (e: any) {
@@ -189,7 +189,7 @@ export default function NetworkDevicesPage() {
   const submitAdd = async () => {
     setAddLoading(true); setAddError(null);
     try {
-      await apiFetch('/api/devices', { method: 'POST', body: JSON.stringify({ ...addForm, httpPort: Number(addForm.httpPort), sdkPort: Number(addForm.sdkPort) }) });
+      await apiFetch('/devices', { method: 'POST', body: JSON.stringify({ ...addForm, httpPort: Number(addForm.httpPort), sdkPort: Number(addForm.sdkPort) }) });
       setAddModal(false);
       setAddForm({ friendlyName: '', ipAddress: '', username: 'admin', password: '', categoryId: '', areaId: '', deviceType: 'unknown', httpPort: '80', sdkPort: '8000' });
       loadData();
@@ -204,7 +204,7 @@ export default function NetworkDevicesPage() {
     if (selected.size === 0) return;
     setDeleteLoading(true); setDeleteError(null);
     try {
-      await apiFetch('/api/devices', { method: 'DELETE', body: JSON.stringify({ ids: [...selected] }) });
+      await apiFetch('/devices', { method: 'DELETE', body: JSON.stringify({ ids: [...selected] }) });
       setSelected(new Set());
       setDeleteConfirm(false);
       loadData();
@@ -219,7 +219,7 @@ export default function NetworkDevicesPage() {
     if (!bulkValue) return;
     setBulkLoading(true); setBulkMsg(null);
     try {
-      await apiFetch('/api/devices/bulk/password', { method: 'PUT', body: JSON.stringify({ ids: [...selected], password: bulkValue }) });
+      await apiFetch('/devices/bulk/password', { method: 'PUT', body: JSON.stringify({ ids: [...selected], password: bulkValue }) });
       setBulkMsg(`Senha atualizada em ${selected.size} dispositivos.`);
       setTimeout(() => { setBulkAction(null); setBulkValue(''); setBulkMsg(null); }, 2000);
     } catch (e: any) {
@@ -233,7 +233,7 @@ export default function NetworkDevicesPage() {
     if (!bulkValue) return;
     setBulkLoading(true); setBulkMsg(null);
     try {
-      await apiFetch('/api/devices/bulk/timezone', { method: 'PUT', body: JSON.stringify({ ids: [...selected], timezone: bulkValue }) });
+      await apiFetch('/devices/bulk/timezone', { method: 'PUT', body: JSON.stringify({ ids: [...selected], timezone: bulkValue }) });
       setBulkMsg(`Timezone "${bulkValue}" aplicado em ${selected.size} dispositivos.`);
       setTimeout(() => { setBulkAction(null); setBulkValue(''); setBulkMsg(null); }, 2000);
     } catch (e: any) {

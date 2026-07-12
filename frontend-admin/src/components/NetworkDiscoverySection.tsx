@@ -79,8 +79,8 @@ export default function NetworkDiscoverySection() {
   const [regSuccess, setRegSuccess] = useState(false);
 
   useEffect(() => {
-    apiFetch('/api/access-areas').then((r: any) => setAreas(r?.data ?? [])).catch(() => {});
-    apiFetch('/api/device-categories').then((r: any) => setCategories(r?.data ?? [])).catch(() => {});
+    apiFetch('/access-areas').then((r: any) => setAreas(r?.data ?? [])).catch(() => {});
+    apiFetch('/devices/categories').then((r: any) => setCategories(r?.data ?? [])).catch(() => {});
     return () => { sseRef.current?.close(); };
   }, []);
 
@@ -92,7 +92,7 @@ export default function NetworkDiscoverySection() {
 
     // 1. Solicitar início do scan
     try {
-      await apiFetch('/api/discovery/scan', { method: 'POST', body: JSON.stringify({ arpEnabled: true }) });
+      await apiFetch('/discovery/scan', { method: 'POST', body: JSON.stringify({ arpEnabled: true }) });
     } catch (e: any) {
       setScanError(e.message ?? 'Erro ao iniciar varredura.');
       setScanStatus('error');
@@ -167,7 +167,7 @@ export default function NetworkDiscoverySection() {
     setRegLoading(true);
     setRegError(null);
     try {
-      await apiFetch('/api/discovery/register', {
+      await apiFetch('/discovery/register', {
         method: 'POST',
         body: JSON.stringify({
           tempId:       registerModal.tempId,

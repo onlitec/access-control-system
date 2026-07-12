@@ -19,8 +19,41 @@ import {
   getDeviceByTempId,
 } from '../modules/discovery/discovery.orchestrator';
 import { createCipheriv, createDecipheriv, randomBytes, scryptSync } from 'crypto';
+import jwt from 'jsonwebtoken';
+import { config } from '../config/unifiedConfig';
 
 const router = Router();
+
+// ── GET /api/discovery/stream ─────────────────────────────────────────────────
+// Server-Sent Events: registrado ANTES do authMiddleware porque EventSource não
+// envia header Authorization — o JWT vem por ?token= (mesmo padrão dos streams
+// MJPEG do videoporteiro/terminal facial).
+router.get('/stream', (req: Request, res: Response) => {
+  const token = (req.query.token as string) || '';
+  if (!token) { res.status(401).end(); return; }
+  try { jwt.verify(token, config.JWT.SECRET); } catch { res.status(401).end(); return; }
+
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.setHeader('X-Accel-Buffering', 'no'); // nginx: não bufferizar SSE
+  res.flushHeaders();
+
+  res.write('event: connected\ndata: {}\n\n');
+
+  const clientId = registerScanClient(res);
+
+  // Ping a cada 25s para manter a conexão viva
+  const pingInterval = setInterval(() => {
+    try { res.write('event: ping\ndata: {}\n\n'); } catch { clearInterval(pingInterval); }
+  }, 25_000);
+
+  req.on('close', () => {
+    clearInterval(pingInterval);
+    unregisterScanClient(clientId);
+  });
+});
+
 router.use(authMiddleware);
 
 // ── GET /api/discovery/categories ────────────────────────────────────────────
@@ -69,33 +102,6 @@ router.post('/scan', adminMiddleware, async (req: Request, res: Response) => {
   } catch (e: any) {
     res.status(500).json({ error: e.message });
   }
-});
-
-// ── GET /api/discovery/stream ─────────────────────────────────────────────────
-/**
- * Server-Sent Events: o cliente recebe os dispositivos encontrados em tempo real.
- * Eventos: device-found | fast-scan-complete | scan-complete | scan-error | ping
- */
-router.get('/stream', (req: Request, res: Response) => {
-  res.setHeader('Content-Type', 'text/event-stream');
-  res.setHeader('Cache-Control', 'no-cache');
-  res.setHeader('Connection', 'keep-alive');
-  res.setHeader('X-Accel-Buffering', 'no'); // nginx: não bufferizar SSE
-  res.flushHeaders();
-
-  res.write('event: connected\ndata: {}\n\n');
-
-  const clientId = registerScanClient(res);
-
-  // Ping a cada 25s para manter a conexão viva
-  const pingInterval = setInterval(() => {
-    try { res.write('event: ping\ndata: {}\n\n'); } catch { clearInterval(pingInterval); }
-  }, 25_000);
-
-  req.on('close', () => {
-    clearInterval(pingInterval);
-    unregisterScanClient(clientId);
-  });
 });
 
 // ── GET /api/discovery/devices ────────────────────────────────────────────────
