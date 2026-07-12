@@ -1,0 +1,26 @@
+[Unit]
+Description=OnliAcesso - MediaMTX (streaming das cameras)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=onliacesso
+Group=onliacesso
+WorkingDirectory=/opt/onliacesso/binaries
+ExecStart=/opt/onliacesso/binaries/mediamtx /opt/onliacesso/config/mediamtx.yml
+Restart=always
+RestartSec=10
+StandardOutput=append:/opt/onliacesso/logs/mediamtx.log
+StandardError=append:/opt/onliacesso/logs/mediamtx.err.log
+
+# O hook de fim de gravacao e um shell script que chama o curl (o MediaMTX nao
+# usa shell proprio) — por isso PrivateTmp/ProtectSystem ficam permissivos o
+# suficiente para executar /opt/onliacesso/data/vms-segment-hook.sh
+NoNewPrivileges=yes
+ProtectSystem=full
+ProtectHome=yes
+ReadWritePaths=/opt/onliacesso/data /opt/onliacesso/logs
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,27 @@
+[Unit]
+Description=OnliAcesso - Portal do morador/visitante (Next.js), porta 3002
+After=network-online.target onliacesso-api.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=onliacesso
+Group=onliacesso
+WorkingDirectory=/opt/onliacesso/apps/frontend-visitor
+Environment=NODE_ENV=production
+Environment=PORT=3002
+Environment=HOSTNAME=127.0.0.1
+ExecStart=/usr/bin/node frontend-visitor/server.js
+Restart=always
+RestartSec=10
+StandardOutput=append:/opt/onliacesso/logs/visitor.log
+StandardError=append:/opt/onliacesso/logs/visitor.err.log
+
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=full
+ProtectHome=yes
+ReadWritePaths=/opt/onliacesso/logs
+
+[Install]
+WantedBy=multi-user.target

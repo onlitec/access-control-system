@@ -1,0 +1,29 @@
+[Unit]
+Description=OnliAcesso - API (Express + Prisma), porta 3001
+Documentation=file:/opt/onliacesso/README.md
+After=network-online.target postgresql.service
+Wants=network-online.target
+Requires=postgresql.service
+
+[Service]
+Type=simple
+User=onliacesso
+Group=onliacesso
+WorkingDirectory=/opt/onliacesso/apps/backend-api
+EnvironmentFile=/opt/onliacesso/config/.env
+Environment=NODE_ENV=production
+ExecStart=/usr/bin/node dist/server.js
+Restart=always
+RestartSec=10
+StandardOutput=append:/opt/onliacesso/logs/api.log
+StandardError=append:/opt/onliacesso/logs/api.err.log
+
+# Endurecimento: o serviço só precisa escrever em data/ e logs/
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=full
+ProtectHome=yes
+ReadWritePaths=/opt/onliacesso/data /opt/onliacesso/logs /opt/onliacesso/backups
+
+[Install]
+WantedBy=multi-user.target

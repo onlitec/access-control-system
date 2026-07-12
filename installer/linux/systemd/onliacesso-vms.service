@@ -1,0 +1,29 @@
+[Unit]
+Description=OnliAcesso - VMS (cameras, gravacao, upload para nuvem), porta 3011
+After=network-online.target onliacesso-mediamtx.service onliacesso-api.service
+Wants=network-online.target
+# Sem o MediaMTX o vms-service fica em espera ativa; sem a API ele nao valida nada
+Requires=onliacesso-mediamtx.service
+
+[Service]
+Type=simple
+User=onliacesso
+Group=onliacesso
+WorkingDirectory=/opt/onliacesso/apps/backend-api
+EnvironmentFile=/opt/onliacesso/config/.env
+Environment=NODE_ENV=production
+ExecStart=/usr/bin/node dist/vms/vms-main.js
+Restart=always
+RestartSec=10
+StandardOutput=append:/opt/onliacesso/logs/vms.log
+StandardError=append:/opt/onliacesso/logs/vms.err.log
+
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=full
+ProtectHome=yes
+# grava os segmentos, o script de hook e a config do rclone
+ReadWritePaths=/opt/onliacesso/data /opt/onliacesso/logs /opt/onliacesso/config
+
+[Install]
+WantedBy=multi-user.target

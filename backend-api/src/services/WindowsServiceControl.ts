@@ -7,29 +7,56 @@ import path from 'path';
 const execFileAsync = promisify(execFile);
 
 /**
- * Controle dos serviços Windows do OnliAcesso (via PowerShell).
+ * Controle dos serviços do OnliAcesso pelo painel Admin.
  *
+ * Windows (via PowerShell):
  * - Nunca usa `sc.exe` para consulta: a saída é localizada (pt-BR) e
  *   impossível de parsear com segurança. PowerShell devolve JSON.
  * - Scripts são passados por -EncodedCommand (base64 UTF-16LE) para
  *   eliminar problemas de quoting.
+ *
+ * Linux (via systemd):
+ * - `systemctl show` devolve pares chave=valor, estáveis e não localizados.
+ * - O restart precisa de privilégio: o install.sh instala uma regra sudoers
+ *   restrita a `systemctl restart onliacesso-*` (nada além disso). Sem essa
+ *   regra a listagem continua funcionando e só o botão de reiniciar falha.
  */
 
-export const ALLOWED_SERVICES = [
+const IS_WINDOWS = process.platform === 'win32';
+
+const WINDOWS_SERVICES = [
     'onliacesso-postgres',
     'onliacesso-api',
     'onliacesso-visitor',
     'onliacesso-access',
     'onliacesso-admin',
     'onliacesso-proxy',
-] as const;
+];
 
-export type ServiceName = (typeof ALLOWED_SERVICES)[number];
+// No Linux o PostgreSQL e o nginx são serviços do próprio sistema, e os painéis
+// (/painel/, /admin/) são servidos pelo nginx — não existem onliacesso-access
+// nem onliacesso-admin. Ver installer/linux/README.md.
+const LINUX_SERVICES = [
+    'postgresql',
+    'onliacesso-api',
+    'onliacesso-visitor',
+    'onliacesso-vms',
+    'onliacesso-mediamtx',
+    'nginx',
+];
+
+export const ALLOWED_SERVICES: readonly string[] = IS_WINDOWS ? WINDOWS_SERVICES : LINUX_SERVICES;
+
+export type ServiceName = string;
 
 // Reiniciar estes serviços derruba a própria API (self-restart) ou toda a
 // cadeia (postgres); o restart precisa rodar FORA da árvore de processos do
 // WinSW (que mata os filhos ao parar o serviço) — via tarefa agendada SYSTEM.
-const DEFERRED_SERVICES: ServiceName[] = ['onliacesso-postgres', 'onliacesso-api'];
+// No Linux isso não é problema: o systemd é o pai dos serviços, e um
+// `systemctl restart` disparado pela própria API sobrevive à morte dela.
+const DEFERRED_SERVICES: ServiceName[] = IS_WINDOWS
+    ? ['onliacesso-postgres', 'onliacesso-api']
+    : [];
 
 export interface ServiceInfo {
     name: string;
@@ -55,7 +82,71 @@ async function runPowerShell(script: string, timeoutMs = 30000): Promise<string>
     return stdout;
 }
 
+// ── systemd (Linux) ──────────────────────────────────────────────────────────
+
+/** `systemctl show` devolve chave=valor — estável e não localizado. */
+async function systemdShow(name: string): Promise<Record<string, string>> {
+    const { stdout } = await execFileAsync('systemctl', [
+        'show', name,
+        '--property=LoadState,ActiveState,SubState,UnitFileState,MainPID,MemoryCurrent,ExecMainStartTimestamp,Description',
+        '--no-pager',
+    ], { timeout: 10000 });
+
+    const out: Record<string, string> = {};
+    for (const line of stdout.split('\n')) {
+        const idx = line.indexOf('=');
+        if (idx > 0) out[line.slice(0, idx)] = line.slice(idx + 1).trim();
+    }
+    return out;
+}
+
+async function listServicesSystemd(): Promise<ServiceInfo[]> {
+    const infos = await Promise.all(ALLOWED_SERVICES.map(async (name): Promise<ServiceInfo | null> => {
+        try {
+            const p = await systemdShow(name);
+            if (!p.LoadState || p.LoadState === 'not-found') return null;
+
+            const pid = Number(p.MainPID || 0);
+            const mem = Number(p.MemoryCurrent || 0);
+            // ExecMainStartTimestamp: "Sat 2026-07-12 01:20:33 -03" (vazio se parado)
+            const startedAt = p.ExecMainStartTimestamp ? Date.parse(p.ExecMainStartTimestamp) : NaN;
+
+            return {
+                name,
+                displayName: p.Description || name,
+                // o painel espera o vocabulário do Windows
+                status: p.ActiveState === 'active' ? 'Running'
+                    : p.ActiveState === 'activating' ? 'StartPending'
+                    : p.ActiveState === 'failed' ? 'Failed'
+                    : 'Stopped',
+                startType: p.UnitFileState === 'enabled' ? 'Automatic'
+                    : p.UnitFileState === 'disabled' ? 'Disabled'
+                    : p.UnitFileState || 'Unknown',
+                pid: pid > 0 ? pid : null,
+                memoryBytes: mem > 0 ? mem : null,
+                uptimeSeconds: Number.isFinite(startedAt)
+                    ? Math.max(0, Math.floor((Date.now() - startedAt) / 1000))
+                    : null,
+            };
+        } catch {
+            return null; // unit inexistente nesta instalação (ex.: VMS não instalado)
+        }
+    }));
+
+    return infos.filter((s): s is ServiceInfo => s !== null);
+}
+
+async function restartServiceSystemd(name: ServiceName): Promise<RestartResult> {
+    // Requer a regra sudoers instalada pelo install.sh (restrita a estes units).
+    await execFileAsync('sudo', ['-n', 'systemctl', 'restart', name], { timeout: 90000 });
+    return { mode: 'sync', message: `Serviço ${name} reiniciado.` };
+}
+
+// ── Windows (PowerShell) ─────────────────────────────────────────────────────
+
 export async function listServices(): Promise<ServiceInfo[]> {
+    if (!IS_WINDOWS) return listServicesSystemd();
+
     const script = `
 $ErrorActionPreference = 'SilentlyContinue'
 $svcs = Get-CimInstance Win32_Service -Filter "Name LIKE 'onliacesso-%'"
@@ -126,6 +217,8 @@ export interface RestartResult {
 }
 
 export async function restartService(name: ServiceName): Promise<RestartResult> {
+    if (!IS_WINDOWS) return restartServiceSystemd(name);
+
     if (!DEFERRED_SERVICES.includes(name)) {
         await runPowerShell(restartScript(name), 90000);
         return { mode: 'sync', message: `Serviço ${name} reiniciado.` };
