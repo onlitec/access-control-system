@@ -525,6 +525,18 @@ PostgreSQL (usuario postgres, porta $PgPort): $DbPassword
         Log "Regra de firewall criada (UDP 8189 - WebRTC do VMS)."
     }
 
+    # Cameras RTSP sobre UDP (ex.: Yoosee/Gwelltimes): ao puxar o stream, o
+    # MediaMTX abre portas UDP EFEMERAS para receber o RTP da camera. Como as
+    # portas nao sao fixas, a liberacao e POR PROGRAMA (o binario do MediaMTX),
+    # nao por porta. Quem abre o socket e o binario lancado pelo WinSW, entao a
+    # regra aponta para binaries\mediamtx\mediamtx.exe (nao o wrapper do servico).
+    # Sem isto, cameras TCP funcionam mas as UDP-only ficam sem imagem.
+    $MtxExe = Join-Path $Bin "mediamtx\mediamtx.exe"
+    if ($InstallVms -eq "1" -and -not (Get-NetFirewallRule -DisplayName "OnliAcesso VMS MediaMTX (RTP entrada)" -ErrorAction SilentlyContinue)) {
+        New-NetFirewallRule -DisplayName "OnliAcesso VMS MediaMTX (RTP entrada)" -Direction Inbound -Program $MtxExe -Action Allow | Out-Null
+        Log "Regra de firewall criada (MediaMTX RTP de entrada - cameras UDP)."
+    }
+
     $failed = @()
     foreach ($svc in $ServiceOrder) {
         Set-Status "Iniciando o servico $svc..."
