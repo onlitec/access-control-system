@@ -701,6 +701,38 @@ router.get('/channels/:id/live', async (req: Request, res: Response): Promise<vo
   }
 });
 
+// ── GET /api/vms/channels/:id/snapshot — 1 frame JPEG (fundo do editor VCA) ──
+// Puxa do loopback do MediaMTX (autenticado com o token interno) e devolve um
+// JPEG. Serve de tela de fundo para desenhar as zonas/linhas do VCA.
+const VMS_RTSP_LOOPBACK = (process.env.VMS_RTSP_LOOPBACK || 'rtsp://127.0.0.1:8554').replace(/\/+$/, '');
+const FFMPEG_PATH = process.env.FFMPEG_PATH || 'ffmpeg';
+
+router.get('/channels/:id/snapshot', async (req: Request, res: Response): Promise<void> => {
+  try {
+    const channel = await prisma.videoChannel.findUnique({ where: { id: req.params.id } });
+    if (!channel) { res.status(404).json({ error: 'Canal não encontrado' }); return; }
+    const auth = VMS_INTERNAL_TOKEN ? `?jwt=${encodeURIComponent(VMS_INTERNAL_TOKEN)}` : '';
+    const url = `${VMS_RTSP_LOOPBACK}/${channel.streamPath}${auth}`;
+
+    const chunks: Buffer[] = [];
+    await new Promise<void>((resolve, reject) => {
+      const ff = spawn(FFMPEG_PATH, [
+        '-hide_banner', '-loglevel', 'error', '-rtsp_transport', 'tcp',
+        '-i', url, '-frames:v', '1', '-q:v', '4', '-f', 'mjpeg', 'pipe:1',
+      ], { windowsHide: true });
+      const timer = setTimeout(() => { ff.kill(); reject(new Error('timeout')); }, 15000);
+      ff.stdout.on('data', (c: Buffer) => chunks.push(c));
+      ff.on('error', (e) => { clearTimeout(timer); reject(e); });
+      ff.on('exit', (code) => { clearTimeout(timer); code === 0 && chunks.length ? resolve() : reject(new Error(`ffmpeg ${code}`)); });
+    });
+    res.setHeader('Content-Type', 'image/jpeg');
+    res.setHeader('Cache-Control', 'no-store');
+    res.end(Buffer.concat(chunks));
+  } catch (err: any) {
+    res.status(503).json({ error: `não foi possível capturar o frame: ${err.message}` });
+  }
+});
+
 // ── GET /api/vms/live-status — estado real de cada canal (gravando? online?) ─
 // Consulta o MediaMTX: config (flag record por path) + runtime (ready = fonte
 // RTSP conectada). "recording" = gravação ligada E fonte entregando vídeo.

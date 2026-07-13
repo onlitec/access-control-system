@@ -2,8 +2,9 @@ import React, { useState, useEffect } from 'react';
 import { apiFetch } from '@/services/api';
 import {
   Video, Plus, Trash2, X, Loader2, CheckCircle2, AlertTriangle,
-  RefreshCw, ChevronDown, ChevronUp, Search, Save, Camera,
+  RefreshCw, ChevronDown, ChevronUp, Search, Save, Camera, ScanEye,
 } from 'lucide-react';
+import VcaEditor from '@/components/VcaEditor';
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -105,6 +106,7 @@ export default function VmsDevicesPage() {
   const [recForm, setRecForm] = useState<Record<string, { mode: string; retentionDays: string; postEventSec: string; useSubStream: boolean; dow: number[]; start: string; end: string; eventTypes: string[]; segmentMinutes: string }>>({});
   const [recSaving, setRecSaving] = useState<string | null>(null);
   const [error, setError] = useState('');
+  const [vcaEditor, setVcaEditor] = useState<{ channelId: string; name: string } | null>(null);
 
   useEffect(() => { void load(); }, []);
 
@@ -431,6 +433,7 @@ export default function VmsDevicesPage() {
                           </div>
                           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                             <StatusBadge enabled={ch.enabled} enabledLabel="Habilitado" disabledLabel="Desabilitado" />
+                            <button onClick={() => setVcaEditor({ channelId: ch.id, name: ch.name })} className="btn btn-secondary" style={{ padding: '4px 10px', fontSize: '0.75rem', minWidth: 'auto', display: 'flex', alignItems: 'center', gap: '4px' }} title="Detecção inteligente (VCA)"><ScanEye size={13} /> Detecção IA</button>
                             <button onClick={() => toggleChannel(ch)} className="btn btn-secondary" style={{ padding: '4px 10px', fontSize: '0.75rem', minWidth: 'auto' }}>{ch.enabled ? 'Desabilitar' : 'Habilitar'}</button>
                             <button onClick={() => removeChannel(ch.id)} className="btn btn-secondary" style={{ padding: '6px', minWidth: 'auto', color: 'var(--red-400)', borderColor: 'rgba(239, 68, 68, 0.2)' }}><Trash2 size={14} /></button>
                           </div>
@@ -560,6 +563,14 @@ export default function VmsDevicesPage() {
           ))
         )}
       </div>
+
+      {vcaEditor && (
+        <VcaEditor
+          channelId={vcaEditor.channelId}
+          channelName={vcaEditor.name}
+          onClose={() => { setVcaEditor(null); void load(); }}
+        />
+      )}
     </div>
   );
 }

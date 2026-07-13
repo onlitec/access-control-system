@@ -937,4 +937,40 @@ export const rejectOnboardingReview = async (personId: string, notes?: string) =
     });
 };
 
+// ── VCA (detecção inteligente por software) ────────────────────────────────
+
+export type VcaRuleType = 'motion_zone' | 'line_cross' | 'intrusion';
+
+export interface VcaRule {
+    id?: string;
+    name: string;
+    type: VcaRuleType;
+    geometry: { points: Array<[number, number]> }; // normalizado 0–1
+    direction?: 'in' | 'out' | 'both';
+    actions: string[];                              // record | alert | notify | snapshot
+    notifyTargets?: { emails?: string[]; phones?: string[] };
+    schedule?: Array<{ dow: number[]; start: string; end: string }>;
+}
+
+export interface VcaConfig {
+    enabled: boolean;
+    classes: string[] | null;
+    maxFps: number;
+    minScore: number;
+    cooldownSec: number;
+    rules: VcaRule[];
+}
+
+export const getVcaConfig = (channelId: string) =>
+    request<{ vca: VcaConfig | null }>(`/vms/channels/${channelId}/vca`);
+
+export const saveVcaConfig = (channelId: string, cfg: Partial<VcaConfig>) =>
+    request<{ success: boolean; vca: VcaConfig }>(`/vms/channels/${channelId}/vca`, {
+        method: 'PUT', body: JSON.stringify(cfg),
+    });
+
+/** JPEG atual da câmera (fundo do editor). Retorna Blob. */
+export const getCameraSnapshot = (channelId: string) =>
+    request<Blob>(`/vms/channels/${channelId}/snapshot`);
+
 export const apiFetch = request;
