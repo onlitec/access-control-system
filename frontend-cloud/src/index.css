@@ -421,8 +421,9 @@ input, select { font-family: inherit; }
 .dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
 .dot.online { background: var(--ok); }
 .dot.offline { background: var(--text-faint); }
-.dot.rec { background: var(--ok); animation: pulse 1.6s infinite; }
-.dot.norec { background: var(--danger); }
+/* convenção CFTV: vermelho pulsando = GRAVANDO (REC); verde = ok, sem gravação */
+.dot.rec { background: var(--danger); animation: pulse 1.6s infinite; }
+.dot.norec { background: var(--ok); }
 @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
 
 /* ── Mosaico (SEMPRE fundo escuro: é área de vídeo) ─────────────────────── */

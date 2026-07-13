@@ -65,7 +65,8 @@ const LAYOUTS = [
   { size: 25, cols: 5, label: '25' },
 ];
 
-/** Bolinha de status de gravação: verde = gravando, vermelha = sem gravação. */
+/** Bolinha de status de gravação (convenção CFTV): vermelho pulsando = GRAVANDO
+ *  (REC), verde = câmera ok, sem gravação. */
 export function RecordingDot({ status }: { status?: ChannelStatus }) {
   const recording = status?.recording ?? false;
   const title = recording
@@ -76,7 +77,7 @@ export function RecordingDot({ status }: { status?: ChannelStatus }) {
   return (
     <span
       title={title}
-      className={`inline-block h-2.5 w-2.5 rounded-full ring-1 ring-black/50 ${recording ? 'bg-green-500 animate-pulse' : 'bg-red-500'}`}
+      className={`inline-block h-2.5 w-2.5 rounded-full ring-1 ring-black/50 ${recording ? 'bg-red-500 animate-pulse' : 'bg-green-500'}`}
     />
   );
 }
@@ -591,7 +592,7 @@ export default function LiveWallPage() {
                           <span className="truncate flex-1">
                             <span className="text-zinc-600 font-mono">[D{idx + 1}]</span> {ch.name}
                           </span>
-                          {st?.recording && <span className="h-1.5 w-1.5 rounded-full bg-green-500 shrink-0" />}
+                          {st?.recording && <span className="h-1.5 w-1.5 rounded-full bg-red-500 animate-pulse shrink-0" title="Gravando" />}
                         </div>
                       );
                     })}
