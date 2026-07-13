@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { X, Plus, Trash2, Save, Loader2, Camera, AlertCircle } from 'lucide-react';
 import {
-  getVcaConfig, saveVcaConfig, getCameraSnapshot,
+  getVcaConfig, saveVcaConfig, getCameraSnapshot, apiFetch,
   type VcaConfig, type VcaRule, type VcaRuleType,
 } from '@/services/api';
 
@@ -35,7 +35,12 @@ const RULE_COLORS = ['#22c55e', '#3b82f6', '#f59e0b', '#ef4444', '#a855f7', '#06
 
 type Pt = [number, number];
 
-const emptyCfg: VcaConfig = { enabled: false, classes: ['person'], maxFps: 4, minScore: 0.4, cooldownSec: 15, rules: [] };
+const emptyCfg: VcaConfig = {
+  enabled: false, classes: ['person'], maxFps: 4, minScore: 0.4, cooldownSec: 15,
+  recordSeconds: 20, linkedCameraId: null, popupOnOperator: false, rules: [],
+};
+
+interface ChannelOpt { id: string; name: string; deviceName: string }
 
 export default function VcaEditor({ channelId, channelName, onClose }: {
   channelId: string; channelName: string; onClose: () => void;
@@ -49,11 +54,12 @@ export default function VcaEditor({ channelId, channelName, onClose }: {
 
   const [drawing, setDrawing] = useState<{ type: VcaRuleType; pts: Pt[] } | null>(null);
   const [selected, setSelected] = useState<number>(-1);
+  const [channels, setChannels] = useState<ChannelOpt[]>([]);
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const imgRef = useRef<HTMLImageElement | null>(null);
 
-  // ── carga inicial: config + snapshot ──────────────────────────────────────
+  // ── carga inicial: config + snapshot + lista de câmeras ────────────────────
   useEffect(() => {
     let revoke: string | null = null;
     (async () => {
@@ -62,6 +68,12 @@ export default function VcaEditor({ channelId, channelName, onClose }: {
         if (vca) setCfg({ ...emptyCfg, ...vca, classes: vca.classes ?? ['person'] });
       } catch (e: any) { setError(e.message || 'Falha ao carregar configuração'); }
       finally { setLoading(false); }
+      try {
+        const data = await apiFetch<{ devices: Array<{ name: string; channels: Array<{ id: string; name: string }> }> }>('/vms/devices');
+        const opts: ChannelOpt[] = [];
+        for (const d of data.devices || []) for (const c of d.channels || []) opts.push({ id: c.id, name: c.name, deviceName: d.name });
+        setChannels(opts);
+      } catch { /* sem lista: só a própria câmera */ }
       try {
         const blob = await getCameraSnapshot(channelId);
         revoke = URL.createObjectURL(blob);
@@ -167,6 +179,9 @@ export default function VcaEditor({ channelId, channelName, onClose }: {
         enabled: cfg.enabled,
         classes: cfg.classes && cfg.classes.length ? cfg.classes : ['person'],
         maxFps: cfg.maxFps, minScore: cfg.minScore, cooldownSec: cfg.cooldownSec,
+        recordSeconds: cfg.recordSeconds,
+        linkedCameraId: cfg.linkedCameraId ?? '',
+        popupOnOperator: cfg.popupOnOperator,
         rules: cfg.rules,
       });
       onClose();
@@ -241,6 +256,31 @@ export default function VcaEditor({ channelId, channelName, onClose }: {
                 <input type="checkbox" checked={cfg.enabled} onChange={(e) => setCfg((c) => ({ ...c, enabled: e.target.checked }))} />
                 <strong>Ativar detecção nesta câmera</strong>
               </label>
+
+              {/* tratamento do evento (estilo HikCentral) */}
+              <div>
+                <span style={label}>Câmera do vídeo do evento</span>
+                <select
+                  value={cfg.linkedCameraId || ''}
+                  onChange={(e) => setCfg((c) => ({ ...c, linkedCameraId: e.target.value || null }))}
+                  style={{ width: '100%', fontSize: '0.8rem', padding: '6px 8px', background: 'var(--bg-primary)', color: 'var(--text-primary)', border: '1px solid var(--border-primary)', borderRadius: 'var(--radius-sm)' }}
+                >
+                  <option value="">Esta câmera (a que gerou o evento)</option>
+                  {channels.filter((ch) => ch.id !== channelId).map((ch) => (
+                    <option key={ch.id} value={ch.id}>{ch.deviceName} — {ch.name}</option>
+                  ))}
+                </select>
+              </div>
+
+              <label style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: '0.85rem' }}>
+                <input type="checkbox" checked={cfg.popupOnOperator} onChange={(e) => setCfg((c) => ({ ...c, popupOnOperator: e.target.checked }))} />
+                Abrir popup no painel do operador (com som)
+              </label>
+
+              <div>
+                <span style={label}>Gravar por (segundos após o evento): {cfg.recordSeconds}</span>
+                <input type="range" min={5} max={120} step={5} value={cfg.recordSeconds} onChange={(e) => setCfg((c) => ({ ...c, recordSeconds: Number(e.target.value) }))} style={{ width: '100%' }} />
+              </div>
 
               <div>
                 <span style={label}>Detectar</span>

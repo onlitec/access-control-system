@@ -552,6 +552,12 @@ model VideoVcaConfig {
   minScore    Float        @default(0.4) @map("min_score")
   /// silêncio mínimo entre disparos da MESMA regra, em segundos.
   cooldownSec Int          @default(15) @map("cooldown_sec")
+  /// segundos de gravação (pós-evento) quando a ação "record" dispara.
+  recordSeconds Int        @default(20) @map("record_seconds")
+  /// câmera cujo vídeo (ao vivo/gravado) representa o evento; null = a própria.
+  linkedCameraId String?   @map("linked_camera_id")
+  /// abre um popup automático no painel do operador quando um evento dispara.
+  popupOnOperator Boolean  @default(false) @map("popup_on_operator")
   /// Regras desenhadas pelo operador. Cada item:
   /// {id,name,type:"motion_zone"|"line_cross"|"intrusion",
   ///  geometry:{points:[[x,y],...] normalizado 0–1},

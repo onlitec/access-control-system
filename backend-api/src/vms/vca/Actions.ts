@@ -19,6 +19,12 @@ export interface VcaHit {
   ruleType: string;      // motion_zone | line_cross | intrusion
   actions: string[];     // record | alert | notify | snapshot
   postEventSec: number;
+  recordSeconds: number; // gravação pós-evento (na câmera de vídeo)
+  popup: boolean;        // abrir popup no operador
+  /** câmera cujo vídeo (ao vivo/gravado) representa o evento (própria ou vinculada). */
+  videoChannelId: string;
+  videoStreamPath: string;
+  videoChannelName: string;
   notifyTargets?: { emails?: string[]; phones?: string[] };
   det: Detection;
   frameRgb: Buffer;      // frame 640x640 que disparou (para o snapshot)
@@ -33,9 +39,10 @@ export class Actions {
   constructor(private scheduler: RecordingScheduler) {}
 
   async fire(hit: VcaHit): Promise<void> {
-    // 1. gravar (arma a mesma janela temporal da gravação por movimento)
+    // 1. gravar a CÂMERA DE VÍDEO do evento (a própria ou a vinculada), por
+    //    recordSeconds — vale em qualquer modo de gravação.
     if (hit.actions.includes('record')) {
-      this.scheduler.noteMotion(hit.channelId, hit.postEventSec);
+      this.scheduler.noteVcaRecord(hit.videoChannelId, hit.recordSeconds);
     }
 
     // 2. snapshot do frame do evento (também usado como thumbnail do alerta)
@@ -90,6 +97,11 @@ export class Actions {
         deviceName: hit.deviceName,
         snapshotUrl,
         score: Number(hit.det.score.toFixed(2)),
+        // câmera de vídeo do evento (própria ou vinculada) + flag de popup
+        videoChannelId: hit.videoChannelId,
+        streamPath: hit.videoStreamPath,
+        videoChannelName: hit.videoChannelName,
+        popup: hit.popup,
       }),
     });
   }

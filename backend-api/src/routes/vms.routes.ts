@@ -155,7 +155,8 @@ router.post('/internal/event', async (req: Request, res: Response): Promise<void
     return;
   }
   try {
-    const { type, label, channelId, channelName, deviceName, snapshotUrl, score } = req.body ?? {};
+    const { type, label, channelId, channelName, deviceName, snapshotUrl, score,
+            videoChannelId, streamPath, videoChannelName, popup } = req.body ?? {};
     await emitEvent({
       personName: `${label || 'Evento de câmera'} — ${channelName || 'câmera'}`,
       personType: 'system',
@@ -166,8 +167,14 @@ router.post('/internal/event', async (req: Request, res: Response): Promise<void
       status: 'authorized',
       metadata: {
         channelId: channelId ?? null,
+        ...(channelName ? { channelName } : {}),
         ...(snapshotUrl ? { snapshotUrl } : {}),
         ...(score != null ? { score } : {}),
+        // câmera de vídeo do evento (própria ou vinculada) + popup
+        ...(videoChannelId ? { videoChannelId } : {}),
+        ...(streamPath ? { streamPath } : {}),
+        ...(videoChannelName ? { videoChannelName } : {}),
+        ...(popup ? { popup: true } : {}),
       },
     });
     res.json({ success: true });
@@ -653,7 +660,8 @@ const VCA_ACTIONS = new Set(['record', 'alert', 'notify', 'snapshot']);
 
 router.put('/channels/:id/vca', adminMiddleware, async (req: Request, res: Response): Promise<void> => {
   try {
-    const { enabled, classes, maxFps, minScore, cooldownSec, rules } = req.body ?? {};
+    const { enabled, classes, maxFps, minScore, cooldownSec, rules,
+            recordSeconds, linkedCameraId, popupOnOperator } = req.body ?? {};
     const channel = await prisma.videoChannel.findUnique({ where: { id: req.params.id } });
     if (!channel) { res.status(404).json({ error: 'Canal não encontrado' }); return; }
 
@@ -680,12 +688,27 @@ router.put('/channels/:id/vca', adminMiddleware, async (req: Request, res: Respo
       });
     }
 
+    // linkedCameraId: "" ou o próprio id = a própria câmera (null); senão valida
+    let cleanLinked: string | null | undefined;
+    if (linkedCameraId !== undefined) {
+      const v = linkedCameraId ? String(linkedCameraId) : '';
+      if (!v || v === channel.id) cleanLinked = null;
+      else {
+        const exists = await prisma.videoChannel.findUnique({ where: { id: v }, select: { id: true } });
+        if (!exists) { res.status(400).json({ error: 'câmera vinculada não encontrada' }); return; }
+        cleanLinked = v;
+      }
+    }
+
     const data = {
       ...(enabled !== undefined && { enabled: Boolean(enabled) }),
       ...(classes !== undefined && { classes: classes ?? Prisma.DbNull }),
       ...(maxFps !== undefined && { maxFps: Math.min(Math.max(Number(maxFps), 1), 15) }),
       ...(minScore !== undefined && { minScore: Math.min(Math.max(Number(minScore), 0.1), 0.95) }),
       ...(cooldownSec !== undefined && { cooldownSec: Math.max(Number(cooldownSec), 1) }),
+      ...(recordSeconds !== undefined && { recordSeconds: Math.min(Math.max(Number(recordSeconds), 5), 300) }),
+      ...(cleanLinked !== undefined && { linkedCameraId: cleanLinked }),
+      ...(popupOnOperator !== undefined && { popupOnOperator: Boolean(popupOnOperator) }),
       ...(cleanRules !== undefined && { rules: cleanRules }),
     };
 
@@ -698,6 +721,9 @@ router.put('/channels/:id/vca', adminMiddleware, async (req: Request, res: Respo
         maxFps: maxFps !== undefined ? Math.min(Math.max(Number(maxFps), 1), 15) : 5,
         minScore: minScore !== undefined ? Math.min(Math.max(Number(minScore), 0.1), 0.95) : 0.4,
         cooldownSec: cooldownSec !== undefined ? Math.max(Number(cooldownSec), 1) : 15,
+        recordSeconds: recordSeconds !== undefined ? Math.min(Math.max(Number(recordSeconds), 5), 300) : 20,
+        linkedCameraId: cleanLinked ?? null,
+        popupOnOperator: Boolean(popupOnOperator),
         rules: cleanRules ?? [],
       },
       update: data,

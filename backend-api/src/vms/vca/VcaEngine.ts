@@ -44,12 +44,21 @@ export class VcaEngine {
       include: { device: true, vca: true, recording: true },
     });
 
+    // resolve o canal cujo vídeo representa o evento (o próprio ou o vinculado)
+    const linkedIds = channels.map((c) => c.vca!.linkedCameraId).filter(Boolean) as string[];
+    const linked = linkedIds.length
+      ? await prisma.videoChannel.findMany({ where: { id: { in: linkedIds } }, select: { id: true, name: true, streamPath: true } })
+      : [];
+    const linkedById = new Map(linked.map((l) => [l.id, l]));
+
     const desired = new Map<string, VcaChannelConfig>();
     for (const ch of channels) {
       const rules = normalizeRules((ch.vca!.rules as any) || []);
       if (rules.length === 0) continue; // sem regra, nada a analisar
       const rtspUrl = await this.pickRtsp(ch.streamPath);
       const size = await this.probeSize(rtspUrl);
+      // câmera de vídeo: a vinculada (se existir e válida) ou a própria
+      const linkedCam = ch.vca!.linkedCameraId ? linkedById.get(ch.vca!.linkedCameraId) : undefined;
       desired.set(ch.id, {
         channelId: ch.id,
         channelName: ch.name,
@@ -61,6 +70,11 @@ export class VcaEngine {
         minScore: ch.vca!.minScore,
         cooldownSec: ch.vca!.cooldownSec,
         postEventSec: ch.recording?.postEventSec ?? 15,
+        recordSeconds: ch.vca!.recordSeconds ?? 20,
+        popup: ch.vca!.popupOnOperator ?? false,
+        videoChannelId: linkedCam?.id ?? ch.id,
+        videoStreamPath: linkedCam?.streamPath ?? ch.streamPath,
+        videoChannelName: linkedCam?.name ?? ch.name,
         rules,
       });
     }

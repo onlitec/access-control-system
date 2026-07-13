@@ -1,5 +1,6 @@
 import { Link, useLocation } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
+import VcaEventPopup from '@/components/VcaEventPopup';
 import {
   Sidebar,
   SidebarContent,
@@ -253,6 +254,9 @@ export default function AppLayout({ children }: AppLayoutProps) {
           </main>
         </div>
       </div>
+
+      {/* popup automático de eventos de câmera (VCA) — vale em qualquer tela */}
+      <VcaEventPopup />
     </SidebarProvider>
   );
 }

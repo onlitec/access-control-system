@@ -7,6 +7,7 @@ import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
 import { getAccessEvents } from '@/db/api';
 import { useEventStream, type SystemEvent } from '@/hooks/useEventStream';
+import EventDetailDialog from '@/components/EventDetailDialog';
 import { formatDistanceToNow } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import {
@@ -138,6 +139,7 @@ export function EventFeed({
 }: EventFeedProps) {
   const [events, setEvents] = useState<SystemEvent[]>([]);
   const [lightbox, setLightbox] = useState<string | null>(null); // snapshot ampliado
+  const [detail, setDetail] = useState<SystemEvent | null>(null); // detalhe do evento de câmera
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [filter, setFilter] = useState<FeedFilter>('all');
@@ -348,8 +350,14 @@ export function EventFeed({
               ? (event.metadata as Record<string, unknown>).snapshotUrl as string | undefined
               : undefined;
             const snapshot = rawSnap ? `${rawSnap}?token=${encodeURIComponent(feedToken())}` : undefined;
+            // eventos de câmera (VCA) abrem o detalhe: foto + vídeo ao vivo + gravação
+            const isCameraEvent = event.source === 'vms';
             return (
-              <div key={event.id} className="flex items-center gap-4 px-5 py-3.5 hover:bg-zinc-50 transition-colors">
+              <div
+                key={event.id}
+                onClick={isCameraEvent ? () => setDetail(event) : undefined}
+                className={`flex items-center gap-4 px-5 py-3.5 hover:bg-zinc-50 transition-colors ${isCameraEvent ? 'cursor-pointer' : ''}`}
+              >
                 <div className="flex flex-col items-center w-16 shrink-0">
                   <span className="text-[11px] font-semibold text-zinc-500">
                     {new Date(event.occurredAt).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
@@ -363,8 +371,7 @@ export function EventFeed({
                   <img
                     src={snapshot}
                     alt="Snapshot do evento"
-                    onClick={() => setLightbox(snapshot)}
-                    className="h-11 w-16 rounded-md border border-zinc-200 object-cover shrink-0 cursor-zoom-in bg-zinc-900"
+                    className="h-11 w-16 rounded-md border border-zinc-200 object-cover shrink-0 bg-zinc-900"
                   />
                 ) : (
                   <Avatar className="h-11 w-11 border border-zinc-200 shrink-0">
@@ -420,6 +427,8 @@ export function EventFeed({
           <img src={lightbox} alt="Snapshot do evento" className="max-h-[90vh] max-w-[95vw] rounded-lg shadow-2xl" />
         </div>
       )}
+
+      <EventDetailDialog event={detail} onClose={() => setDetail(null)} />
     </div>
   );
 }

@@ -28,6 +28,12 @@ export interface VcaChannelConfig {
   minScore: number;
   cooldownSec: number;
   postEventSec: number;
+  recordSeconds: number;
+  popup: boolean;
+  /** câmera cujo vídeo (ao vivo/gravado) representa o evento (própria ou vinculada). */
+  videoChannelId: string;
+  videoStreamPath: string;
+  videoChannelName: string;
   rules: VcaRule[];
 }
 
@@ -84,6 +90,9 @@ export class CameraPipeline {
         channelId: this.cfg.channelId, channelName: this.cfg.channelName, deviceName: this.cfg.deviceName,
         ruleName: rule.name, ruleType: rule.type, actions: rule.actions,
         postEventSec: this.cfg.postEventSec, notifyTargets: rule.notifyTargets,
+        recordSeconds: this.cfg.recordSeconds, popup: this.cfg.popup,
+        videoChannelId: this.cfg.videoChannelId, videoStreamPath: this.cfg.videoStreamPath,
+        videoChannelName: this.cfg.videoChannelName,
         det, frameRgb: f.rgb,
       };
       void this.actions.fire(hit).catch((e) => console.error('[VCA] ação falhou:', e.message));

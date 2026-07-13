@@ -51,6 +51,7 @@ export class RecordingScheduler {
   private appliedSeg = new Map<string, number>();        // pathName -> ciclo (min) aplicado
   private pathTrigger = new Map<string, RecordTrigger>(); // pathName -> motivo da gravação ativa
   private motionUntil = new Map<string, number>();        // channelId -> epoch ms
+  private vcaUntil = new Map<string, number>();           // channelId -> epoch ms (gravação por evento VCA)
   private manualUntil = new Map<string, number>();        // channelId -> epoch ms (gravação manual)
   private manualStartedAt = new Map<string, Date>();      // channelId -> início da gravação manual
   private diskWarned = false;                            // evita spam de log do disco cheio
@@ -60,6 +61,16 @@ export class RecordingScheduler {
   /** Chamado pelo MotionWatcher a cada evento de movimento do canal. */
   noteMotion(channelId: string, postEventSec: number): void {
     this.motionUntil.set(channelId, Date.now() + Math.max(postEventSec, 5) * 1000);
+  }
+
+  /**
+   * Gravação disparada por um evento VCA (detecção). Vale em QUALQUER modo
+   * (inclusive gravação desligada) — todo evento com ação "record" grava. Roda
+   * um tick na hora para não esperar até 30 s (o momento do evento se perderia).
+   */
+  noteVcaRecord(channelId: string, seconds: number): void {
+    this.vcaUntil.set(channelId, Date.now() + Math.max(seconds, 5) * 1000);
+    void this.tick().catch((e) => console.error(`[VMS] tick imediato (VCA) falhou: ${e.message}`));
   }
 
   /**
@@ -141,6 +152,12 @@ export class RecordingScheduler {
           break;
         default:
           shouldRecord = false;
+      }
+
+      // evento VCA grava em qualquer modo (do momento da detecção em diante)
+      if ((this.vcaUntil.get(channel.id) ?? 0) > Date.now()) {
+        shouldRecord = true;
+        trigger = 'motion';
       }
 
       // o botão REC do operador vence a configuração (grava mesmo com modo "off")

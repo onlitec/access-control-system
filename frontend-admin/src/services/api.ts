@@ -958,6 +958,9 @@ export interface VcaConfig {
     maxFps: number;
     minScore: number;
     cooldownSec: number;
+    recordSeconds: number;
+    linkedCameraId: string | null;
+    popupOnOperator: boolean;
     rules: VcaRule[];
 }
 
