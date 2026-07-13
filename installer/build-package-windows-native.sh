@@ -79,6 +79,10 @@ cp "$WIN_DIR/assets/nginx/nginx.conf" "$STAGE_DIR/binaries/nginx/conf/nginx.conf
 if [ $VMS_AVAILABLE -eq 1 ]; then
     cp -al "$BINARIES_DIR/mediamtx" "$STAGE_DIR/binaries/mediamtx"
     cp -al "$BINARIES_DIR/rclone"   "$STAGE_DIR/binaries/rclone"
+    # modelo de IA (VCA) — se presente (download-binaries.sh o baixa)
+    if [ -f "$BINARIES_DIR/models/yolov8n.onnx" ]; then
+        cp -al "$BINARIES_DIR/models" "$STAGE_DIR/binaries/models"
+    fi
     # mediamtx.yml base (preservado em upgrade pelo install.ps1)
     mkdir -p "$STAGE_DIR/config"
     cp "$WIN_DIR/assets/mediamtx/mediamtx.yml" "$STAGE_DIR/config/mediamtx.yml"

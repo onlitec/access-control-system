@@ -163,5 +163,20 @@ if [ ! -d "$ASSETS_DIR/rclone" ]; then
 fi
 log "rclone v${RCLONE_VERSION} pronto em assets/binaries/rclone"
 
+# ------------------------------------------------------- Modelo IA (VCA) ---
+# YOLOv8n em ONNX (~12 MB) para a detecção inteligente por software (VCA).
+# Exportado e hospedado por nós (o runtime onnxruntime-node vem via npm como
+# optionalDependency). Sha256 fixo para reprodutibilidade.
+VCA_MODEL_SHA="c1b068a5057a894f3e3fa15b3393b037a3287eae8fbf7b27018c6d4b16a2c7e4"
+VCA_MODEL_URL="https://cloud.onlitec.com.br/downloads/models/yolov8n.onnx"
+mkdir -p "$ASSETS_DIR/models"
+VCA_MODEL="$ASSETS_DIR/models/yolov8n.onnx"
+if [ ! -f "$VCA_MODEL" ]; then
+    fetch "$VCA_MODEL_URL" "$VCA_MODEL"
+    verify_sha "$VCA_MODEL" "$VCA_MODEL_SHA"
+fi
+record_sha "$VCA_MODEL"
+log "Modelo VCA (yolov8n.onnx) pronto em assets/binaries/models"
+
 log "Concluído. Checksums registrados em $CHECKSUM_FILE"
 cat "$CHECKSUM_FILE"

@@ -61,12 +61,14 @@ Source: "{#StageDir}\scripts\cleanup.ps1"; Flags: dontcopy
 ; Excludes: arquivos do VMS saem do wildcard core — senao seriam instalados
 ; mesmo com o componente desmarcado, e o config\mediamtx.yml (ignoreversion)
 ; sobrescreveria a config do usuario em cada upgrade.
-Source: "{#StageDir}\*"; DestDir: "{app}"; Flags: recursesubdirs createallsubdirs ignoreversion; Components: core; Excludes: "\binaries\mediamtx\*,\binaries\rclone\*,\config\mediamtx.yml,\services\onliacesso-mediamtx.xml,\services\onliacesso-vms.xml"
+Source: "{#StageDir}\*"; DestDir: "{app}"; Flags: recursesubdirs createallsubdirs ignoreversion; Components: core; Excludes: "\binaries\mediamtx\*,\binaries\rclone\*,\binaries\models\*,\config\mediamtx.yml,\services\onliacesso-mediamtx.xml,\services\onliacesso-vms.xml"
 ; mediamtx.yml base — só copiado se nao existir (preservar em upgrade)
 #if Str(VmsAvailable) == "1"
 Source: "{#StageDir}\config\mediamtx.yml"; DestDir: "{app}\config"; Flags: onlyifdoesntexist; Components: vms
 Source: "{#StageDir}\binaries\mediamtx\*"; DestDir: "{app}\binaries\mediamtx"; Flags: recursesubdirs createallsubdirs ignoreversion; Components: vms
 Source: "{#StageDir}\binaries\rclone\*"; DestDir: "{app}\binaries\rclone"; Flags: recursesubdirs createallsubdirs ignoreversion; Components: vms
+; modelo de IA (VCA) — detecção inteligente por software
+Source: "{#StageDir}\binaries\models\*"; DestDir: "{app}\binaries\models"; Flags: recursesubdirs createallsubdirs ignoreversion; Components: vms
 Source: "{#StageDir}\services\onliacesso-mediamtx.xml"; DestDir: "{app}\services"; Flags: ignoreversion; Components: vms
 Source: "{#StageDir}\services\onliacesso-vms.xml"; DestDir: "{app}\services"; Flags: ignoreversion; Components: vms
 #endif

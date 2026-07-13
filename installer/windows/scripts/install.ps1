@@ -289,6 +289,10 @@ PostgreSQL (usuario postgres, porta $PgPort): $DbPassword
         # Token compartilhado backend-api <-> vms-service <-> hooks MediaMTX
         # (sem Overwrite: preservado em upgrades para não invalidar hooks ativos)
         Set-EnvKey "VMS_INTERNAL_TOKEN" (New-SecureToken 32)
+        # VCA (detecção inteligente por software): modelo YOLO embutido. Só ativa
+        # se o arquivo existir (o onnxruntime-node vem via npm optionalDependency).
+        $VcaModel = Join-Path $Bin "models\yolov8n.onnx"
+        if (Test-Path $VcaModel) { Set-EnvKey "VCA_MODEL_PATH" $VcaModel $true }
         New-Item -ItemType Directory -Force -Path "$TargetDir\data\recordings" | Out-Null
         Log "Chaves VMS garantidas no .env."
     }

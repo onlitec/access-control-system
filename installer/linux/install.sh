@@ -188,6 +188,9 @@ VMS_MIN_FREE_GB=10
 VMS_ALWAYS_ON=true
 RCLONE_PATH=/usr/bin/rclone
 RCLONE_CONFIG=$APP_DIR/config/rclone.conf
+
+# VCA (detecção inteligente por software): modelo YOLO baixado abaixo
+VCA_MODEL_PATH=$APP_DIR/config/yolov8n.onnx
 EOF
 
     # SMTP: os mesmos padrões do instalador Windows, se disponíveis
@@ -262,6 +265,20 @@ if [ "$INSTALL_VMS" -eq 1 ]; then
 
     # mediamtx.yml: preservado em upgrades (pode ter STUN/TURN configurado)
     [ -f "$APP_DIR/config/mediamtx.yml" ] || cp "$SRC_DIR/mediamtx/mediamtx.yml" "$APP_DIR/config/mediamtx.yml"
+
+    # VCA (detecção inteligente por software): modelo YOLO (~12 MB). O runtime
+    # onnxruntime-node vem via npm (optionalDependency); se o download falhar o
+    # VCA fica só inativo (o backend degrada gracioso).
+    VCA_MODEL_SHA="c1b068a5057a894f3e3fa15b3393b037a3287eae8fbf7b27018c6d4b16a2c7e4"
+    if [ ! -f "$APP_DIR/config/yolov8n.onnx" ]; then
+        log "Baixando modelo de IA (VCA)..."
+        if curl -fsSL -o "$APP_DIR/config/yolov8n.onnx" https://cloud.onlitec.com.br/downloads/models/yolov8n.onnx; then
+            echo "$VCA_MODEL_SHA  $APP_DIR/config/yolov8n.onnx" | sha256sum -c - >/dev/null 2>&1 \
+                || { warn "SHA256 do modelo VCA não confere — removendo (VCA ficará inativo)."; rm -f "$APP_DIR/config/yolov8n.onnx"; }
+        else
+            warn "Não foi possível baixar o modelo VCA — a detecção inteligente ficará inativa."
+        fi
+    fi
 fi
 
 # ── 9. Serviços systemd ───────────────────────────────────────────────────────
