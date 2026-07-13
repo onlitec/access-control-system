@@ -1,7 +1,10 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Camera, Lock, User, LogOut, RefreshCw, AlertCircle, MonitorPlay, Film, Building2 } from 'lucide-react';
+import { Camera, Lock, User, LogOut, RefreshCw, AlertCircle, MonitorPlay, Film, Building2, AlertTriangle, ScanEye } from 'lucide-react';
 import LiveView from './views/LiveView';
 import PlaybackView from './views/PlaybackView';
+import EventsView from './views/EventsView';
+import VcaEditor from './components/VcaEditor';
+import EventPopup from './components/EventPopup';
 import InstallButton from './components/InstallButton';
 import ThemeToggle from './components/ThemeToggle';
 import { login, clearSession, getToken, getUser, authFetch, ensureFreshToken } from './auth';
@@ -31,7 +34,9 @@ function App() {
   const [loginError, setLoginError] = useState('');
   const [loggingIn, setLoggingIn] = useState(false);
 
-  const [view, setView] = useState('live'); // 'live' | 'playback'
+  const [view, setView] = useState('live'); // 'live' | 'playback' | 'events' | 'config'
+  const [vcaEditor, setVcaEditor] = useState(null); // câmera em edição de VCA
+  const isAdmin = (user?.role || '').toUpperCase() === 'ADMIN';
 
   /**
    * As câmeras vêm em cache do último acesso: os players começam a conectar no
@@ -213,6 +218,8 @@ function App() {
   const navItems = [
     { id: 'live', label: 'Ao vivo', icon: MonitorPlay },
     { id: 'playback', label: 'Reprodução', icon: Film },
+    { id: 'events', label: 'Eventos', icon: AlertTriangle },
+    ...(isAdmin ? [{ id: 'config', label: 'Detecção IA', icon: ScanEye }] : []),
   ];
 
   // ── App ──────────────────────────────────────────────────────────────────
@@ -255,10 +262,26 @@ function App() {
           </div>
         ) : view === 'live' ? (
           <LiveView cameras={cameras} statusMap={statusMap} token={token} onStatusChange={fetchCameras} />
+        ) : view === 'events' ? (
+          <EventsView />
+        ) : view === 'config' ? (
+          <CameraConfigList cameras={cameras} onEdit={(cam) => setVcaEditor(cam)} />
         ) : (
           <PlaybackView cameras={cameras} />
         )}
       </div>
+
+      {/* popup automático de eventos de câmera (VCA) — vale em qualquer aba */}
+      <EventPopup enabled={!!token} />
+
+      {vcaEditor && (
+        <VcaEditor
+          channelId={vcaEditor.id}
+          channelName={vcaEditor.name}
+          cameras={cameras}
+          onClose={() => setVcaEditor(null)}
+        />
+      )}
 
       {/* navegação inferior (celular) — é aqui que o "Instalar" precisa estar,
           já que a barra lateral não existe em telas pequenas */}
@@ -280,6 +303,31 @@ function App() {
           <span>Sair</span>
         </button>
       </nav>
+    </div>
+  );
+}
+
+/** Lista de câmeras para configurar a detecção inteligente (VCA) — só admin. */
+function CameraConfigList({ cameras, onEdit }) {
+  return (
+    <div style={{ padding: 16, maxWidth: 720, margin: '0 auto' }}>
+      <h2 style={{ margin: '0 0 12px', fontSize: '1.1rem', display: 'flex', gap: 8, alignItems: 'center' }}>
+        <ScanEye size={18} /> Detecção inteligente por câmera
+      </h2>
+      {cameras.length === 0 && <p style={{ color: 'var(--text-faint,#9ca3af)', textAlign: 'center', padding: 30 }}>Nenhuma câmera.</p>}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+        {cameras.map((c) => (
+          <div key={c.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 12px', borderRadius: 10, background: '#14161a', border: '1px solid #23262d' }}>
+            <div>
+              <div style={{ fontSize: '0.9rem', fontWeight: 600, color: '#e5e7eb' }}>{c.name}</div>
+              <div style={{ fontSize: '0.72rem', color: '#9ca3af' }}>{c.deviceName}</div>
+            </div>
+            <button onClick={() => onEdit(c)} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, background: '#2563eb', color: '#fff', border: 'none', borderRadius: 8, padding: '6px 12px', fontSize: '0.8rem', cursor: 'pointer' }}>
+              <ScanEye size={14} /> Configurar
+            </button>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
