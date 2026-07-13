@@ -14,6 +14,11 @@ import {
   Monitor, Search, LogIn, LogOut, ShieldCheck
 } from 'lucide-react';
 
+/** Token para carregar o snapshot do VCA (servido por ?token=, não por header). */
+function feedToken(): string {
+  return localStorage.getItem('auth_token') || localStorage.getItem('token') || '';
+}
+
 // ── Filtros por categoria (pills) ─────────────────────────────────────────────
 type FeedFilter = 'all' | 'residents' | 'visitors' | 'providers' | 'deliveries' | 'gates' | 'alarms';
 
@@ -132,6 +137,7 @@ export function EventFeed({
   onSeeAllHref
 }: EventFeedProps) {
   const [events, setEvents] = useState<SystemEvent[]>([]);
+  const [lightbox, setLightbox] = useState<string | null>(null); // snapshot ampliado
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [filter, setFilter] = useState<FeedFilter>('all');
@@ -336,6 +342,12 @@ export function EventFeed({
             const personTypeLabel = PERSON_TYPE_LABEL[event.personType] || '';
             const sourceLabel = event.source ? (SOURCE_LABEL[event.source] || event.source) : null;
             const photo = event.photoUrl || event.picUri || undefined;
+            // snapshot do VCA (detecção inteligente): a URL vem na metadata; a
+            // imagem é servida por token (o <img> não manda header Authorization)
+            const rawSnap = event.source === 'vms' && event.metadata
+              ? (event.metadata as Record<string, unknown>).snapshotUrl as string | undefined
+              : undefined;
+            const snapshot = rawSnap ? `${rawSnap}?token=${encodeURIComponent(feedToken())}` : undefined;
             return (
               <div key={event.id} className="flex items-center gap-4 px-5 py-3.5 hover:bg-zinc-50 transition-colors">
                 <div className="flex flex-col items-center w-16 shrink-0">
@@ -347,12 +359,21 @@ export function EventFeed({
                 <div className={`h-9 w-9 rounded-full flex items-center justify-center shrink-0 ${visual.bg}`}>
                   {visual.icon}
                 </div>
-                <Avatar className="h-11 w-11 border border-zinc-200 shrink-0">
-                  <AvatarImage src={photo} alt={event.personName} />
-                  <AvatarFallback className="bg-zinc-100 text-zinc-400">
-                    <User className="h-5 w-5" />
-                  </AvatarFallback>
-                </Avatar>
+                {snapshot ? (
+                  <img
+                    src={snapshot}
+                    alt="Snapshot do evento"
+                    onClick={() => setLightbox(snapshot)}
+                    className="h-11 w-16 rounded-md border border-zinc-200 object-cover shrink-0 cursor-zoom-in bg-zinc-900"
+                  />
+                ) : (
+                  <Avatar className="h-11 w-11 border border-zinc-200 shrink-0">
+                    <AvatarImage src={photo} alt={event.personName} />
+                    <AvatarFallback className="bg-zinc-100 text-zinc-400">
+                      <User className="h-5 w-5" />
+                    </AvatarFallback>
+                  </Avatar>
+                )}
                 <div className="flex-1 min-w-0">
                   <div className={`font-semibold text-sm truncate ${danger ? 'text-red-600' : 'text-zinc-900'}`}>
                     {title}
@@ -390,6 +411,15 @@ export function EventFeed({
           </div>
         ) : null)}
       </div>
+
+      {lightbox && (
+        <div
+          className="fixed inset-0 z-[1000] flex items-center justify-center bg-black/70 p-4 cursor-zoom-out"
+          onClick={() => setLightbox(null)}
+        >
+          <img src={lightbox} alt="Snapshot do evento" className="max-h-[90vh] max-w-[95vw] rounded-lg shadow-2xl" />
+        </div>
+      )}
     </div>
   );
 }
