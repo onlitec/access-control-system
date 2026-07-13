@@ -33,8 +33,15 @@ interface VideoLayout {
   id: string;
   name: string;
   size: number;
+  cols?: number | null;
   slots: (string | null)[];
   isDefault: boolean;
+}
+
+/** Colunas de um mosaico salvo: usa o cols gravado ou deriva do tamanho (preset). */
+function colsFor(size: number, cols?: number | null): number {
+  if (cols && cols >= 1) return cols;
+  return (LAYOUTS.find((l) => l.size === size) ?? { cols: Math.ceil(Math.sqrt(size)) }).cols;
 }
 
 interface LiveChannel {
@@ -59,10 +66,11 @@ export interface ChannelStatus {
 /** Layouts do videowall, como num NVR: 1, 4, 9, 16 e 25 divisões. */
 const LAYOUTS = [
   { size: 1, cols: 1, label: '1' },
+  { size: 2, cols: 2, label: '2' },
+  { size: 3, cols: 3, label: '3' },
   { size: 4, cols: 2, label: '4' },
   { size: 9, cols: 3, label: '9' },
   { size: 16, cols: 4, label: '16' },
-  { size: 25, cols: 5, label: '25' },
 ];
 
 /** Bolinha de status de gravação (convenção CFTV): vermelho pulsando = GRAVANDO
@@ -120,6 +128,8 @@ export default function LiveWallPage() {
   const [loading, setLoading] = useState(true);
 
   const [layoutSize, setLayoutSize] = useState(4);
+  const [cols, setCols] = useState(2);           // colunas do mosaico
+  const [showCustom, setShowCustom] = useState(false); // popover do personalizado
   /** slots[i] = channelId exibido no quadro i (null = vazio) */
   const [slots, setSlots] = useState<(string | null)[]>(Array(4).fill(null));
   const [activeLayoutName, setActiveLayoutName] = useState('');
@@ -173,6 +183,7 @@ export default function LiveWallPage() {
 
       if (def) {
         setLayoutSize(def.size);
+        setCols(colsFor(def.size, def.cols));
         // câmeras cadastradas DEPOIS do mosaico ser salvo entram nos quadros
         // livres — senão uma câmera nova simplesmente nunca apareceria
         const filled = Array.from({ length: def.size }, (_, i) => def.slots[i] ?? null);
@@ -260,11 +271,11 @@ export default function LiveWallPage() {
     return nodes;
   }, [channelsById, groups, devices]);
 
-  const current = LAYOUTS.find((l) => l.size === layoutSize) ?? LAYOUTS[1];
-
-  const changeLayoutSize = (size: number) => {
+  /** Aplica um mosaico (nº de quadros + colunas). Presets e personalizado usam isto. */
+  const setMosaic = (size: number, colsValue: number) => {
     setSlots((prev) => Array.from({ length: size }, (_, i) => prev[i] ?? null));
     setLayoutSize(size);
+    setCols(Math.max(1, Math.min(colsValue, 8)));
     setSelectedCell((c) => Math.min(c, size - 1));
     setDirty(true);
   };
@@ -446,7 +457,7 @@ export default function LiveWallPage() {
     try {
       await authRequest('/vms/layouts', {
         method: 'POST',
-        body: JSON.stringify({ name, size: layoutSize, slots, isDefault: asDefault }),
+        body: JSON.stringify({ name, size: layoutSize, cols, slots, isDefault: asDefault }),
       });
       const l = await authRequest<{ layouts: VideoLayout[] }>('/vms/layouts');
       setLayouts(l.layouts || []);
@@ -461,7 +472,7 @@ export default function LiveWallPage() {
     try {
       await authRequest('/vms/layouts', {
         method: 'POST',
-        body: JSON.stringify({ name, size: layoutSize, slots }),
+        body: JSON.stringify({ name, size: layoutSize, cols, slots }),
       });
       const l = await authRequest<{ layouts: VideoLayout[] }>('/vms/layouts');
       setLayouts(l.layouts || []);
@@ -472,6 +483,8 @@ export default function LiveWallPage() {
 
   const applyLayout = (layout: VideoLayout) => {
     setLayoutSize(layout.size);
+    setCols(colsFor(layout.size, layout.cols));
+    setShowCustom(false);
     setSlots(Array.from({ length: layout.size }, (_, i) => layout.slots[i] ?? null));
     setActiveLayoutName(layout.name);
     setSelectedCell(0);
@@ -505,8 +518,8 @@ export default function LiveWallPage() {
   };
 
   const gridStyle = {
-    gridTemplateColumns: `repeat(${current.cols}, minmax(0, 1fr))`,
-    gridTemplateRows: `repeat(${Math.ceil(layoutSize / current.cols)}, minmax(0, 1fr))`,
+    gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))`,
+    gridTemplateRows: `repeat(${Math.ceil(layoutSize / cols)}, minmax(0, 1fr))`,
   };
 
   const expandedChannel = expandedCell !== null && slots[expandedCell]
@@ -683,24 +696,53 @@ export default function LiveWallPage() {
             </span>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 relative">
             <div className="flex items-center rounded border border-zinc-700 overflow-hidden">
-              {LAYOUTS.map((l) => (
-                <button
-                  key={l.size}
-                  type="button"
-                  title={`${l.label} divisões`}
-                  onClick={() => changeLayoutSize(l.size)}
-                  className={`px-2.5 py-1 text-xs font-mono transition-colors ${
-                    layoutSize === l.size
-                      ? 'bg-zinc-200 text-zinc-900 font-bold'
-                      : 'bg-zinc-900 text-zinc-400 hover:bg-zinc-800'
-                  }`}
-                >
-                  {l.label}
-                </button>
-              ))}
+              {LAYOUTS.map((l) => {
+                const active = !showCustom && layoutSize === l.size && cols === l.cols;
+                return (
+                  <button
+                    key={l.size}
+                    type="button"
+                    title={`${l.label} câmera(s)`}
+                    onClick={() => { setShowCustom(false); setMosaic(l.size, l.cols); }}
+                    className={`px-2.5 py-1 text-xs font-mono transition-colors ${
+                      active ? 'bg-zinc-200 text-zinc-900 font-bold' : 'bg-zinc-900 text-zinc-400 hover:bg-zinc-800'
+                    }`}
+                  >
+                    {l.label}
+                  </button>
+                );
+              })}
+              {/* Personalizado: o usuário escolhe colunas × linhas */}
+              <button
+                type="button"
+                title="Mosaico personalizado (colunas × linhas)"
+                onClick={() => setShowCustom((v) => !v)}
+                className={`px-2.5 py-1 text-xs transition-colors ${
+                  showCustom ? 'bg-zinc-200 text-zinc-900 font-bold' : 'bg-zinc-900 text-zinc-400 hover:bg-zinc-800'
+                }`}
+              >
+                Personalizado
+              </button>
             </div>
+
+            {showCustom && (
+              <div className="absolute top-9 right-0 z-30 bg-zinc-900 border border-zinc-700 rounded-lg p-3 shadow-xl flex items-end gap-2">
+                <label className="flex flex-col text-[10px] text-zinc-400 gap-1">Colunas
+                  <input type="number" min={1} max={6} value={cols}
+                    onChange={(e) => { const c = Math.max(1, Math.min(6, Number(e.target.value) || 1)); const rows = Math.max(1, Math.ceil(layoutSize / cols)); setMosaic(c * rows, c); }}
+                    className="w-14 bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-sm text-zinc-100" />
+                </label>
+                <span className="text-zinc-500 pb-1.5">×</span>
+                <label className="flex flex-col text-[10px] text-zinc-400 gap-1">Linhas
+                  <input type="number" min={1} max={6} value={Math.max(1, Math.ceil(layoutSize / cols))}
+                    onChange={(e) => { const r = Math.max(1, Math.min(6, Number(e.target.value) || 1)); setMosaic(cols * r, cols); }}
+                    className="w-14 bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-sm text-zinc-100" />
+                </label>
+                <span className="text-[11px] text-zinc-500 pb-1.5">= {layoutSize} quadros</span>
+              </div>
+            )}
 
             <button
               type="button"

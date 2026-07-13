@@ -510,7 +510,8 @@ model CameraGroup {
 model VideoLayout {
   id        String   @id @default(cuid())
   name      String   @unique
-  size      Int      @default(4) // 1 | 4 | 9 | 16 | 25
+  size      Int      @default(4) // nº de quadros do mosaico
+  cols      Int?     // colunas do mosaico (para o modo personalizado); null = derivar do size
   slots     Json     // ["channelId" | null, ...] — índice = posição no mosaico
   isDefault Boolean  @default(false) @map("is_default")
   createdAt DateTime @default(now()) @map("created_at")

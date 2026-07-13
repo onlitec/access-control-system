@@ -1049,12 +1049,14 @@ function normalizeSlots(slots: unknown, size: number): (string | null)[] {
 // ── POST /api/vms/layouts — cria ou sobrescreve pelo nome ───────────────────
 router.post('/layouts', async (req: Request, res: Response): Promise<void> => {
   try {
-    const { name, size, slots, isDefault } = req.body;
+    const { name, size, slots, isDefault, cols } = req.body;
     if (!name) { res.status(400).json({ error: 'name é obrigatório' }); return; }
-    if (!VALID_LAYOUT_SIZES.includes(Number(size))) {
-      res.status(400).json({ error: `size deve ser um de: ${VALID_LAYOUT_SIZES.join(', ')}` });
+    // 1 a 36 quadros (cobre presets 1/2/3/4/9/16 e o mosaico personalizado)
+    if (!Number.isInteger(Number(size)) || Number(size) < 1 || Number(size) > 36) {
+      res.status(400).json({ error: 'size deve estar entre 1 e 36' });
       return;
     }
+    const cleanCols = cols != null && Number(cols) >= 1 && Number(cols) <= 8 ? Number(cols) : null;
     const cleanSlots = normalizeSlots(slots, Number(size));
 
     if (isDefault) {
@@ -1065,11 +1067,13 @@ router.post('/layouts', async (req: Request, res: Response): Promise<void> => {
       create: {
         name: String(name).trim(),
         size: Number(size),
+        cols: cleanCols,
         slots: cleanSlots,
         isDefault: Boolean(isDefault),
       },
       update: {
         size: Number(size),
+        cols: cleanCols,
         slots: cleanSlots,
         ...(isDefault !== undefined && { isDefault: Boolean(isDefault) }),
       },
