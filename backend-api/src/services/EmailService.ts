@@ -142,4 +142,35 @@ export class EmailService {
         );
         return { messageId: String(info.messageId) };
     }
+
+    /**
+     * Alerta de detecção inteligente (VCA) por e-mail, com o snapshot do evento
+     * embutido no corpo. `to` pode ser uma lista separada por vírgula.
+     */
+    static async sendVcaAlert(
+        to: string,
+        opts: { title: string; cameraName: string; when: Date; image?: Buffer },
+    ): Promise<void> {
+        const { transporter, smtp } = await this.getTransporter();
+        const when = opts.when.toLocaleString('pt-BR');
+        const imgTag = opts.image ? '<img src="cid:vca-snap" alt="Snapshot" style="width:100%;border-radius:8px;margin-top:12px">' : '';
+        await transporter.sendMail({
+            from: `"${smtp.fromName}" <${smtp.from}>`,
+            to,
+            subject: `[OnliAcesso] ${opts.title} — ${opts.cameraName}`,
+            text: `${opts.title}\nCâmera: ${opts.cameraName}\nQuando: ${when}`,
+            html: `
+<div style="font-family:Arial,Helvetica,sans-serif;max-width:520px;margin:0 auto;padding:24px;border:1px solid #e5e7eb;border-radius:12px">
+  <h2 style="color:#b91c1c;margin:0 0 8px">🚨 ${opts.title}</h2>
+  <p style="color:#374151;font-size:14px;line-height:1.6">
+    Câmera: <strong>${opts.cameraName}</strong><br>
+    Quando: ${when}
+  </p>
+  ${imgTag}
+  <p style="color:#6b7280;font-size:12px;margin-top:16px">Detecção inteligente do OnliAcesso (VCA por software).</p>
+</div>`,
+            attachments: opts.image ? [{ filename: 'snapshot.jpg', content: opts.image, cid: 'vca-snap' }] : [],
+        });
+        console.log(`[Email] Alerta VCA enviado para ${to} (${opts.cameraName})`);
+    }
 }

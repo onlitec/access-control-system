@@ -13,6 +13,7 @@ import { config } from '../config/unifiedConfig';
 import { authMiddleware, adminMiddleware } from '../middleware/auth';
 import { digestFetch } from '../utils/digest-fetch.utils';
 import { emitEvent } from '../services/EventBusService';
+import { EmailService } from '../services/EmailService';
 import { buildStreamUrls, subPathName } from '../vms/rtsp';
 
 const execFileAsync = promisify(execFile);
@@ -171,6 +172,38 @@ router.post('/internal/event', async (req: Request, res: Response): Promise<void
     });
     res.json({ success: true });
   } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── POST /api/vms/internal/notify — notificação externa de um disparo VCA ────
+// Chamado pelo vms-service (Actions.notify). Envia e-mail com o snapshot anexo
+// aos destinatários da regra. WhatsApp/SMS ficam como TODO (targets.phones).
+router.post('/internal/notify', async (req: Request, res: Response): Promise<void> => {
+  if (!VMS_INTERNAL_TOKEN || req.headers['x-vms-token'] !== VMS_INTERNAL_TOKEN) {
+    res.status(401).json({ error: 'token interno inválido' });
+    return;
+  }
+  try {
+    const { channelName, ruleName, className, snapshotUrl, targets } = req.body ?? {};
+    const emails: string[] = Array.isArray(targets?.emails) ? targets.emails.filter(Boolean) : [];
+    if (emails.length === 0) { res.json({ success: true, skipped: 'sem destinatários' }); return; }
+    if (!(await EmailService.isConfigured())) { res.json({ success: true, skipped: 'SMTP não configurado' }); return; }
+
+    // lê o snapshot do disco (a URL é /api/vms/vca-snapshots/<ch>/<file>)
+    let image: Buffer | undefined;
+    const m = String(snapshotUrl || '').match(/vca-snapshots\/([A-Za-z0-9_-]+)\/([0-9]+\.jpg)$/);
+    if (m) { try { image = await fs.readFile(path.join(VCA_SNAPSHOT_DIR, m[1], m[2])); } catch { /* segue sem imagem */ } }
+
+    await EmailService.sendVcaAlert(emails.join(','), {
+      title: `${ruleName || 'Detecção'}${className ? ` — ${className}` : ''}`,
+      cameraName: channelName || 'câmera',
+      when: new Date(),
+      image,
+    });
+    res.json({ success: true, sent: emails.length });
+  } catch (err: any) {
+    console.error('[VMS] notify falhou:', err.message);
     res.status(500).json({ error: err.message });
   }
 });

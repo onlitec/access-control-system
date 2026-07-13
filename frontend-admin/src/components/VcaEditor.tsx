@@ -297,6 +297,18 @@ export default function VcaEditor({ channelId, channelName, onClose }: {
                             onClick={(e) => { e.stopPropagation(); toggleRuleAction(i, a.id); }}>{a.label}</span>
                         ))}
                       </div>
+                      {r.actions.includes('notify') && (
+                        <div style={{ marginLeft: 16, marginTop: 6 }}>
+                          <span style={label}>E-mails (separados por vírgula)</span>
+                          <input
+                            value={(r.notifyTargets?.emails || []).join(', ')}
+                            onClick={(e) => e.stopPropagation()}
+                            onChange={(e) => updateRule(i, { notifyTargets: { ...r.notifyTargets, emails: e.target.value.split(',').map((s) => s.trim()).filter(Boolean) } })}
+                            placeholder="portaria@condominio.com, sindico@..."
+                            style={{ width: '100%', fontSize: '0.75rem', padding: '4px 8px', background: 'var(--bg-primary)', color: 'var(--text-primary)', border: '1px solid var(--border-primary)', borderRadius: 4 }}
+                          />
+                        </div>
+                      )}
                     </div>
                   ))}
                 </div>
