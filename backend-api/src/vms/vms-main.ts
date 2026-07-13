@@ -11,6 +11,7 @@ import { SegmentIndexer } from './SegmentIndexer';
 import { MotionWatcher } from './MotionWatcher';
 import { RetentionWorker } from './RetentionWorker';
 import { UploadWorker } from './UploadWorker';
+import { VcaEngine } from './vca/VcaEngine';
 import { VMS_PORT, VMS_INTERNAL_TOKEN, VMS_RECORDINGS_DIR, MEDIAMTX_API_URL } from './config';
 
 /**
@@ -31,6 +32,7 @@ const indexer = new SegmentIndexer(scheduler);
 const motionWatcher = new MotionWatcher(scheduler);
 const retention = new RetentionWorker();
 const uploader = new UploadWorker();
+const vca = new VcaEngine(mtx, scheduler);
 
 const app = express();
 app.use(express.json());
@@ -55,6 +57,7 @@ app.post('/internal/reload', async (_req: Request, res: Response) => {
     scheduler.reset();
     await scheduler.tick();
     await motionWatcher.sync();
+    await vca.reconcile();
     res.json({ success: true });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
@@ -160,9 +163,11 @@ async function main(): Promise<void> {
   await scheduler.tick();
   await motionWatcher.sync();
   await indexer.reconcileOrphans();
+  await vca.reconcile().catch((err) => console.error(`[VCA] reconcile inicial: ${err.message}`));
 
   every(60_000, () => reconciler.reconcile(), 'reconcile');
   every(30_000, () => scheduler.tick(), 'scheduler');
+  every(60_000, () => vca.reconcile(), 'vca');
   // rede de segurança: indexa qualquer gravação que o hook do MediaMTX não
   // reportou (ele não dispara quando a gravação é interrompida no meio)
   every(5 * 60_000, () => indexer.reconcileOrphans(), 'scan-gravacoes');

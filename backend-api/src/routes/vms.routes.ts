@@ -22,6 +22,8 @@ const router = Router();
 const VMS_PORT = Number(process.env.VMS_PORT || 3011);
 const VMS_INTERNAL_TOKEN = process.env.VMS_INTERNAL_TOKEN || '';
 const VMS_RECORDINGS_DIR = process.env.VMS_RECORDINGS_DIR || path.join(process.cwd(), 'recordings');
+// snapshots do VCA ficam ao lado das gravações (mesmo esquema do vms-service)
+const VCA_SNAPSHOT_DIR = path.join(path.dirname(VMS_RECORDINGS_DIR), 'vca-snapshots');
 const RCLONE_PATH = process.env.RCLONE_PATH || 'rclone';
 const RCLONE_CONFIG = process.env.RCLONE_CONFIG || '';
 
@@ -152,7 +154,7 @@ router.post('/internal/event', async (req: Request, res: Response): Promise<void
     return;
   }
   try {
-    const { type, label, channelId, channelName, deviceName } = req.body ?? {};
+    const { type, label, channelId, channelName, deviceName, snapshotUrl, score } = req.body ?? {};
     await emitEvent({
       personName: `${label || 'Evento de câmera'} — ${channelName || 'câmera'}`,
       personType: 'system',
@@ -161,7 +163,11 @@ router.post('/internal/event', async (req: Request, res: Response): Promise<void
       eventType: String(type || 'vms'),
       source: 'vms',
       status: 'authorized',
-      metadata: { channelId: channelId ?? null },
+      metadata: {
+        channelId: channelId ?? null,
+        ...(snapshotUrl ? { snapshotUrl } : {}),
+        ...(score != null ? { score } : {}),
+      },
     });
     res.json({ success: true });
   } catch (err: any) {
@@ -213,6 +219,25 @@ router.get('/recordings/:id/file', async (req: Request, res: Response): Promise<
     res.setHeader('Content-Length', stat.size);
     createReadStream(absFile).pipe(res);
   }
+});
+
+// ── GET /api/vms/vca-snapshots/:channelId/:file — JPEG do evento VCA (auth ?token=) ──
+// Servido por token na query porque carrega em <img> no feed (sem header Authorization).
+router.get('/vca-snapshots/:channelId/:file', async (req: Request, res: Response): Promise<void> => {
+  const token = (req.query.token as string) || '';
+  try {
+    const payload = jwt.verify(token, config.JWT.SECRET);
+    if (!isSystemUserToken(payload)) { res.status(403).end(); return; }
+  } catch { res.status(401).end(); return; }
+
+  // trava contra path traversal: só nomes simples
+  const { channelId, file } = req.params;
+  if (!/^[A-Za-z0-9_-]+$/.test(channelId) || !/^[0-9]+\.jpg$/.test(file)) { res.status(400).end(); return; }
+  const abs = path.join(VCA_SNAPSHOT_DIR, channelId, file);
+  try { await fs.stat(abs); } catch { res.status(404).end(); return; }
+  res.setHeader('Content-Type', 'image/jpeg');
+  res.setHeader('Cache-Control', 'private, max-age=86400');
+  createReadStream(abs).pipe(res);
 });
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -576,6 +601,79 @@ router.put('/channels/:id/recording', adminMiddleware, async (req: Request, res:
     res.json({ success: true, recording, motionDetection });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
+  }
+});
+
+// ── GET /api/vms/channels/:id/vca — config de VCA por software ────────────────
+router.get('/channels/:id/vca', async (req: Request, res: Response): Promise<void> => {
+  try {
+    const vca = await prisma.videoVcaConfig.findUnique({ where: { channelId: req.params.id } });
+    res.json({ vca: vca ?? null });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── PUT /api/vms/channels/:id/vca (admin) — regras de VCA por software ────────
+const VCA_RULE_TYPES = new Set(['motion_zone', 'line_cross', 'intrusion']);
+const VCA_ACTIONS = new Set(['record', 'alert', 'notify', 'snapshot']);
+
+router.put('/channels/:id/vca', adminMiddleware, async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { enabled, classes, maxFps, minScore, cooldownSec, rules } = req.body ?? {};
+    const channel = await prisma.videoChannel.findUnique({ where: { id: req.params.id } });
+    if (!channel) { res.status(404).json({ error: 'Canal não encontrado' }); return; }
+
+    // sanea as regras (geometria normalizada 0–1, tipos/ações válidos)
+    let cleanRules: any;
+    if (rules !== undefined) {
+      if (!Array.isArray(rules)) { res.status(400).json({ error: 'rules deve ser uma lista' }); return; }
+      cleanRules = rules.map((r: any) => {
+        if (!VCA_RULE_TYPES.has(r?.type)) throw new Error(`tipo de regra inválido: ${r?.type}`);
+        const points = Array.isArray(r?.geometry?.points) ? r.geometry.points : [];
+        const min = r.type === 'line_cross' ? 2 : 3;
+        if (points.length < min) throw new Error(`regra '${r?.name || r?.type}' precisa de ao menos ${min} pontos`);
+        const actions = Array.isArray(r.actions) ? r.actions.filter((a: string) => VCA_ACTIONS.has(a)) : [];
+        return {
+          id: String(r.id || randomBytes(6).toString('hex')),
+          name: String(r.name || 'Regra'),
+          type: r.type,
+          geometry: { points: points.map((p: any[]) => [Number(p[0]), Number(p[1])]) },
+          direction: ['in', 'out', 'both'].includes(r.direction) ? r.direction : 'both',
+          schedule: Array.isArray(r.schedule) ? r.schedule : undefined,
+          actions: actions.length ? actions : ['record', 'alert', 'snapshot'],
+          notifyTargets: r.notifyTargets || undefined,
+        };
+      });
+    }
+
+    const data = {
+      ...(enabled !== undefined && { enabled: Boolean(enabled) }),
+      ...(classes !== undefined && { classes: classes ?? Prisma.DbNull }),
+      ...(maxFps !== undefined && { maxFps: Math.min(Math.max(Number(maxFps), 1), 15) }),
+      ...(minScore !== undefined && { minScore: Math.min(Math.max(Number(minScore), 0.1), 0.95) }),
+      ...(cooldownSec !== undefined && { cooldownSec: Math.max(Number(cooldownSec), 1) }),
+      ...(cleanRules !== undefined && { rules: cleanRules }),
+    };
+
+    const vca = await prisma.videoVcaConfig.upsert({
+      where: { channelId: channel.id },
+      create: {
+        channelId: channel.id,
+        enabled: Boolean(enabled),
+        classes: classes ?? Prisma.DbNull,
+        maxFps: maxFps !== undefined ? Math.min(Math.max(Number(maxFps), 1), 15) : 5,
+        minScore: minScore !== undefined ? Math.min(Math.max(Number(minScore), 0.1), 0.95) : 0.4,
+        cooldownSec: cooldownSec !== undefined ? Math.max(Number(cooldownSec), 1) : 15,
+        rules: cleanRules ?? [],
+      },
+      update: data,
+    });
+
+    notifyVmsReload();
+    res.json({ success: true, vca });
+  } catch (err: any) {
+    res.status(400).json({ error: err.message });
   }
 });
 

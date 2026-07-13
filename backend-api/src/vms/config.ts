@@ -41,3 +41,14 @@ export const VMS_ALWAYS_ON = (process.env.VMS_ALWAYS_ON || 'true').toLowerCase()
 
 /** Base do backend-api para repassar eventos (motion → SSE via emitEvent). */
 export const VMS_BACKEND_API_URL = (process.env.VMS_BACKEND_API_URL || 'http://127.0.0.1:3001').replace(/\/+$/, '');
+
+// ── VCA por software (análise de vídeo no servidor) ──────────────────────────
+
+/** RTSP loopback do MediaMTX (a análise consome os paths locais daqui). */
+export const VMS_RTSP_LOOPBACK = (process.env.VMS_RTSP_LOOPBACK || 'rtsp://127.0.0.1:8554').replace(/\/+$/, '');
+
+/** Caminho do modelo YOLO (.onnx). Vazio/ausente = VCA fica inativo. */
+export const VCA_MODEL_PATH = process.env.VCA_MODEL_PATH || '';
+
+/** Liga o motor de VCA por software (além do modelo existir e do canal optar). */
+export const VCA_ENABLED = (process.env.VCA_ENABLED || 'true').toLowerCase() !== 'false';

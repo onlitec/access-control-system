@@ -485,6 +485,7 @@ model VideoChannel {
   groupId     String?               @map("group_id") // pasta na árvore do videowall
   group       CameraGroup?          @relation(fields: [groupId], references: [id], onDelete: SetNull)
   recording   VideoRecordingConfig?
+  vca         VideoVcaConfig?
   segments    RecordingSegment[]
   createdAt   DateTime              @default(now()) @map("created_at")
   updatedAt   DateTime              @updatedAt @map("updated_at")
@@ -534,6 +535,32 @@ model VideoRecordingConfig {
   updatedAt     DateTime     @updatedAt @map("updated_at")
 
   @@map("video_recording_configs")
+}
+
+/// VCA por software (análise no servidor, independente da câmera): detecção de
+/// objetos (YOLO) + geometria de zona/linha/área. Opt-in por canal.
+model VideoVcaConfig {
+  id          String       @id @default(cuid())
+  channelId   String       @unique @map("channel_id")
+  channel     VideoChannel @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  enabled     Boolean      @default(false)
+  /// classes COCO que interessam; null = ["person"]. Ex.: ["person","car","truck","motorcycle","bus","bicycle"]
+  classes     Json?
+  /// teto de quadros analisados por segundo (custo de CPU). Gate de movimento roda antes da IA.
+  maxFps      Int          @default(5) @map("max_fps")
+  /// confiança mínima do detector (0–1) para considerar um objeto.
+  minScore    Float        @default(0.4) @map("min_score")
+  /// silêncio mínimo entre disparos da MESMA regra, em segundos.
+  cooldownSec Int          @default(15) @map("cooldown_sec")
+  /// Regras desenhadas pelo operador. Cada item:
+  /// {id,name,type:"motion_zone"|"line_cross"|"intrusion",
+  ///  geometry:{points:[[x,y],...] normalizado 0–1},
+  ///  direction:"in"|"out"|"both" (line_cross), schedule:[{dow,start,end}]?,
+  ///  actions:["record","alert","notify","snapshot"], notifyTargets:{emails:[],phones:[]}}
+  rules       Json         @default("[]")
+  updatedAt   DateTime     @updatedAt @map("updated_at")
+
+  @@map("video_vca_configs")
 }
 
 model StorageDestination {
