@@ -335,7 +335,13 @@ const VideoPlayer = forwardRef(function VideoPlayer(
       if (disposed) return;
       cleanup();
       setError(null);
-      if (typeof RTCPeerConnection !== 'undefined') {
+      // Cloud é HLS-only: a mídia do WebRTC (UDP) não atravessa o Cloudflare
+      // Tunnel, então o WebRTC só ficava vários segundos em "connecting" antes
+      // de cair para HLS — tela preta à toa. Vamos direto ao HLS (baixa
+      // latência). Para reativar o WebRTC (ex.: abrindo TURN), defina
+      // VITE_PREFER_WEBRTC=1 no build da PWA.
+      const preferWebRtc = import.meta.env?.VITE_PREFER_WEBRTC === '1';
+      if (preferWebRtc && typeof RTCPeerConnection !== 'undefined') {
         void startWebRtc();
       } else {
         void startHls();
@@ -380,9 +386,9 @@ const VideoPlayer = forwardRef(function VideoPlayer(
           <span>Conectando…</span>
         </div>
       )}
-      {/* HLS = plano B; avisa que essa câmera está com mais atraso */}
+      {/* HLS é o transporte padrão do acesso remoto (pela nuvem) */}
       {transport === 'hls' && !error && (
-        <span className="badge-hls" title="Transmitindo por HLS (mais atraso) — o WebRTC não pôde ser usado nesta rede">
+        <span className="badge-hls" title="Transmissão ao vivo por HLS (acesso remoto pela nuvem)">
           HLS
         </span>
       )}
