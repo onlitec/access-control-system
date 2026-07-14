@@ -27,6 +27,13 @@ const VMS_RECORDINGS_DIR = process.env.VMS_RECORDINGS_DIR || path.join(process.c
 const VCA_SNAPSHOT_DIR = path.join(path.dirname(VMS_RECORDINGS_DIR), 'vca-snapshots');
 const RCLONE_PATH = process.env.RCLONE_PATH || 'rclone';
 const RCLONE_CONFIG = process.env.RCLONE_CONFIG || '';
+const FFMPEG = process.env.FFMPEG_PATH || 'ffmpeg';
+// Playback server do MediaMTX (loopback) — concatena/recorta as gravações por tempo.
+const MTX_PLAYBACK = process.env.VMS_PLAYBACK_URL || 'http://127.0.0.1:9996';
+// Teto do clipe de evidência (recodificação com carimbo é cara); 2h por padrão.
+const EXPORT_MAX_SECONDS = Number(process.env.VMS_EXPORT_MAX_SECONDS || 7200);
+// Fonte do drawtext. No Linux o fontconfig acha uma padrão; no Windows aponte aqui.
+const VMS_FONT_PATH = process.env.VMS_FONT_PATH || '';
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -66,6 +73,28 @@ function notifyVmsReload(): void {
 
 function serializeSegment<T extends { sizeBytes: bigint }>(segment: T): Omit<T, 'sizeBytes'> & { sizeBytes: number } {
   return { ...segment, sizeBytes: Number(segment.sizeBytes) };
+}
+
+/**
+ * Câmeras que um usuário pode acessar. Retorna `null` quando o usuário tem
+ * acesso a TODAS (cameraAccessAll = true, o padrão) — nesse caso não há filtro.
+ * Caso contrário, um Set com os channelIds liberados. Base da permissão por
+ * câmera (aplicada em /devices, stream-auth, gravações e playback).
+ */
+async function allowedChannelIds(userId: string | undefined): Promise<Set<string> | null> {
+  if (!userId) return null;
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { cameraAccessAll: true, cameraAccess: { select: { channelId: true } } },
+  }).catch(() => null);
+  if (!user || user.cameraAccessAll) return null; // null = todas as câmeras
+  return new Set(user.cameraAccess.map((c) => c.channelId));
+}
+
+/** true se o usuário pode acessar o canal (null = sem restrição). */
+function channelAllowed(allowed: Set<string> | null, channelId: string | null | undefined): boolean {
+  if (allowed === null) return true;
+  return !!channelId && allowed.has(channelId);
 }
 
 /**
@@ -126,8 +155,8 @@ async function testDevice(protocol: string, ip: string, httpPort: number, rtspPo
 // O MediaMTX envia {user, password, ip, action, path, protocol, query} e espera
 // 2xx (permitido) ou 401. O player passa o JWT como query (?jwt=...), pois
 // <video>/hls.js não enviam header Authorization.
-router.post('/stream-auth', (req: Request, res: Response): void => {
-  const { query, password } = (req.body ?? {}) as { query?: string; password?: string };
+router.post('/stream-auth', async (req: Request, res: Response): Promise<void> => {
+  const { query, password, path: reqPath } = (req.body ?? {}) as { query?: string; password?: string; path?: string };
   const params = new URLSearchParams(String(query || ''));
   const token = params.get('jwt') || params.get('token') || '';
 
@@ -136,11 +165,24 @@ router.post('/stream-auth', (req: Request, res: Response): void => {
     return;
   }
   try {
-    const payload = jwt.verify(token, config.JWT.SECRET);
+    const payload = jwt.verify(token, config.JWT.SECRET) as any;
     // morador/onboarding não podem ver câmeras, mesmo com JWT válido
     if (!isSystemUserToken(payload)) {
       res.status(401).json({ error: 'não autorizado' });
       return;
+    }
+    // ENFORCE permissão por câmera: o path pedido é o streamPath (ou <path>-sub).
+    // Esta é a trava real — sem ela o usuário poderia abrir a URL do stream direto.
+    const allowed = await allowedChannelIds(payload.id);
+    if (allowed !== null) {
+      const base = String(reqPath || '').replace(/-sub$/, '');
+      const channel = base
+        ? await prisma.videoChannel.findUnique({ where: { streamPath: base }, select: { id: true } }).catch(() => null)
+        : null;
+      if (!channelAllowed(allowed, channel?.id)) {
+        res.status(401).json({ error: 'sem permissão para esta câmera' });
+        return;
+      }
     }
     res.status(200).json({ ok: true });
   } catch {
@@ -219,13 +261,16 @@ router.post('/internal/notify', async (req: Request, res: Response): Promise<voi
 router.get('/recordings/:id/file', async (req: Request, res: Response): Promise<void> => {
   const token = (req.query.token as string) || '';
   if (!token) { res.status(401).end(); return; }
+  let filePayload: any;
   try {
-    const payload = jwt.verify(token, config.JWT.SECRET);
-    if (!isSystemUserToken(payload)) { res.status(403).end(); return; }
+    filePayload = jwt.verify(token, config.JWT.SECRET);
+    if (!isSystemUserToken(filePayload)) { res.status(403).end(); return; }
   } catch { res.status(401).end(); return; }
 
   const segment = await prisma.recordingSegment.findUnique({ where: { id: req.params.id } }).catch(() => null);
   if (!segment || segment.status === 'deleted_local') { res.status(404).json({ error: 'Gravação não encontrada' }); return; }
+  const fileAllowed = await allowedChannelIds(filePayload.id);
+  if (!channelAllowed(fileAllowed, segment.channelId)) { res.status(403).json({ error: 'sem permissão para esta câmera' }); return; }
 
   const absFile = path.join(VMS_RECORDINGS_DIR, segment.filePath);
   let stat;
@@ -280,6 +325,142 @@ router.get('/vca-snapshots/:channelId/:file', async (req: Request, res: Response
   createReadStream(abs).pipe(res);
 });
 
+// ── Playback (reprodução contínua + evidência) ───────────────────────────────
+// Motor: playback server do MediaMTX (/get concatena os segmentos fMP4 e recorta
+// por [start, duration]). Auth por ?token= (carregado em <video>/<a download>,
+// sem header Authorization) — mesmo molde de /recordings/:id/file.
+
+/** Valida o token da query; devolve o payload ou null (já responde 401/403). */
+function authPlaybackToken(req: Request, res: Response): any | null {
+  const token = (req.query.token as string) || '';
+  if (!token) { res.status(401).end(); return null; }
+  try {
+    const payload = jwt.verify(token, config.JWT.SECRET);
+    if (!isSystemUserToken(payload)) { res.status(403).end(); return null; }
+    return payload;
+  } catch { res.status(401).end(); return null; }
+}
+
+/**
+ * Resolve o nome do canal e o **path onde a gravação foi feita** no MediaMTX
+ * (sub-stream quando `useSubStream`, senão o principal) — é esse path que o
+ * playback server conhece; o streamPath principal pode não ter gravações.
+ */
+async function resolvePlaybackChannel(channelId: string) {
+  if (!channelId) return null;
+  const ch = await prisma.videoChannel.findUnique({
+    where: { id: channelId },
+    select: { id: true, name: true, streamPath: true, recording: { select: { useSubStream: true } } },
+  });
+  if (!ch) return null;
+  const recordPath = ch.recording?.useSubStream ? subPathName(ch.streamPath) : ch.streamPath;
+  return { id: ch.id, name: ch.name, recordPath };
+}
+
+function playbackGetUrl(streamPath: string, startIso: string, durationSec: number, format: 'mp4' | 'fmp4'): string {
+  const q = new URLSearchParams({ path: streamPath, start: startIso, duration: String(durationSec), format });
+  return `${MTX_PLAYBACK}/get?${q.toString()}`;
+}
+
+// ── GET /api/vms/playback/stream — MP4 contínuo a partir de um instante ──────
+// Faz proxy do /get (stream copy, sem recodificar). O player pede uma janela a
+// partir do ponto clicado; ao chegar num gap, o /get devolve menos e o front
+// avança para o próximo trecho (auto-advance pela linha do tempo).
+router.get('/playback/stream', async (req: Request, res: Response): Promise<void> => {
+  const streamPayload = authPlaybackToken(req, res);
+  if (!streamPayload) return;
+  const { channelId, start } = req.query as Record<string, string | undefined>;
+  const duration = Math.min(Math.max(Number(req.query.duration) || 3600, 1), EXPORT_MAX_SECONDS);
+  if (!channelId || !start) { res.status(400).json({ error: 'channelId e start são obrigatórios' }); return; }
+  if (!channelAllowed(await allowedChannelIds(streamPayload.id), channelId)) { res.status(403).json({ error: 'sem permissão para esta câmera' }); return; }
+  const channel = await resolvePlaybackChannel(channelId);
+  if (!channel) { res.status(404).json({ error: 'Canal não encontrado' }); return; }
+
+  try {
+    const upstream = await fetch(playbackGetUrl(channel.recordPath, start, duration, 'mp4'));
+    if (!upstream.ok || !upstream.body) {
+      // 500 aqui geralmente é "não há gravação nesse instante" (gap)
+      res.status(upstream.status === 500 ? 404 : upstream.status).json({ error: 'Sem gravação neste trecho' });
+      return;
+    }
+    res.status(200);
+    res.setHeader('Content-Type', 'video/mp4');
+    const cl = upstream.headers.get('content-length'); if (cl) res.setHeader('Content-Length', cl);
+    upstream.body.pipe(res);
+    upstream.body.on('error', () => res.destroy());
+    res.on('close', () => { try { (upstream.body as any)?.destroy?.(); } catch { /* noop */ } });
+  } catch (err: any) {
+    if (!res.headersSent) res.status(502).json({ error: `Playback indisponível: ${err.message}` });
+  }
+});
+
+// ── GET /api/vms/playback/export — clipe de EVIDÊNCIA com carimbo queimado ────
+// ffmpeg lê direto do /get do MediaMTX (recorte exato dentro do trecho contínuo)
+// e queima data/hora que avança + nome da câmera. Recodifica (drawtext exige).
+router.get('/playback/export', async (req: Request, res: Response): Promise<void> => {
+  const exportPayload = authPlaybackToken(req, res);
+  if (!exportPayload) return;
+  const { channelId, start } = req.query as Record<string, string | undefined>;
+  const duration = Number(req.query.duration) || 0;
+  if (!channelId || !start || duration <= 0) { res.status(400).json({ error: 'channelId, start e duration são obrigatórios' }); return; }
+  if (duration > EXPORT_MAX_SECONDS) {
+    res.status(400).json({ error: `Trecho muito longo (máx ${Math.round(EXPORT_MAX_SECONDS / 60)} min)` });
+    return;
+  }
+  if (!channelAllowed(await allowedChannelIds(exportPayload.id), channelId)) { res.status(403).json({ error: 'sem permissão para esta câmera' }); return; }
+  const channel = await resolvePlaybackChannel(channelId);
+  if (!channel) { res.status(404).json({ error: 'Canal não encontrado' }); return; }
+
+  const startEpoch = Math.floor(new Date(start).getTime() / 1000);
+  if (!Number.isFinite(startEpoch)) { res.status(400).json({ error: 'start inválido' }); return; }
+
+  // texto do overlay: nome da câmera (topo) + relógio que avança (base). Escapa
+  // caracteres especiais do drawtext no nome da câmera.
+  const safeName = channel.name.replace(/[\\:']/g, ' ').replace(/[%{}]/g, '');
+  // fontfile no filtergraph: barras normais e o ":" do drive escapado como "\\:"
+  // (dois níveis de escape do ffmpeg no Windows). No Linux o path não tem ":",
+  // então o replace é inócuo. Sem aspas — elas não protegem o ":" do drive.
+  const fontOpt = VMS_FONT_PATH
+    ? `fontfile=${VMS_FONT_PATH.replace(/\\/g, '/').replace(/:/g, '\\\\:')}:`
+    : '';
+  const box = `:fontsize=18:fontcolor=white:box=1:boxcolor=black@0.5:boxborderw=6`;
+  const vf = [
+    `drawtext=${fontOpt}text='${safeName}':x=12:y=12${box}`,
+    `drawtext=${fontOpt}text='%{pts\\:localtime\\:${startEpoch}}':x=12:y=h-34${box}`,
+  ].join(',');
+
+  const inputUrl = playbackGetUrl(channel.recordPath, start, Math.ceil(duration), 'mp4');
+  const stamp = new Date(start).toISOString().replace(/[:.]/g, '-').slice(0, 19);
+  const filename = `${slugify(channel.name)}_${stamp}_${Math.round(duration)}s.mp4`;
+
+  const args = [
+    '-y', '-hide_banner', '-loglevel', 'error',
+    '-fflags', '+discardcorrupt',
+    '-i', inputUrl,
+    '-t', String(duration),
+    '-vf', vf,
+    '-c:v', 'libx264', '-preset', 'veryfast', '-pix_fmt', 'yuv420p',
+    '-an',
+    '-movflags', 'frag_keyframe+empty_moov+faststart',
+    '-f', 'mp4', 'pipe:1',
+  ];
+
+  res.setHeader('Content-Type', 'video/mp4');
+  res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+
+  const ff = spawn(FFMPEG, args, { windowsHide: true });
+  ff.stdout.pipe(res);
+  let errBuf = '';
+  ff.stderr.on('data', (d) => { errBuf += d.toString().slice(0, 2000); });
+  ff.on('error', (err) => { if (!res.headersSent) res.status(500).json({ error: `ffmpeg falhou: ${err.message}` }); });
+  ff.on('close', (code) => {
+    if (code !== 0 && !res.headersSent) res.status(500).json({ error: `Falha ao gerar evidência: ${errBuf}` });
+    else res.end();
+  });
+  // se o cliente cancelar o download, mata o ffmpeg
+  res.on('close', () => { if (!ff.killed) ff.kill('SIGKILL'); });
+});
+
 // ═════════════════════════════════════════════════════════════════════════════
 // Endpoints autenticados (usuário do sistema; mutações exigem admin)
 // requireSystemUser barra tokens de morador/onboarding, que são assinados com
@@ -289,16 +470,65 @@ router.use(authMiddleware);
 router.use(requireSystemUser);
 
 // ── GET /api/vms/devices ─────────────────────────────────────────────────────
-router.get('/devices', async (_req: Request, res: Response): Promise<void> => {
+router.get('/devices', async (req: Request, res: Response): Promise<void> => {
   try {
     const devices = await prisma.videoDevice.findMany({
       select: { ...deviceSelect, channels: { include: channelInclude, orderBy: { channelNo: 'asc' } } },
       orderBy: { name: 'asc' },
     });
-    res.json({ devices });
+    // filtra por permissão de câmera do usuário; dispositivos sem canal liberado somem
+    const allowed = await allowedChannelIds((req as any).user?.id);
+    const filtered = allowed === null ? devices : devices
+      .map((d) => ({ ...d, channels: d.channels.filter((c) => allowed.has(c.id)) }))
+      .filter((d) => d.channels.length > 0);
+    res.json({ devices: filtered });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
+});
+
+// ── Permissão de câmera por usuário (admin) ─────────────────────────────────
+// TODAS as câmeras para o seletor do admin — ignora a restrição do próprio
+// admin, pois quem gerencia precisa enxergar todas para atribuir.
+router.get('/all-channels', adminMiddleware, async (_req: Request, res: Response): Promise<void> => {
+  try {
+    const devices = await prisma.videoDevice.findMany({
+      select: { name: true, channels: { select: { id: true, name: true }, orderBy: { channelNo: 'asc' } } },
+      orderBy: { name: 'asc' },
+    });
+    const channels = devices.flatMap((d) => d.channels.map((c) => ({ id: c.id, name: c.name, deviceName: d.name })));
+    res.json({ channels });
+  } catch (err: any) { res.status(500).json({ error: err.message }); }
+});
+
+router.get('/users/:id/cameras', adminMiddleware, async (req: Request, res: Response): Promise<void> => {
+  try {
+    const user = await prisma.user.findUnique({
+      where: { id: req.params.id },
+      select: { cameraAccessAll: true, cameraAccess: { select: { channelId: true } } },
+    });
+    if (!user) { res.status(404).json({ error: 'Usuário não encontrado' }); return; }
+    res.json({ all: user.cameraAccessAll, channelIds: user.cameraAccess.map((c) => c.channelId) });
+  } catch (err: any) { res.status(500).json({ error: err.message }); }
+});
+
+router.put('/users/:id/cameras', adminMiddleware, async (req: Request, res: Response): Promise<void> => {
+  try {
+    const userId = req.params.id;
+    const all = req.body?.all !== false; // padrão: todas
+    const channelIds: string[] = Array.isArray(req.body?.channelIds)
+      ? req.body.channelIds.filter((x: any) => typeof x === 'string') : [];
+    const exists = await prisma.user.findUnique({ where: { id: userId }, select: { id: true } });
+    if (!exists) { res.status(404).json({ error: 'Usuário não encontrado' }); return; }
+    await prisma.$transaction([
+      prisma.user.update({ where: { id: userId }, data: { cameraAccessAll: all } }),
+      prisma.userCameraAccess.deleteMany({ where: { userId } }),
+      ...(!all && channelIds.length
+        ? [prisma.userCameraAccess.createMany({ data: channelIds.map((channelId) => ({ userId, channelId })), skipDuplicates: true })]
+        : []),
+    ]);
+    res.json({ success: true, all, channelIds: all ? [] : channelIds });
+  } catch (err: any) { res.status(500).json({ error: err.message }); }
 });
 
 // ── POST /api/vms/devices (admin only) ───────────────────────────────────────
@@ -925,9 +1155,15 @@ router.get('/recordings', async (req: Request, res: Response): Promise<void> => 
   try {
     const { channelId, from, to } = req.query as Record<string, string | undefined>;
     const limit = Math.min(Number(req.query.limit) || 200, 1000);
+    // permissão de câmera: restringe as gravações às câmeras liberadas
+    const allowed = await allowedChannelIds((req as any).user?.id);
+    if (allowed !== null && channelId && !allowed.has(channelId)) { res.json({ recordings: [] }); return; }
+    const channelFilter = channelId
+      ? { channelId }
+      : (allowed !== null ? { channelId: { in: [...allowed] } } : {});
     const segments = await prisma.recordingSegment.findMany({
       where: {
-        ...(channelId ? { channelId } : {}),
+        ...channelFilter,
         ...(from || to ? {
           startedAt: {
             ...(from ? { gte: new Date(from) } : {}),
@@ -944,6 +1180,53 @@ router.get('/recordings', async (req: Request, res: Response): Promise<void> => 
       take: limit,
     });
     res.json({ recordings: segments.map(serializeSegment) });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── GET /api/vms/playback/timeline?channelId&from&to ─────────────────────────
+// Linha do tempo para o player: intervalos gravados (do banco, confiável) e os
+// "trechos contínuos" (segmentos agrupados com gap < GAP_TOL) para o front saber
+// onde a reprodução precisa saltar. Não usa o /list do MediaMTX (instável com o
+// segmento em curso na v1.9.3).
+router.get('/playback/timeline', async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { channelId, from, to } = req.query as Record<string, string | undefined>;
+    if (!channelId) { res.status(400).json({ error: 'channelId é obrigatório' }); return; }
+    const allowed = await allowedChannelIds((req as any).user?.id);
+    if (!channelAllowed(allowed, channelId)) { res.status(403).json({ error: 'sem permissão para esta câmera' }); return; }
+    const segments = await prisma.recordingSegment.findMany({
+      where: {
+        channelId,
+        status: { notIn: ['failed', 'deleted_local'] },
+        ...(from || to ? { startedAt: { ...(from ? { gte: new Date(from) } : {}), ...(to ? { lte: new Date(to) } : {}) } } : {}),
+      },
+      select: { id: true, startedAt: true, endedAt: true, trigger: true },
+      orderBy: { startedAt: 'asc' },
+      take: 2000,
+    });
+
+    // intervalos individuais (o segmento em curso não tem endedAt → usa agora)
+    const now = Date.now();
+    const intervals = segments.map((s) => {
+      const startMs = s.startedAt.getTime();
+      const endMs = s.endedAt ? s.endedAt.getTime() : Math.min(now, startMs + 1800_000);
+      return { start: s.startedAt.toISOString(), end: new Date(endMs).toISOString(), trigger: s.trigger };
+    });
+
+    // trechos contínuos: junta segmentos coladinhos (gap ≤ 3s) para o auto-advance
+    const GAP_TOL = 3000;
+    const runs: Array<{ start: string; end: string }> = [];
+    for (const iv of intervals) {
+      const last = runs[runs.length - 1];
+      if (last && new Date(iv.start).getTime() - new Date(last.end).getTime() <= GAP_TOL) {
+        last.end = iv.end;
+      } else {
+        runs.push({ start: iv.start, end: iv.end });
+      }
+    }
+    res.json({ intervals, runs });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }

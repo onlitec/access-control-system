@@ -12,6 +12,13 @@ api: yes
 apiAddress: 127.0.0.1:9997
 
 ###############################################
+# Playback server — reprodução contínua das gravações e recorte por [start,
+# duration] (usado pelo player de gravações do painel do operador via backend).
+# Só loopback: quem consulta é o backend-api (que já autentica o usuário).
+playback: yes
+playbackAddress: 127.0.0.1:9996
+
+###############################################
 # Autenticação delegada ao backend-api: cada acesso de leitura (HLS/RTSP)
 # é validado em POST /api/vms/stream-auth (JWT via query ?jwt=...)
 authMethod: http
@@ -20,6 +27,7 @@ authHTTPExclude:
   - action: api
   - action: metrics
   - action: pprof
+  - action: playback
 
 ###############################################
 # Protocolos — tudo só em loopback; o acesso externo ao HLS passa pelo nginx (/streams/)

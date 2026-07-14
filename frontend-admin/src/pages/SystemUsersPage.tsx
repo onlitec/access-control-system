@@ -6,13 +6,16 @@ import {
     resetSystemUserPassword,
     getUserPermissions,
     setUserPermissions,
+    getAllCameraChannels,
+    getUserCameras,
+    setUserCameras,
     SystemUser,
     UserPermissionsResponse,
 } from '@/services/api';
 import {
     Users, RefreshCw, AlertTriangle, Plus, X, Edit2, Lock,
     ToggleLeft, ToggleRight, CheckCircle, Info, ShieldCheck,
-    ShieldOff, ChevronDown, ChevronUp, Loader2,
+    ShieldOff, ChevronDown, ChevronUp, Loader2, Video,
 } from 'lucide-react';
 
 // ── Permission metadata ───────────────────────────────────────────────────
@@ -68,6 +71,14 @@ export default function SystemUsersPage() {
     const [permData, setPermData] = useState<UserPermissionsResponse | null>(null);
     const [permLoading, setPermLoading] = useState(false);
     const [permSaving, setPermSaving] = useState(false);
+
+    // Câmeras por usuário
+    const [camDrawerUser, setCamDrawerUser] = useState<SystemUser | null>(null);
+    const [camAll, setCamAll] = useState(true);
+    const [camSelected, setCamSelected] = useState<Set<string>>(new Set());
+    const [camChannels, setCamChannels] = useState<{ id: string; name: string; deviceName: string }[]>([]);
+    const [camLoading, setCamLoading] = useState(false);
+    const [camSaving, setCamSaving] = useState(false);
     // Local draft of custom overrides being edited
     const [permDraft, setPermDraft] = useState<Record<string, boolean | null>>({});
 
@@ -151,6 +162,43 @@ export default function SystemUsersPage() {
             showToast('error', err.message || 'Erro ao redefinir senha.');
         } finally {
             setActionLoading(null);
+        }
+    }
+
+    // ── Câmeras por usuário ────────────────────────────────────────────
+
+    async function openCamDrawer(user: SystemUser) {
+        setCamDrawerUser(user);
+        setCamLoading(true);
+        setCamChannels([]);
+        setCamSelected(new Set());
+        setCamAll(true);
+        try {
+            const [all, cur] = await Promise.all([getAllCameraChannels(), getUserCameras(user.id)]);
+            setCamChannels(all.channels || []);
+            setCamAll(cur.all);
+            setCamSelected(new Set(cur.channelIds || []));
+        } catch {
+            showToast('error', 'Erro ao carregar as câmeras do usuário.');
+            setCamDrawerUser(null);
+        } finally {
+            setCamLoading(false);
+        }
+    }
+    function toggleCam(id: string) {
+        setCamSelected(prev => { const n = new Set(prev); if (n.has(id)) n.delete(id); else n.add(id); return n; });
+    }
+    async function saveCameras() {
+        if (!camDrawerUser) return;
+        setCamSaving(true);
+        try {
+            await setUserCameras(camDrawerUser.id, { all: camAll, channelIds: [...camSelected] });
+            showToast('success', `Câmeras de ${camDrawerUser.name} salvas.`);
+            setCamDrawerUser(null);
+        } catch {
+            showToast('error', 'Erro ao salvar as câmeras.');
+        } finally {
+            setCamSaving(false);
         }
     }
 
@@ -378,6 +426,9 @@ export default function SystemUsersPage() {
                                                         <button className="btn btn-secondary" style={{ padding: '5px 8px', minWidth: 'auto', display: 'flex', alignItems: 'center', gap: '4px', fontSize: '0.78rem' }} onClick={() => openPermDrawer(user)} title="Permissões individuais">
                                                             <ShieldCheck size={13} /> Permissões
                                                         </button>
+                                                        <button className="btn btn-secondary" style={{ padding: '5px 8px', minWidth: 'auto', display: 'flex', alignItems: 'center', gap: '4px', fontSize: '0.78rem' }} onClick={() => openCamDrawer(user)} title="Câmeras que o usuário pode ver">
+                                                            <Video size={13} /> Câmeras
+                                                        </button>
                                                         <button className="btn btn-secondary" style={{ padding: '6px', minWidth: 'auto' }} onClick={() => { setEditingUserId(user.id); setEditName(user.name); setEditRole(user.role); }} title="Editar">
                                                             <Edit2 size={13} />
                                                         </button>
@@ -498,6 +549,74 @@ export default function SystemUsersPage() {
                                     Salvar permissões
                                 </button>
                             </div>
+                        </div>
+                    </div>
+                </>
+            )}
+
+            {/* Camera Drawer Overlay */}
+            {camDrawerUser && (
+                <>
+                    <div onClick={() => setCamDrawerUser(null)} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 1200 }} />
+                    <div style={{ position: 'fixed', top: 0, right: 0, bottom: 0, width: '480px', maxWidth: '95vw', background: 'var(--bg-secondary)', borderLeft: '1px solid var(--border-primary)', zIndex: 1300, display: 'flex', flexDirection: 'column', boxShadow: '-4px 0 24px rgba(0,0,0,0.3)' }}>
+                        <div style={{ padding: '20px 24px', borderBottom: '1px solid var(--border-primary)', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                            <div>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
+                                    <Video size={18} style={{ color: 'var(--text-accent)' }} />
+                                    <strong style={{ fontSize: '1rem' }}>Câmeras do usuário</strong>
+                                </div>
+                                <div style={{ fontSize: '0.83rem', color: 'var(--text-muted)' }}>
+                                    {camDrawerUser.name} — vale no painel e no cloud
+                                </div>
+                            </div>
+                            <button onClick={() => setCamDrawerUser(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)' }}><X size={18} /></button>
+                        </div>
+
+                        <div style={{ flex: 1, overflowY: 'auto', padding: '20px 24px' }}>
+                            {camLoading ? (
+                                <div style={{ display: 'flex', justifyContent: 'center', padding: '40px' }}><Loader2 className="animate-spin" /></div>
+                            ) : (
+                                <>
+                                    <label style={{ display: 'flex', gap: '10px', alignItems: 'flex-start', cursor: 'pointer', marginBottom: '12px' }}>
+                                        <input type="radio" checked={camAll} onChange={() => setCamAll(true)} style={{ marginTop: '3px' }} />
+                                        <div>
+                                            <div style={{ fontWeight: 600, fontSize: '0.9rem' }}>Todas as câmeras</div>
+                                            <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>O usuário vê todas as câmeras cadastradas.</div>
+                                        </div>
+                                    </label>
+                                    <label style={{ display: 'flex', gap: '10px', alignItems: 'flex-start', cursor: 'pointer', marginBottom: '8px' }}>
+                                        <input type="radio" checked={!camAll} onChange={() => setCamAll(false)} style={{ marginTop: '3px' }} />
+                                        <div>
+                                            <div style={{ fontWeight: 600, fontSize: '0.9rem' }}>Apenas as câmeras selecionadas</div>
+                                            <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>Marque abaixo o que o usuário pode ver.</div>
+                                        </div>
+                                    </label>
+
+                                    {!camAll && (
+                                        <div style={{ marginTop: '10px', border: '1px solid var(--border-primary)', borderRadius: '8px', padding: '8px 12px' }}>
+                                            {camChannels.length === 0 ? (
+                                                <div style={{ fontSize: '0.82rem', color: 'var(--text-muted)', padding: '8px 0' }}>Nenhuma câmera cadastrada.</div>
+                                            ) : camChannels.map(ch => (
+                                                <label key={ch.id} style={{ display: 'flex', gap: '10px', alignItems: 'center', padding: '6px 0', cursor: 'pointer' }}>
+                                                    <input type="checkbox" checked={camSelected.has(ch.id)} onChange={() => toggleCam(ch.id)} />
+                                                    <span style={{ fontSize: '0.86rem' }}>{ch.name} <span style={{ color: 'var(--text-muted)', fontSize: '0.76rem' }}>· {ch.deviceName}</span></span>
+                                                </label>
+                                            ))}
+                                            <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '6px', borderTop: '1px solid var(--border-primary)', paddingTop: '6px' }}>
+                                                {camSelected.size} de {camChannels.length} selecionada(s)
+                                            </div>
+                                        </div>
+                                    )}
+                                </>
+                            )}
+                        </div>
+
+                        <div style={{ padding: '16px 24px', borderTop: '1px solid var(--border-primary)', display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
+                            <button className="btn btn-secondary" onClick={() => setCamDrawerUser(null)}>Cancelar</button>
+                            <button className="btn btn-primary" onClick={saveCameras} disabled={camSaving || camLoading} style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                {camSaving ? <Loader2 size={13} className="animate-spin" /> : <Video size={13} />}
+                                Salvar câmeras
+                            </button>
                         </div>
                     </div>
                 </>

@@ -976,4 +976,16 @@ export const saveVcaConfig = (channelId: string, cfg: Partial<VcaConfig>) =>
 export const getCameraSnapshot = (channelId: string) =>
     request<Blob>(`/vms/channels/${channelId}/snapshot`);
 
+// ── Permissão de câmera por usuário ─────────────────────────────────────────
+export const getAllCameraChannels = () =>
+    request<{ channels: { id: string; name: string; deviceName: string }[] }>(`/vms/all-channels`);
+
+export const getUserCameras = (id: string) =>
+    request<{ all: boolean; channelIds: string[] }>(`/vms/users/${id}/cameras`);
+
+export const setUserCameras = (id: string, data: { all: boolean; channelIds: string[] }) =>
+    request<{ success: boolean; all: boolean; channelIds: string[] }>(`/vms/users/${id}/cameras`, {
+        method: 'PUT', body: JSON.stringify(data),
+    });
+
 export const apiFetch = request;

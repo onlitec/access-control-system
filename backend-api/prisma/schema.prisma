@@ -180,12 +180,31 @@ model User {
   lastLoginAt        DateTime?           @map("last_login_at")
   mustChangePassword Boolean             @default(true) @map("must_change_password")
   customPermissions  Json?               @map("custom_permissions")
+  // Acesso a câmeras: true = todas (padrão, retrocompatível). Quando false, o
+  // usuário só acessa as câmeras listadas em cameraAccess (vale p/ admins também).
+  cameraAccessAll    Boolean             @default(true) @map("camera_access_all")
+  cameraAccess       UserCameraAccess[]
   createdAt          DateTime            @default(now()) @map("created_at")
   refreshSessions    RefreshSession[]
   sessionAuditEvents SessionAuditEvent[]
   adminAuditEvents   AdminAuditEvent[]
 
   @@map("users")
+}
+
+// Câmeras que um usuário pode ver quando cameraAccessAll = false. Aplicado no
+// backend (lista de câmeras + stream-auth + gravações), não só na UI.
+model UserCameraAccess {
+  id        String       @id @default(cuid())
+  userId    String       @map("user_id")
+  user      User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  channelId String       @map("channel_id")
+  channel   VideoChannel @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  createdAt DateTime     @default(now()) @map("created_at")
+
+  @@unique([userId, channelId])
+  @@index([userId])
+  @@map("user_camera_access")
 }
 
 model RefreshSession {
@@ -487,6 +506,7 @@ model VideoChannel {
   recording   VideoRecordingConfig?
   vca         VideoVcaConfig?
   segments    RecordingSegment[]
+  userAccess  UserCameraAccess[]
   createdAt   DateTime              @default(now()) @map("created_at")
   updatedAt   DateTime              @updatedAt @map("updated_at")
 
