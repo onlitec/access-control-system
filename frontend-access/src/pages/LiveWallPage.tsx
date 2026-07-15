@@ -66,7 +66,9 @@ export interface ChannelStatus {
 /** Layouts do videowall, como num NVR: 1, 4, 9, 16 e 25 divisões. */
 const LAYOUTS = [
   { size: 1, cols: 1, label: '1' },
-  { size: 2, cols: 2, label: '2' },
+  // 2 câmeras empilhadas: em tela 16:9 cada imagem fica maior do que lado a
+  // lado (quem preferir lado a lado monta 2×1 no Personalizado)
+  { size: 2, cols: 1, label: '2' },
   { size: 3, cols: 3, label: '3' },
   { size: 4, cols: 2, label: '4' },
   { size: 9, cols: 3, label: '9' },
@@ -117,6 +119,8 @@ function WallClock() {
 
 export default function LiveWallPage() {
   const playerRefs = useRef<Record<string, LivePlayerHandle | null>>({});
+  const wallRef = useRef<HTMLDivElement | null>(null);
+  const [wallSize, setWallSize] = useState<{ w: number; h: number } | null>(null);
   const [busyRec, setBusyRec] = useState<string | null>(null);
   const [flash, setFlash] = useState<string | null>(null);
   const [pressing, setPressing] = useState<string | null>(null); // toque longo p/ gravar
@@ -220,6 +224,18 @@ export default function LiveWallPage() {
     const onFsChange = () => setFullscreen(Boolean(document.fullscreenElement));
     document.addEventListener('fullscreenchange', onFsChange);
     return () => document.removeEventListener('fullscreenchange', onFsChange);
+  }, []);
+
+  // mede a área do videowall para dimensionar o mosaico na proporção do vídeo
+  useEffect(() => {
+    const el = wallRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver((entries) => {
+      const r = entries[0].contentRect;
+      setWallSize({ w: r.width, h: r.height });
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
   }, []);
 
   const channelsById = useMemo(() => {
@@ -362,6 +378,23 @@ export default function LiveWallPage() {
     a.remove();
   };
 
+  /** Baixa a janela exata da gravação manual pela linha do tempo (playback). */
+  const downloadClip = (channelId: string, clip: { start: string; duration: number }) => {
+    const q = new URLSearchParams({
+      channelId,
+      start: clip.start,
+      duration: String(clip.duration),
+      token: localStorage.getItem('auth_token') || '',
+      download: '1',
+    });
+    const a = document.createElement('a');
+    a.href = `${window.location.origin}/api/vms/playback/stream?${q.toString()}`;
+    a.download = '';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  };
+
   /**
    * Botão REC: liga/desliga a gravação manual no servidor.
    * Ao PARAR, o servidor devolve o clipe gravado e ele é baixado na hora — o
@@ -371,18 +404,25 @@ export default function LiveWallPage() {
     const active = !statusMap[ch.id]?.manual;
     setBusyRec(ch.id);
     try {
-      const data = await authRequest<{ segments?: Array<{ id: string }> }>(`/vms/channels/${ch.id}/record`, {
+      const data = await authRequest<{
+        segments?: Array<{ id: string }>;
+        clip?: { start: string; duration: number } | null;
+      }>(`/vms/channels/${ch.id}/record`, {
         method: 'POST',
         body: JSON.stringify({ active }),
       });
 
       if (!active) {
         const segments = data.segments ?? [];
-        if (segments.length === 0) {
-          alert('Gravação encerrada, mas nenhum trecho foi gerado (a câmera pode ter perdido o sinal).');
-        } else {
-          // baixa o clipe (ou os clipes, se a gravação passou de 1 minuto)
+        if (segments.length > 0) {
+          // baixa o clipe (ou os clipes, se a gravação gerou mais de um arquivo)
           segments.forEach((seg, i) => setTimeout(() => downloadSegment(seg.id), i * 800));
+        } else if (data.clip) {
+          // canal em gravação contínua: o arquivo segue aberto no servidor —
+          // baixa a janela exata da gravação manual pela linha do tempo
+          downloadClip(ch.id, data.clip);
+        } else {
+          alert('Gravação encerrada, mas nenhum trecho foi gerado (a câmera pode ter perdido o sinal).');
         }
       }
       await loadStatus();
@@ -517,9 +557,25 @@ export default function LiveWallPage() {
     }
   };
 
+  /**
+   * No modo "imagem inteira" (contain) o mosaico é dimensionado na proporção
+   * 16:9 de cada quadro e centralizado: o vídeo preenche o quadro por completo
+   * (sem faixas pretas dentro da célula) e a sobra da tela vira uma moldura
+   * simétrica em volta do bloco, como num monitor de CFTV. No modo "preencher"
+   * (cover) o mosaico ocupa a tela toda e o vídeo corta as bordas.
+   */
+  const rows = Math.ceil(layoutSize / cols);
+  const gridDims = (() => {
+    if (fitMode !== 'contain' || !wallSize) return null;
+    const ratio = (cols * 16) / (rows * 9);
+    const w = Math.min(wallSize.w, wallSize.h * ratio);
+    return { width: w, height: w / ratio };
+  })();
   const gridStyle = {
     gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))`,
-    gridTemplateRows: `repeat(${Math.ceil(layoutSize / cols)}, minmax(0, 1fr))`,
+    gridTemplateRows: `repeat(${rows}, minmax(0, 1fr))`,
+    width: gridDims ? `${gridDims.width}px` : '100%',
+    height: gridDims ? `${gridDims.height}px` : '100%',
   };
 
   const expandedChannel = expandedCell !== null && slots[expandedCell]
@@ -777,11 +833,12 @@ export default function LiveWallPage() {
           </div>
         </div>
 
-        {/* mosaico edge-to-edge */}
-        {loading ? (
-          <div className="flex-1 flex items-center justify-center text-zinc-600 text-sm">Carregando câmeras…</div>
-        ) : (
-          <div className="flex-1 grid gap-px bg-zinc-800 min-h-0" style={gridStyle}>
+        {/* mosaico centralizado na proporção do vídeo */}
+        <div ref={wallRef} className="flex-1 min-h-0 bg-black flex items-center justify-center">
+          {loading ? (
+            <span className="text-zinc-600 text-sm">Carregando câmeras…</span>
+          ) : (
+            <div className="grid gap-px bg-zinc-800" style={gridStyle}>
             {Array.from({ length: layoutSize }, (_, cell) => {
               const channelId = slots[cell];
               const ch = channelId ? channelsById.get(channelId) : null;
@@ -895,8 +952,9 @@ export default function LiveWallPage() {
                 </div>
               );
             })}
-          </div>
-        )}
+            </div>
+          )}
+        </div>
       </div>
 
       {/* ══ Câmera ampliada ══ */}
