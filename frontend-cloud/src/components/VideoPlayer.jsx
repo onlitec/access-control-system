@@ -348,10 +348,35 @@ const VideoPlayer = forwardRef(function VideoPlayer(
       }
     };
 
+    /**
+     * Vigia de travamento: no celular, voltar do segundo plano (ou uma queda
+     * momentânea do túnel) às vezes deixa o HLS congelado SEM disparar erro
+     * fatal — o vídeo fica parado num frame antigo e nunca se recupera. Se o
+     * tempo de reprodução não anda por ~8s com o app visível, refaz a conexão.
+     */
+    let lastTime = -1;
+    let stuckSince = 0;
+    const watchdog = setInterval(() => {
+      const v = videoRef.current;
+      if (disposed || !v || document.hidden) { stuckSince = 0; return; }
+      if (!v.paused && v.readyState >= 2 && v.currentTime === lastTime) {
+        if (!stuckSince) {
+          stuckSince = Date.now();
+        } else if (Date.now() - stuckSince > 8000) {
+          stuckSince = 0;
+          start();
+        }
+      } else {
+        stuckSince = 0;
+        lastTime = v.currentTime;
+      }
+    }, 2000);
+
     start();
     return () => {
       disposed = true;
       if (retryTimer) clearTimeout(retryTimer);
+      clearInterval(watchdog);
       cleanup();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
