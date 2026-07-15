@@ -13,6 +13,7 @@ import { RetentionWorker } from './RetentionWorker';
 import { UploadWorker } from './UploadWorker';
 import { VcaEngine } from './vca/VcaEngine';
 import { VMS_PORT, VMS_INTERNAL_TOKEN, VMS_RECORDINGS_DIR, MEDIAMTX_API_URL } from './config';
+import { subPathName } from './rtsp';
 
 /**
  * onliacesso-vms — orquestrador do módulo de câmeras (VMS).
@@ -84,11 +85,26 @@ app.post('/internal/manual-record', async (req: Request, res: Response) => {
     }
 
     // Ao PARAR: o MediaMTX leva um instante para fechar o arquivo e NÃO dispara
-    // o hook de segmento completo (ele só dispara na rotação dos 60s). Então
-    // esperamos o arquivo assentar, indexamos e devolvemos o clipe — é o que o
-    // operador acabou de gravar e quer baixar no aparelho.
+    // o hook de segmento completo (ele só dispara na rotação). Esperamos o
+    // arquivo assentar e indexamos o clipe recém-fechado DIRETO — o scan geral
+    // (reconcileOrphans) não serve aqui: ele pula arquivos com menos de 90s por
+    // presumir gravação em andamento, e o clipe manual sempre é mais novo que
+    // isso, então nunca era indexado e o app não tinha o que baixar.
     await new Promise((r) => setTimeout(r, 2500));
-    await indexer.reconcileOrphans();
+
+    const channel = await prisma.videoChannel.findUnique({
+      where: { id: channelId },
+      include: { recording: true },
+    });
+    const recordPath = channel
+      ? (channel.recording?.useSubStream ? subPathName(channel.streamPath) : channel.streamPath)
+      : null;
+    // Se a gravação contínua/agendada segue ligada, o arquivo continua ABERTO —
+    // não há clipe fechado para indexar; o app baixa a janela exata pelo
+    // playback (campo `clip` abaixo).
+    if (recordPath && !scheduler.isPathRecording(recordPath)) {
+      await indexer.indexFreshForPath(channelId, recordPath);
+    }
 
     const since = new Date((startedAt?.getTime() ?? Date.now() - 60_000) - 10_000);
     const segments = await prisma.recordingSegment.findMany({
@@ -101,6 +117,11 @@ app.post('/internal/manual-record', async (req: Request, res: Response) => {
       success: true,
       recording: false,
       segments: segments.map((s) => ({ ...s, sizeBytes: Number(s.sizeBytes) })),
+      // janela exata da gravação manual: quando não há arquivo fechado (canal
+      // em gravação contínua), o app baixa este trecho por /vms/playback/stream
+      clip: startedAt
+        ? { start: startedAt.toISOString(), duration: Math.max(2, Math.ceil((Date.now() - startedAt.getTime()) / 1000)) }
+        : null,
     });
   } catch (err: any) {
     res.status(500).json({ error: err.message });

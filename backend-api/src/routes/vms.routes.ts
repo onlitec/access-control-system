@@ -385,6 +385,10 @@ router.get('/playback/stream', async (req: Request, res: Response): Promise<void
     }
     res.status(200);
     res.setHeader('Content-Type', 'video/mp4');
+    if (req.query.download === '1') {
+      const stamp = new Date(start).toISOString().replace(/[:.]/g, '-').slice(0, 19);
+      res.setHeader('Content-Disposition', `attachment; filename="${slugify(channel.name)}_${stamp}.mp4"`);
+    }
     const cl = upstream.headers.get('content-length'); if (cl) res.setHeader('Content-Length', cl);
     upstream.body.pipe(res);
     upstream.body.on('error', () => res.destroy());
@@ -1107,9 +1111,11 @@ router.post('/channels/:id/record', async (req: Request, res: Response): Promise
     const data = await r.json() as {
       recording: boolean;
       segments?: Array<{ id: string; filePath: string; sizeBytes: number; startedAt: string }>;
+      clip?: { start: string; duration: number } | null;
     };
-    // segments = clipe(s) recém-gravados; o app baixa direto no aparelho
-    res.json({ success: true, recording: data.recording, segments: data.segments ?? [] });
+    // segments = clipe(s) recém-gravados; clip = janela exata para baixar pelo
+    // playback quando não há arquivo fechado (canal em gravação contínua)
+    res.json({ success: true, recording: data.recording, segments: data.segments ?? [], clip: data.clip ?? null });
   } catch (err: any) {
     res.status(503).json({ error: `Não foi possível acionar a gravação: ${err.message}` });
   }

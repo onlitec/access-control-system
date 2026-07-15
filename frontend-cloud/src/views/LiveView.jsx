@@ -218,13 +218,17 @@ export default function LiveView({ cameras, statusMap, token, onStatusChange }) 
       const data = await res.json().catch(() => ({}));
       if (!active) {
         const segments = data.segments || [];
-        if (segments.length === 0) {
-          alert('Gravação encerrada, mas nenhum trecho foi gerado (a câmera pode ter perdido o sinal).');
-        } else {
-          // baixa o clipe (ou os clipes, se a gravação passou de 1 minuto)
+        if (segments.length > 0) {
+          // baixa o clipe (ou os clipes, se a gravação gerou mais de um arquivo)
           segments.forEach((seg, i) => {
             setTimeout(() => downloadSegment(seg.id), i * 800);
           });
+        } else if (data.clip) {
+          // canal em gravação contínua: o arquivo segue aberto no servidor —
+          // baixa a janela exata da gravação manual pela linha do tempo
+          downloadClip(cam, data.clip);
+        } else {
+          alert('Gravação encerrada, mas nenhum trecho foi gerado (a câmera pode ter perdido o sinal).');
         }
       }
       onStatusChange?.(); // atualiza a bolinha/botão imediatamente
@@ -265,6 +269,23 @@ export default function LiveView({ cameras, statusMap, token, onStatusChange }) 
   const downloadSegment = (segmentId) => {
     const a = document.createElement('a');
     a.href = apiUrl(`/api/vms/recordings/${segmentId}/file?token=${encodeURIComponent(getToken())}&download=1`);
+    a.download = '';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  };
+
+  /** Baixa a janela exata da gravação manual pela linha do tempo (playback). */
+  const downloadClip = (cam, clip) => {
+    const q = new URLSearchParams({
+      channelId: cam.id,
+      start: clip.start,
+      duration: String(clip.duration),
+      token: getToken(),
+      download: '1',
+    });
+    const a = document.createElement('a');
+    a.href = apiUrl(`/api/vms/playback/stream?${q.toString()}`);
     a.download = '';
     document.body.appendChild(a);
     a.click();

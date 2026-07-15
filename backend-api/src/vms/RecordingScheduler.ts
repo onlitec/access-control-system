@@ -102,6 +102,14 @@ export class RecordingScheduler {
     return [...this.manualUntil.entries()].filter(([, until]) => until > now).map(([id]) => id);
   }
 
+  /**
+   * O path está com record aplicado agora? Depois de parar o REC manual, um
+   * canal em modo contínuo/agenda continua gravando — o arquivo segue ABERTO.
+   */
+  isPathRecording(pathName: string): boolean {
+    return this.applied.get(pathName) ?? false;
+  }
+
   /** Motivo da gravação em curso num path — usado pelo SegmentIndexer. */
   triggerForPath(pathName: string): RecordTrigger {
     return this.pathTrigger.get(pathName) ?? 'continuous';

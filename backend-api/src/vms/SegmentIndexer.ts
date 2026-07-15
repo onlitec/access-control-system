@@ -92,6 +92,32 @@ export class SegmentIndexer {
   }
 
   /**
+   * Indexa NA HORA os arquivos recém-fechados de um path — usado ao PARAR a
+   * gravação manual. O scan geral (reconcileOrphans) pula arquivos modificados
+   * há menos de 90s por presumir que ainda estão sendo gravados; aqui a
+   * gravação acabou de ser DESLIGADA no path, então o arquivo novo já está
+   * fechado e é exatamente o clipe que o operador quer baixar.
+   */
+  async indexFreshForPath(channelId: string, pathName: string): Promise<void> {
+    const files = await this.walkMp4(path.join(VMS_RECORDINGS_DIR, pathName));
+    if (files.length === 0) return;
+
+    const known = new Set(
+      (await prisma.recordingSegment.findMany({
+        where: { channelId },
+        select: { filePath: true },
+      })).map((s) => s.filePath),
+    );
+
+    for (const absFile of files) {
+      const relPath = path.relative(VMS_RECORDINGS_DIR, absFile).split(path.sep).join('/');
+      if (known.has(relPath)) continue;
+      await this.indexFile(channelId, absFile, 'manual');
+      console.log(`[VMS] Clipe manual indexado: ${relPath}`);
+    }
+  }
+
+  /**
    * Scan de reconciliação: percorre VMS_RECORDINGS_DIR e indexa arquivos .mp4
    * que não estão no banco (o primeiro nível de diretório é o path MediaMTX).
    */
