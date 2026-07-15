@@ -1,5 +1,9 @@
 #!/usr/bin/env bash
-# Publica a PWA (frontend-cloud/) no VPS.
+# Publica a PWA (frontend-cloud/) no servidor do cloud.
+#
+# Desde o cutover de 2026-07-14, cloud.onlitec.com.br sai do RELAY no Brasil
+# (192.168.15.36, via Cloudflare Tunnel) — o VPS de Helsinki (10.10.10.1:4450)
+# ficou como backup; para publicar lá, sobrescreva VPS_HOST/VPS_PORT.
 #
 # O deploy sai SEMPRE do repositório — nunca edite os arquivos direto no
 # servidor, senão o que está no ar deixa de ser o que está versionado (foi assim
@@ -8,8 +12,8 @@
 # Uso:  bash deploy/cloud/deploy-pwa.sh
 set -euo pipefail
 
-VPS_HOST="${VPS_HOST:-alfreire@10.10.10.1}"
-VPS_PORT="${VPS_PORT:-4450}"
+VPS_HOST="${VPS_HOST:-alfreire@192.168.15.36}"
+VPS_PORT="${VPS_PORT:-22}"
 VPS_DIR="${VPS_DIR:-/home/alfreire/docker/apps/onlitec-pwa}"
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
