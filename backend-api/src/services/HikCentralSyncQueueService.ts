@@ -175,6 +175,11 @@ export class HikCentralSyncQueueService {
                 phoneNo: payload.phone || undefined,
                 email: payload.email || undefined,
             });
+            // O HikCentral responde HTTP 200 mesmo em erros lógicos (ex.: orgIndexCode
+            // inexistente); é preciso checar o `code` do corpo, não só o status HTTP.
+            if (response?.code !== '0') {
+                throw new Error(response?.msg || `HikCentral retornou code=${response?.code} ao criar pessoa`);
+            }
             const hikPersonId = response?.data?.personId;
             if (hikPersonId) {
                 await prisma.serviceProvider.update({
@@ -185,7 +190,7 @@ export class HikCentralSyncQueueService {
             return { hikEntityId: hikPersonId || null };
         }
 
-        await HikCentralService.updatePerson({
+        const updateResponse: any = await HikCentralService.updatePerson({
             personId: payload.hikcentralPersonId,
             personGivenName,
             personFamilyName,
@@ -193,6 +198,9 @@ export class HikCentralSyncQueueService {
             phoneNo: payload.phone || undefined,
             email: payload.email || undefined,
         });
+        if (updateResponse?.code !== '0') {
+            throw new Error(updateResponse?.msg || `HikCentral retornou code=${updateResponse?.code} ao atualizar pessoa`);
+        }
         return { hikEntityId: payload.hikcentralPersonId };
     }
 }
