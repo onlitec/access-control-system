@@ -7,6 +7,12 @@ const BATCH_SIZE = 20;
 const BASE_BACKOFF_MS = 30_000; // 30s
 const MAX_BACKOFF_MS = 30 * 60_000; // 30min
 
+// Org de destino no HikCentral para prestadores sincronizados por esta fila.
+// O HIK_ORG_ROLE_MAP padrão (HikCentralSyncService.ts) usa '3' para PRESTADORES,
+// mas esta instalação só tem o org raiz '1' (All Departments) configurado até
+// agora — trocar para '3' assim que o org "PRESTADORES" for criado no HikCentral.
+const SERVICE_PROVIDER_ORG_INDEX_CODE = '1';
+
 type SyncOperation = 'create' | 'update' | 'delete';
 
 interface ServiceProviderSyncPayload {
@@ -171,7 +177,7 @@ export class HikCentralSyncQueueService {
             const response: any = await HikCentralService.addPerson({
                 personGivenName,
                 personFamilyName,
-                orgIndexCode: '3', // PRESTADORES (ver HIK_ORG_ROLE_MAP em HikCentralSyncService.ts)
+                orgIndexCode: SERVICE_PROVIDER_ORG_INDEX_CODE,
                 phoneNo: payload.phone || undefined,
                 email: payload.email || undefined,
             });
@@ -180,7 +186,9 @@ export class HikCentralSyncQueueService {
             if (response?.code !== '0') {
                 throw new Error(response?.msg || `HikCentral retornou code=${response?.code} ao criar pessoa`);
             }
-            const hikPersonId = response?.data?.personId;
+            // O Artemis retorna o personId direto em `data` (string) para
+            // person/single/add, e não em `data.personId` — cobre as duas formas.
+            const hikPersonId = typeof response?.data === 'string' ? response.data : response?.data?.personId;
             if (hikPersonId) {
                 await prisma.serviceProvider.update({
                     where: { id: row.entityId },
@@ -194,7 +202,7 @@ export class HikCentralSyncQueueService {
             personId: payload.hikcentralPersonId,
             personGivenName,
             personFamilyName,
-            orgIndexCode: '3',
+            orgIndexCode: SERVICE_PROVIDER_ORG_INDEX_CODE,
             phoneNo: payload.phone || undefined,
             email: payload.email || undefined,
         });
