@@ -280,11 +280,39 @@ model ServiceProvider {
   authorizedUnits    Json?    @map("authorized_units")
   notes              String?
   hikcentralPersonId String?  @map("hikcentral_person_id")
+  // Status da sincronização assíncrona com o HikCentral (ver HikCentralSyncQueue)
+  hikSyncStatus      String?  @default("pending") @map("hik_sync_status")
+  hikSyncError       String?  @map("hik_sync_error")
   createdBy          String?  @map("created_by")
   createdAt          DateTime @default(now()) @map("created_at")
   updatedAt          DateTime @updatedAt @map("updated_at")
 
   @@map("service_providers")
+}
+
+// ============ Fila de sincronização assíncrona com o HikCentral ============
+// Push local -> HikCentral com retry/backoff. O write local sempre acontece
+// primeiro; esta fila roda em background e nunca bloqueia o write original.
+
+model HikCentralSyncQueue {
+  id            String    @id @default(cuid())
+  entityType    String    @map("entity_type") // "SERVICE_PROVIDER" (mais tipos em fases futuras)
+  entityId      String    @map("entity_id")
+  operation     String // "create" | "update" | "delete"
+  status        String    @default("pending") // "pending" | "processing" | "synced" | "error" | "not_applicable"
+  attempts      Int       @default(0)
+  maxAttempts   Int       @default(8) @map("max_attempts")
+  lastError     String?   @map("last_error")
+  payload       Json
+  hikEntityId   String?   @map("hik_entity_id")
+  nextAttemptAt DateTime  @default(now()) @map("next_attempt_at")
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
+  syncedAt      DateTime? @map("synced_at")
+
+  @@index([status, nextAttemptAt])
+  @@index([entityType, entityId])
+  @@map("hikcentral_sync_queue")
 }
 
 model Department {

@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import { prisma } from '../database';
 import { Prisma } from '@prisma/client';
+import { HikCentralSyncQueueService } from '../services/HikCentralSyncQueueService';
 
 const SERVICE_PROVIDER_TYPES = ['fixed', 'temporary'] as const;
 type ServiceProviderType = typeof SERVICE_PROVIDER_TYPES[number];
@@ -212,6 +213,8 @@ const serializeServiceProvider = (item: any) => ({
     authorized_units: extractAuthorizedUnits(item.authorizedUnits),
     notes: item.notes,
     hikcentral_person_id: item.hikcentralPersonId,
+    hik_sync_status: item.hikSyncStatus,
+    hik_sync_error: item.hikSyncError,
     created_by: item.createdBy,
     created_at: item.createdAt,
     updated_at: item.updatedAt,
@@ -292,6 +295,14 @@ export class ServiceProvidersController {
             const created = await prisma.serviceProvider.create({
                 data: createData,
             });
+
+            await HikCentralSyncQueueService.enqueue('SERVICE_PROVIDER', created.id, 'create', {
+                fullName: created.fullName,
+                phone: created.phone,
+                email: created.email,
+                hikcentralPersonId: created.hikcentralPersonId,
+            });
+
             return res.status(201).json(serializeServiceProvider(created));
         } catch (error: any) {
             return res.status(400).json({ error: error.message || 'Erro ao criar prestador' });
@@ -334,6 +345,21 @@ export class ServiceProvidersController {
                 where: { id: req.params.id },
                 data: updateData,
             });
+
+            // Só reenfileira se algum campo relevante para o HikCentral mudou.
+            if (
+                payload.fullName !== undefined ||
+                payload.phone !== undefined ||
+                payload.email !== undefined
+            ) {
+                await HikCentralSyncQueueService.enqueue('SERVICE_PROVIDER', updated.id, 'update', {
+                    fullName: updated.fullName,
+                    phone: updated.phone,
+                    email: updated.email,
+                    hikcentralPersonId: updated.hikcentralPersonId,
+                });
+            }
+
             return res.json(serializeServiceProvider(updated));
         } catch (error: any) {
             if (error?.code === 'P2025') {
@@ -345,13 +371,59 @@ export class ServiceProvidersController {
 
     async delete(req: Request, res: Response) {
         try {
+            const existing = await prisma.serviceProvider.findUnique({ where: { id: req.params.id } });
+            if (!existing) {
+                return res.status(404).json({ error: 'Prestador não encontrado' });
+            }
+
             await prisma.serviceProvider.delete({ where: { id: req.params.id } });
+
+            await HikCentralSyncQueueService.enqueue('SERVICE_PROVIDER', existing.id, 'delete', {
+                fullName: existing.fullName,
+                hikcentralPersonId: existing.hikcentralPersonId,
+            });
+
             return res.status(204).send();
         } catch (error: any) {
             if (error?.code === 'P2025') {
                 return res.status(404).json({ error: 'Prestador não encontrado' });
             }
             return res.status(500).json({ error: error.message || 'Erro ao remover prestador' });
+        }
+    }
+
+    /**
+     * Reprocessa a sincronização com o HikCentral para este prestador,
+     * reaproveitando a última linha da fila (reset de tentativas/erro).
+     */
+    async retrySync(req: Request, res: Response) {
+        try {
+            const provider = await prisma.serviceProvider.findUnique({ where: { id: req.params.id } });
+            if (!provider) {
+                return res.status(404).json({ error: 'Prestador não encontrado' });
+            }
+
+            const lastQueueRow = await prisma.hikCentralSyncQueue.findFirst({
+                where: { entityType: 'SERVICE_PROVIDER', entityId: provider.id },
+                orderBy: { createdAt: 'desc' },
+            });
+
+            if (!lastQueueRow) {
+                return res.status(404).json({ error: 'Nenhuma sincronização pendente para este prestador' });
+            }
+
+            await prisma.hikCentralSyncQueue.update({
+                where: { id: lastQueueRow.id },
+                data: { status: 'pending', attempts: 0, lastError: null, nextAttemptAt: new Date() },
+            });
+            await prisma.serviceProvider.update({
+                where: { id: provider.id },
+                data: { hikSyncStatus: 'pending', hikSyncError: null },
+            });
+
+            return res.json({ success: true });
+        } catch (error: any) {
+            return res.status(500).json({ error: error.message || 'Erro ao reprocessar sincronização' });
         }
     }
 }
