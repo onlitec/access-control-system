@@ -25,6 +25,7 @@ type ServiceProviderWriteData = {
     authorizedUnits?: Prisma.InputJsonValue | null;
     notes?: string | null;
     hikcentralPersonId?: string | null;
+    jobFunctionId?: string | null;
     createdBy?: string | null;
 };
 
@@ -114,6 +115,7 @@ const parseServiceProviderPayload = (
     const authorizedUnitsKeys = ['authorized_units', 'authorizedUnits'];
     const notesKeys = ['notes'];
     const hikcentralPersonIdKeys = ['hikcentral_person_id', 'hikcentralPersonId'];
+    const jobFunctionIdKeys = ['job_function_id', 'jobFunctionId'];
     const createdByKeys = ['created_by', 'createdBy'];
 
     if (!partial || hasAnyField(body, fullNameKeys)) {
@@ -178,6 +180,9 @@ const parseServiceProviderPayload = (
             'hikcentral_person_id',
         );
     }
+    if (!partial || hasAnyField(body, jobFunctionIdKeys)) {
+        data.jobFunctionId = normalizeOptionalText(getFirstField(body, jobFunctionIdKeys), 'job_function_id');
+    }
     if (!partial || hasAnyField(body, createdByKeys)) {
         data.createdBy = normalizeOptionalText(getFirstField(body, createdByKeys), 'created_by');
     }
@@ -215,6 +220,8 @@ const serializeServiceProvider = (item: any) => ({
     hikcentral_person_id: item.hikcentralPersonId,
     hik_sync_status: item.hikSyncStatus,
     hik_sync_error: item.hikSyncError,
+    job_function_id: item.jobFunctionId,
+    job_function_name: item.jobFunction?.name,
     created_by: item.createdBy,
     created_at: item.createdAt,
     updated_at: item.updatedAt,
@@ -224,6 +231,10 @@ const ensureServiceProviderRelations = async (payload: ServiceProviderWriteData)
     if (payload.createdBy) {
         const user = await prisma.user.findUnique({ where: { id: payload.createdBy } });
         if (!user) throw new Error('Usuário (created_by) não encontrado');
+    }
+    if (payload.jobFunctionId) {
+        const jobFunction = await prisma.jobFunction.findUnique({ where: { id: payload.jobFunctionId } });
+        if (!jobFunction) throw new Error('Função (job_function_id) não encontrada');
     }
 };
 
@@ -250,7 +261,10 @@ export class ServiceProvidersController {
                 : {};
 
             const [data, count] = await Promise.all([
-                prisma.serviceProvider.findMany({ where, skip, take: limitNum, orderBy: { createdAt: 'desc' } }),
+                prisma.serviceProvider.findMany({
+                    where, skip, take: limitNum, orderBy: { createdAt: 'desc' },
+                    include: { jobFunction: { select: { name: true } } },
+                }),
                 prisma.serviceProvider.count({ where }),
             ]);
 
@@ -289,6 +303,7 @@ export class ServiceProvidersController {
                 authorizedUnits: payload.authorizedUnits === null ? Prisma.JsonNull : payload.authorizedUnits,
                 notes: payload.notes ?? null,
                 hikcentralPersonId: payload.hikcentralPersonId ?? null,
+                jobFunction: payload.jobFunctionId ? { connect: { id: payload.jobFunctionId } } : undefined,
                 createdBy,
             };
 
@@ -339,6 +354,11 @@ export class ServiceProvidersController {
             }
             if (payload.notes !== undefined) updateData.notes = payload.notes;
             if (payload.hikcentralPersonId !== undefined) updateData.hikcentralPersonId = payload.hikcentralPersonId;
+            if (payload.jobFunctionId !== undefined) {
+                updateData.jobFunction = payload.jobFunctionId
+                    ? { connect: { id: payload.jobFunctionId } }
+                    : { disconnect: true };
+            }
             if (payload.createdBy !== undefined) updateData.createdBy = payload.createdBy;
 
             const updated = await prisma.serviceProvider.update({

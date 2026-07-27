@@ -20,7 +20,8 @@ export class StaffController {
                         { email: { contains: search, mode: 'insensitive' } },
                     ] : undefined
                 },
-                orderBy: { createdAt: 'desc' }
+                orderBy: { createdAt: 'desc' },
+                include: { jobFunction: { select: { id: true, name: true } } },
             });
 
             res.json({
@@ -34,6 +35,8 @@ export class StaffController {
                     role: resolveRoleFromOrg(r.orgIndexCode),
                     hikPersonId: r.hikPersonId,
                     photo_url: r.photoUrl || (r.hikPersonId ? `/api/hikcentral/person-photo/${r.hikPersonId}` : null),
+                    job_function_id: r.jobFunctionId,
+                    job_function_name: r.jobFunction?.name ?? null,
                     updatedAt: r.updatedAt
                 }))
             });
@@ -56,6 +59,8 @@ export class StaffController {
             prismaData.phone = body.phone || null;
             prismaData.email = body.email || null;
             prismaData.orgIndexCode = body.orgIndexCode || '4';
+            // Cargo/função — local-only, não sincroniza com o HikCentral (ver JobFunction)
+            prismaData.jobFunctionId = body.job_function_id || body.jobFunctionId || null;
 
             // Standalone: cadastro 100% local, sem sistema externo
             prismaData.hikPersonId = body.hikcentral_person_id || null;

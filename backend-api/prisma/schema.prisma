@@ -43,6 +43,11 @@ model Person {
   unitId String? @map("unit_id")
   unit   Unit?   @relation("PersonToUnit", fields: [unitId], references: [id], onDelete: SetNull)
 
+  // Cargo/função (ex.: zelador, porteiro, síndico) — local-only, não sincroniza
+  // com o HikCentral (esta instalação não suporta custom fields, ver JobFunction).
+  jobFunctionId String?      @map("job_function_id")
+  jobFunction   JobFunction? @relation(fields: [jobFunctionId], references: [id], onDelete: SetNull)
+
   photoUrl  String?   @map("photo_url")
   createdAt DateTime  @default(now()) @map("created_at")
   updatedAt DateTime? @updatedAt @map("updated_at")
@@ -283,6 +288,9 @@ model ServiceProvider {
   // Status da sincronização assíncrona com o HikCentral (ver HikCentralSyncQueue)
   hikSyncStatus      String?  @default("pending") @map("hik_sync_status")
   hikSyncError       String?  @map("hik_sync_error")
+  // Cargo/função — local-only, não sincroniza com o HikCentral (ver JobFunction)
+  jobFunctionId      String?      @map("job_function_id")
+  jobFunction        JobFunction? @relation(fields: [jobFunctionId], references: [id], onDelete: SetNull)
   createdBy          String?  @map("created_by")
   createdAt          DateTime @default(now()) @map("created_at")
   updatedAt          DateTime @updatedAt @map("updated_at")
@@ -313,6 +321,24 @@ model HikCentralSyncQueue {
   @@index([status, nextAttemptAt])
   @@index([entityType, entityId])
   @@map("hikcentral_sync_queue")
+}
+
+// ============ Funções (cargo) — local-only ============
+// Taxonomia de cargo/função (zelador, porteiro, síndico...) atribuída a moradores
+// e prestadores. Não sincroniza com o HikCentral: esta instalação não suporta
+// custom fields na API (confirmado em 2026-07-27 — personCustomList é aceito
+// mas descartado silenciosamente pelo HikCentral).
+
+model JobFunction {
+  id               String            @id @default(cuid())
+  name             String            @unique
+  description      String?
+  createdAt        DateTime          @default(now()) @map("created_at")
+  updatedAt        DateTime          @updatedAt @map("updated_at")
+  persons          Person[]
+  serviceProviders ServiceProvider[]
+
+  @@map("job_functions")
 }
 
 model Department {

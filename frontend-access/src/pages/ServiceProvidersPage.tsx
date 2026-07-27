@@ -30,7 +30,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { useToast } from '@/hooks/use-toast';
-import { getHikcentralPrestadores, createServiceProvider, updateServiceProvider, getAllResidentsForSelect, getActiveTowers } from '@/db/api';
+import { getHikcentralPrestadores, createServiceProvider, updateServiceProvider, getAllResidentsForSelect, getActiveTowers, getJobFunctions } from '@/db/api';
 import { urlToBase64, formatAddress } from '@/lib/utils';
 import { addPerson, createAppointment, reapplyAuthorization, getOrganizations } from '@/services/hikcentral';
 import { useAuth } from '@/contexts/AuthContext';
@@ -62,6 +62,7 @@ export default function ServiceProvidersPage() {
   const [providers, setProviders] = useState<ServiceProvider[]>([]);
   const [residents, setResidents] = useState<Array<{ id: string; full_name: string; unit_number: string; block: string | null; tower: string | null; parkingSpaces: number | null }>>([]);
   const [towers, setTowers] = useState<Tower[]>([]);
+  const [jobFunctions, setJobFunctions] = useState<Array<{ id: string; name: string }>>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const { tab, setTab } = useEntityTab({ canRegister: true });
@@ -94,7 +95,8 @@ export default function ServiceProvidersPage() {
       notes: '',
       plateNo: '',
       cnpj: '',
-      visiting_unit: ''
+      visiting_unit: '',
+      job_function_id: ''
     }
   });
 
@@ -127,6 +129,10 @@ export default function ServiceProvidersPage() {
     loadTowers();
     loadOrganizations();
   }, [search]);
+
+  useEffect(() => {
+    getJobFunctions().then(setJobFunctions).catch(() => setJobFunctions([]));
+  }, []);
 
   // Auto-fill tower/block/unit when a resident is selected
   useEffect(() => {
@@ -238,7 +244,8 @@ export default function ServiceProvidersPage() {
         visiting_resident: provider.visiting_resident || '',
         valid_from: provider.valid_from || '',
         valid_until: provider.valid_until || '',
-        notes: provider.notes || ''
+        notes: provider.notes || '',
+        job_function_id: provider.job_function_id || ''
       });
     } else {
       setEditingProvider(null);
@@ -256,7 +263,8 @@ export default function ServiceProvidersPage() {
         visiting_resident: '',
         valid_from: '',
         valid_until: '',
-        notes: ''
+        notes: '',
+        job_function_id: ''
       });
     }
     if (!provider) {
@@ -293,7 +301,8 @@ export default function ServiceProvidersPage() {
       visiting_unit: provider.visiting_unit || '',
       valid_from: '',
       valid_until: '',
-      notes: provider.notes || ''
+      notes: provider.notes || '',
+      job_function_id: provider.job_function_id || ''
     });
     setExistingQuery('');
     setExistingOpen(false);
@@ -829,6 +838,29 @@ export default function ServiceProvidersPage() {
                           )}
                         />
                       </div>
+
+                      <FormField
+                        control={form.control}
+                        name="job_function_id"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Função</FormLabel>
+                            <Select onValueChange={field.onChange} value={field.value}>
+                              <FormControl>
+                                <SelectTrigger>
+                                  <SelectValue placeholder="Selecione a função (opcional)" />
+                                </SelectTrigger>
+                              </FormControl>
+                              <SelectContent>
+                                {jobFunctions.map((fn) => (
+                                  <SelectItem key={fn.id} value={fn.id}>{fn.name}</SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
 
                       <FormField
                         control={form.control}

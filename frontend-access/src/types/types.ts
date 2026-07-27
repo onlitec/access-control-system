@@ -81,6 +81,10 @@ export interface ServiceProvider {
   authorized_units: string[] | null;
   notes: string | null;
   hikcentral_person_id: string | null;
+  hik_sync_status?: string | null;
+  hik_sync_error?: string | null;
+  job_function_id?: string | null;
+  job_function_name?: string | null;
   created_by: string | null;
   created_at: string;
   updated_at: string;

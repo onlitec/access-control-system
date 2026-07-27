@@ -27,6 +27,7 @@ import {
     Video,
     HardDrive,
     Network,
+    Briefcase,
 } from 'lucide-react';
 import { avatarGradient } from '@/utils/avatarColor';
 
@@ -52,6 +53,7 @@ const menuSections = [
             { to: '/admin/integrations', icon: Plug, label: 'Integrações', end: false },
             { to: '/admin/condominium', icon: Building, label: 'Condomínio', end: false },
             { to: '/admin/departments', icon: Layers, label: 'Departamentos', end: false },
+            { to: '/admin/job-functions', icon: Briefcase, label: 'Funções', end: false },
             { to: '/admin/access-areas', icon: KeyRound, label: 'Áreas de Acesso', end: false },
             { to: '/admin/system-users', icon: Users, label: 'Usuários do sistema', end: false },
             { to: '/admin/permissions', icon: Shield, label: 'Permissões', end: false },
