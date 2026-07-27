@@ -153,22 +153,22 @@ export class HikCentralService {
             const errorData = await response.json().catch(() => ({}));
             const errorMsg = errorData.msg || errorData.message || response.statusText;
             const errorCode = errorData.code;
-            
+
             // Tratamento especial para erro de versão não suportada (code 8)
             if (errorCode === '8' || errorCode === 8) {
                 throw new Error(`HikCentral: Versão do produto não suporta este recurso (${path}).`);
             }
-            
+
             throw new Error(errorMsg || `Erro na requisição Hikcentral: ${response.statusText}`);
         }
 
         const result = await response.json();
-        
+
         // Algumas APIs retornam 200 OK mas com erro no corpo JSON
         if (result && (result.code === '8' || result.code === 8)) {
              throw new Error(`HikCentral: Versão do produto não suporta este recurso (${path}).`);
         }
-        
+
         return result;
     }
 
@@ -277,7 +277,7 @@ export class HikCentralService {
 
                 // Formatos comuns de picUri no Artemis:
                 // 1. "/artemis/static/..."
-                // 2. "abc123hash" 
+                // 2. "abc123hash"
                 // Se não começa com "/", geralmente é um identificador que precisa do endpoint de mídia
                 if (!picUri.startsWith('/')) {
                     apiPath = `/artemis/media/pic/${picUri}`;
@@ -383,6 +383,18 @@ export class HikCentralService {
         return this.hikRequest('/artemis/api/resource/v1/person/single/update', {
             method: 'POST',
             body: JSON.stringify(payload),
+        });
+    }
+
+    /**
+     * Remover pessoa do HikCentral (deletePerson)
+     * Usado pela fila de sincronização assíncrona (HikCentralSyncQueueService)
+     * quando um registro local (ex.: prestador) é apagado.
+     */
+    public static async deletePerson(personId: string) {
+        return this.hikRequest('/artemis/api/resource/v1/person/single/delete', {
+            method: 'POST',
+            body: JSON.stringify({ personId }),
         });
     }
 
@@ -688,7 +700,7 @@ export class HikCentralService {
     }
 
     // ============ CMS Data-Driven: Entity Fetchers with Cache ============
-    
+
     // Cache em memória com TTL por tipo de entidade
     private static entityCache: Map<string, { data: any; timestamp: number; ttl: number }> = new Map();
     private static readonly CACHE_TTL = {
@@ -710,21 +722,21 @@ export class HikCentralService {
     ): Promise<T> {
         const cached = this.entityCache.get(cacheKey);
         const now = Date.now();
-        
+
         if (cached && (now - cached.timestamp) < cached.ttl) {
             console.log(`[HikCentral Cache] HIT: ${cacheKey}`);
             return cached.data;
         }
-        
+
         console.log(`[HikCentral Cache] MISS: ${cacheKey}`);
         const data = await fetcher();
-        
+
         this.entityCache.set(cacheKey, {
             data,
             timestamp: now,
             ttl: this.CACHE_TTL[entityType]
         });
-        
+
         return data;
     }
 
@@ -841,11 +853,11 @@ export class HikCentralService {
                 method: 'POST',
                 body: JSON.stringify({ pageNo: 1, pageSize: 1000 })
             });
-            
+
             const cameras = cameraResult?.data?.list || [];
             // Busca uma câmera que tenha o deviceId no parentIndexCode ou nome similar
-            const targetCamera = cameras.find((c: any) => 
-                c.parentIndexCode === deviceId || 
+            const targetCamera = cameras.find((c: any) =>
+                c.parentIndexCode === deviceId ||
                 c.cameraName?.includes(deviceId) ||
                 c.indexCode === deviceId
             );
@@ -856,7 +868,7 @@ export class HikCentralService {
             }
 
             console.log(`[HikCentral] Nenhuma câmera específica encontrada para ${deviceId}, retornando o próprio ID.`);
-            return deviceId; 
+            return deviceId;
         } catch (e: any) {
             console.error(`[HikCentral] Erro ao resolver câmera (fallback para deviceId):`, e.message);
             return deviceId;
@@ -869,7 +881,7 @@ export class HikCentralService {
      */
     public static async captureCameraPicture(indexCode: string): Promise<Buffer> {
         console.log(`[HikCentral] Iniciando captura para: ${indexCode}`);
-        
+
         // Tentativa 1: Manual Capture (Video Module)
         try {
             console.log(`[HikCentral] Tentando captura via Vídeo (/artemis/api/video/v1/manualCapture)...`);
@@ -877,20 +889,20 @@ export class HikCentralService {
                 method: 'POST',
                 body: JSON.stringify({ cameraIndexCode: indexCode })
             });
-            
+
             if (response?.data?.picUrl || response?.data?.picUri) {
                 const picUrl = response.data.picUrl || response.data.picUri;
                 console.log(`[HikCentral] Sucesso via Vídeo. URL: ${picUrl}`);
                 return await this.hikRequestRaw(picUrl, { method: 'GET' });
             }
-            
+
             console.warn("[HikCentral] API de Vídeo retornou sucesso mas sem picUrl. Resposta:", JSON.stringify(response));
         } catch (e: any) {
             const status = e.response?.status;
             const data = e.response?.data;
             console.warn(`[HikCentral] Captura via Vídeo falhou (Status: ${status}): ${e.message}. Detalhes: ${JSON.stringify(data || {})}. Tentando via ACS...`);
         }
-            
+
         // Tentativa 2: ACS Capture (Access Control Module)
         try {
             console.log(`[HikCentral] Tentando captura via ACS (/artemis/api/acs/v1/device/capture)...`);
@@ -905,7 +917,7 @@ export class HikCentralService {
                 console.log(`[HikCentral] Sucesso via ACS. URL: ${picUrl}`);
                 return await this.hikRequestRaw(picUrl, { method: 'GET' });
             }
-            
+
             console.warn("[HikCentral] API de ACS retornou sucesso mas sem picUrl. Resposta:", JSON.stringify(response));
         } catch (e2: any) {
             const status = e2.response?.status;

@@ -43,6 +43,7 @@ import cloudRoutes from './routes/cloud.routes';
 import discoveryRoutes from './routes/discovery.routes';
 import devicesRoutes from './routes/devices.routes';
 import deliveriesRoutes from './routes/deliveries.routes';
+import hikcentralSyncRoutes from './routes/hikcentral-sync.routes';
 import { config } from './config/unifiedConfig';
 import { AuditService } from './services/AuditService';
 import { emitEvent } from './services/EventBusService';
@@ -252,6 +253,7 @@ app.use('/api/events', eventsRoutes);
 app.use('/api/vms', vmsRoutes);
 app.use('/api/discovery', discoveryRoutes);
 app.use('/api/devices', devicesRoutes);
+app.use('/api/hikcentral-sync', hikcentralSyncRoutes);
 
 // ============ Platform Routes (Integrated with HikCentral) ============
 app.use('/api/hikcentral', hikcentralVisitorsRouter);

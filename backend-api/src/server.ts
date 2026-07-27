@@ -11,6 +11,7 @@ import { NiceGuaritaService, setPassbackBroadcast } from './services/NiceGuarita
 import { broadcastPassbackAlert } from './routes/guarita-passback.routes';
 import { facialAccessEventWatcher } from './services/FacialAccessEventWatcher';
 import { DeviceStatusService } from './services/DeviceStatusService';
+import { HikCentralSyncQueueService } from './services/HikCentralSyncQueueService';
 
 const port = process.env.PORT || 3001;
 
@@ -48,6 +49,15 @@ app.listen(Number(port), '0.0.0.0', () => {
         void facialAccessEventWatcher.sync().catch((err: any) =>
             console.error('[FacialAccess] Falha ao reconciliar event watchers:', err?.message || err));
     }, 60_000);
+    // ─────────────────────────────────────────────────────────────────────
+
+    // ── Fila de sincronização assíncrona com o HikCentral (push local -> HikCentral) ──
+    void HikCentralSyncQueueService.drainOnce().catch((err: any) =>
+        console.error('[HikCentralSyncQueue] Falha no drain inicial:', err?.message || err));
+    setInterval(() => {
+        void HikCentralSyncQueueService.drainOnce().catch((err: any) =>
+            console.error('[HikCentralSyncQueue] Falha no drain periódico:', err?.message || err));
+    }, 30_000);
     // ─────────────────────────────────────────────────────────────────────
 
     if (SESSION_AUDIT_PRUNE_INTERVAL_MINUTES === 0) {

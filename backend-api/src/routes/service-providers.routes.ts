@@ -11,5 +11,6 @@ router.get('/', controller.list);
 router.post('/', controller.create);
 router.patch('/:id', controller.update);
 router.delete('/:id', controller.delete);
+router.post('/:id/retry-sync', controller.retrySync);
 
 export default router;
