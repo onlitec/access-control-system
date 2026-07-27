@@ -19,6 +19,7 @@ import PermissionsPage from '@/pages/PermissionsPage';
 import ReportsPage from '@/pages/ReportsPage';
 import AccessAreasPage from '@/pages/AccessAreasPage';
 import DepartmentsPage from '@/pages/DepartmentsPage';
+import JobFunctionsPage from '@/pages/JobFunctionsPage';
 import OnboardingReviewPage from '@/pages/OnboardingReviewPage';
 import VmsDevicesPage from '@/pages/VmsDevicesPage';
 import VmsStoragePage from '@/pages/VmsStoragePage';
@@ -86,6 +87,7 @@ function AppRoutes() {
             <Route path="/admin/permissions" element={<ProtectedRoute><PermissionsPage /></ProtectedRoute>} />
             <Route path="/admin/access-areas" element={<ProtectedRoute><AccessAreasPage /></ProtectedRoute>} />
             <Route path="/admin/departments" element={<ProtectedRoute><DepartmentsPage /></ProtectedRoute>} />
+            <Route path="/admin/job-functions" element={<ProtectedRoute><JobFunctionsPage /></ProtectedRoute>} />
             <Route path="/admin/onboarding-review" element={<ProtectedRoute><OnboardingReviewPage /></ProtectedRoute>} />
             <Route path="/admin/system-settings" element={<ProtectedRoute><SystemSettingsPage /></ProtectedRoute>} />
 

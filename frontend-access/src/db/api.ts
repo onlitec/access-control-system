@@ -90,6 +90,11 @@ export const getActiveTowers = async () => {
   return request<Tower[]>(`/towers/active`);
 };
 
+// ============ Job Functions (Funções/cargo) ============
+export const getJobFunctions = async () => {
+  return request<Array<{ id: string; name: string; description?: string | null }>>(`/job-functions`);
+};
+
 export const getStaff = async (search = '') => {
   return request<{ data: any[], success: boolean }>(`/staff?search=${search}`);
 };

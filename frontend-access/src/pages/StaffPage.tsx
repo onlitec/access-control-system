@@ -28,7 +28,7 @@ import {
 import { Label } from '@/components/ui/label';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
-import { getStaff, createStaff } from '@/db/api';
+import { getStaff, createStaff, getJobFunctions } from '@/db/api';
 import { Search, Plus, Camera, Video } from 'lucide-react';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useToast } from '@/hooks/use-toast';
@@ -44,6 +44,7 @@ export default function StaffPage() {
     const [staff, setStaff] = useState<any[]>([]);
     const [loading, setLoading] = useState(true);
     const [search, setSearch] = useState('');
+    const [jobFunctions, setJobFunctions] = useState<Array<{ id: string; name: string }>>([]);
     const { tab, setTab } = useEntityTab({ canRegister: true });
     const [uploading, setUploading] = useState(false);
     const [cameraDialogOpen, setCameraDialogOpen] = useState(false);
@@ -60,12 +61,17 @@ export default function StaffPage() {
             phone: '',
             orgIndexCode: '4', // Default Administração
             photo_url: '',
+            job_function_id: '',
         }
     });
 
     useEffect(() => {
         loadStaff();
     }, [search]);
+
+    useEffect(() => {
+        getJobFunctions().then(setJobFunctions).catch(() => setJobFunctions([]));
+    }, []);
 
     const loadStaff = async () => {
         try {
@@ -301,6 +307,29 @@ export default function StaffPage() {
                                                     </FormItem>
                                                 )}
                                             />
+
+                                            <FormField
+                                                control={form.control}
+                                                name="job_function_id"
+                                                render={({ field }) => (
+                                                    <FormItem>
+                                                        <FormLabel>Função</FormLabel>
+                                                        <Select onValueChange={field.onChange} value={field.value}>
+                                                            <FormControl>
+                                                                <SelectTrigger>
+                                                                    <SelectValue placeholder="Selecione a função (opcional)" />
+                                                                </SelectTrigger>
+                                                            </FormControl>
+                                                            <SelectContent>
+                                                                {jobFunctions.map((fn) => (
+                                                                    <SelectItem key={fn.id} value={fn.id}>{fn.name}</SelectItem>
+                                                                ))}
+                                                            </SelectContent>
+                                                        </Select>
+                                                        <FormMessage />
+                                                    </FormItem>
+                                                )}
+                                            />
                                         </div>
                                     </div>
 
@@ -397,9 +426,14 @@ export default function StaffPage() {
                                             </Badge>
                                         </TableCell>
                                         <TableCell>
-                                            <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
-                                                {p.role}
-                                            </span>
+                                            <div className="flex flex-col gap-0.5">
+                                                <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
+                                                    {p.role}
+                                                </span>
+                                                {p.job_function_name && (
+                                                    <span className="text-xs text-foreground">{p.job_function_name}</span>
+                                                )}
+                                            </div>
                                         </TableCell>
                                         <TableCell>
                                             <div className="flex flex-col text-sm">

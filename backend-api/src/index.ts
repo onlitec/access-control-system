@@ -44,6 +44,7 @@ import discoveryRoutes from './routes/discovery.routes';
 import devicesRoutes from './routes/devices.routes';
 import deliveriesRoutes from './routes/deliveries.routes';
 import hikcentralSyncRoutes from './routes/hikcentral-sync.routes';
+import jobFunctionsRoutes from './routes/job-functions.routes';
 import { config } from './config/unifiedConfig';
 import { AuditService } from './services/AuditService';
 import { emitEvent } from './services/EventBusService';
@@ -254,6 +255,7 @@ app.use('/api/vms', vmsRoutes);
 app.use('/api/discovery', discoveryRoutes);
 app.use('/api/devices', devicesRoutes);
 app.use('/api/hikcentral-sync', hikcentralSyncRoutes);
+app.use('/api/job-functions', jobFunctionsRoutes);
 
 // ============ Platform Routes (Integrated with HikCentral) ============
 app.use('/api/hikcentral', hikcentralVisitorsRouter);
@@ -685,6 +687,8 @@ app.post('/api/residents', authMiddleware, async (req, res) => {
         prismaData.orgIndexCode = body.orgIndexCode || '7'; // Default MORADORES
         prismaData.cardSerial = body.cardSerial || null;
         prismaData.txSerial = body.txSerial || null;
+        // Cargo/função — local-only, não sincroniza com o HikCentral (ver JobFunction)
+        prismaData.jobFunctionId = body.job_function_id || body.jobFunctionId || null;
 
         // 1. Cadastrar no HikCentral se disponível (opcional — sistema funciona sem HikCentral)
         let hikPersonId = body.hikcentral_person_id || null;
@@ -820,6 +824,9 @@ app.patch('/api/residents/:id', authMiddleware, async (req, res) => {
             document_photo_url: body.document_photo_url !== undefined ? body.document_photo_url : existing.document_photo_url,
             parkingSpaces: body.parkingSpaces !== undefined ? (body.parkingSpaces !== null ? parseInt(body.parkingSpaces) : null) : existing.parkingSpaces,
             vehiclePlate: body.vehiclePlate !== undefined ? body.vehiclePlate : existing.vehiclePlate,
+            jobFunctionId: (body.job_function_id ?? body.jobFunctionId) !== undefined
+                ? (body.job_function_id ?? body.jobFunctionId)
+                : existing.jobFunctionId,
         };
 
         if (body.vehiclePlate !== undefined) updateData.vehiclePlate = body.vehiclePlate;
