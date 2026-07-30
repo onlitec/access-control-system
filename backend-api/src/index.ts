@@ -55,6 +55,7 @@ import accessAreasRoutes from './routes/access-areas.routes';
 import guaritaPassbackRoutes from './routes/guarita-passback.routes';
 import { eventsRoutes } from './routes/events.routes';
 import onboardingRoutes, { createOnboardingLink } from './routes/onboarding.routes';
+import { standbyForwardMiddleware } from './middleware/standbyForward.middleware';
 
 dotenv.config();
 
@@ -239,6 +240,7 @@ app.use(cookieParser());
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
 app.use(cors(corsOptions));
+app.use(standbyForwardMiddleware);
 app.use(healthMetricsMiddleware);
 
 // Global API Routes

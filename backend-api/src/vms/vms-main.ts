@@ -4,6 +4,7 @@ dotenv.config();
 import express, { Request, Response, NextFunction } from 'express';
 import { promises as fs } from 'fs';
 import { prisma } from '../database';
+import { isStandby } from '../utils/dbRole';
 import { MediaMtxClient } from './MediaMtxClient';
 import { PathReconciler, ensureSegmentHookScript } from './PathReconciler';
 import { RecordingScheduler } from './RecordingScheduler';
@@ -180,22 +181,32 @@ async function main(): Promise<void> {
   // comandos via shell) — regravado a cada boot para acompanhar token/porta.
   await ensureSegmentHookScript();
 
+  // reconcile() só lê câmeras do banco e registra no MediaMTX local — é o que
+  // sustenta a VISUALIZAÇÃO ao vivo, então roda sempre, mesmo em standby.
   await reconciler.reconcile();
-  await scheduler.tick();
-  await motionWatcher.sync();
-  await indexer.reconcileOrphans();
-  await vca.reconcile().catch((err) => console.error(`[VCA] reconcile inicial: ${err.message}`));
-
   every(60_000, () => reconciler.reconcile(), 'reconcile');
-  every(30_000, () => scheduler.tick(), 'scheduler');
-  every(60_000, () => vca.reconcile(), 'vca');
-  // rede de segurança: indexa qualquer gravação que o hook do MediaMTX não
-  // reportou (ele não dispara quando a gravação é interrompida no meio)
-  every(5 * 60_000, () => indexer.reconcileOrphans(), 'scan-gravacoes');
-  every(60_000, () => motionWatcher.sync(), 'motion-sync');
-  every(60_000, () => uploader.tick(), 'upload');
-  every(60 * 60_000, () => retention.run(), 'retention');
-  void retention.run().catch((err) => console.error(`[VMS] retention: ${err.message}`));
+
+  // Gravação/indexação/upload/retenção/VCA escrevem no banco a cada ciclo —
+  // em um standby (réplica de leitura) isso só falharia repetidamente contra
+  // uma transação somente-leitura. Rodar só no primário.
+  if (await isStandby()) {
+    console.log('[VMS] Rodando em modo standby: pulando gravação/indexação/upload/retenção/VCA (só visualização ao vivo).');
+  } else {
+    await scheduler.tick();
+    await motionWatcher.sync();
+    await indexer.reconcileOrphans();
+    await vca.reconcile().catch((err) => console.error(`[VCA] reconcile inicial: ${err.message}`));
+
+    every(30_000, () => scheduler.tick(), 'scheduler');
+    every(60_000, () => vca.reconcile(), 'vca');
+    // rede de segurança: indexa qualquer gravação que o hook do MediaMTX não
+    // reportou (ele não dispara quando a gravação é interrompida no meio)
+    every(5 * 60_000, () => indexer.reconcileOrphans(), 'scan-gravacoes');
+    every(60_000, () => motionWatcher.sync(), 'motion-sync');
+    every(60_000, () => uploader.tick(), 'upload');
+    every(60 * 60_000, () => retention.run(), 'retention');
+    void retention.run().catch((err) => console.error(`[VMS] retention: ${err.message}`));
+  }
 }
 
 void main().catch((err) => {
