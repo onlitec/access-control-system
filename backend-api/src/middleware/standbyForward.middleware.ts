@@ -1,5 +1,5 @@
 import type { Request, Response, NextFunction } from 'express';
-import { prisma } from '../database';
+import { isStandby } from '../utils/dbRole';
 
 /**
  * Segundo servidor (réplica de leitura do Postgres): enquanto este processo
@@ -11,27 +11,7 @@ import { prisma } from '../database';
  */
 
 const PRIMARY_INTERNAL_URL = process.env.PRIMARY_INTERNAL_URL?.replace(/\/+$/, '');
-const RECOVERY_CHECK_TTL_MS = 3_000;
 const WRITE_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
-
-let cachedIsStandby = false;
-let cachedAt = 0;
-
-async function isStandby(): Promise<boolean> {
-    const now = Date.now();
-    if (now - cachedAt < RECOVERY_CHECK_TTL_MS) {
-        return cachedIsStandby;
-    }
-    try {
-        const [{ pg_is_in_recovery }] = await prisma.$queryRaw<[{ pg_is_in_recovery: boolean }]>`SELECT pg_is_in_recovery()`;
-        cachedIsStandby = pg_is_in_recovery;
-    } catch (error: any) {
-        console.error('[StandbyForward] Falha ao checar pg_is_in_recovery(), assumindo primário:', error?.message || error);
-        cachedIsStandby = false;
-    }
-    cachedAt = now;
-    return cachedIsStandby;
-}
 
 const HOP_BY_HOP_REQUEST_HEADERS = new Set(['host', 'connection', 'content-length']);
 
