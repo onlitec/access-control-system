@@ -6,12 +6,7 @@ import {
     createSecurityMetricsSnapshot,
     pruneSecurityMetricsSnapshots
 } from './services/securityMetrics';
-import { guaritaEventServer } from './services/NiceGuaritaProtocol';
-import { NiceGuaritaService, setPassbackBroadcast } from './services/NiceGuaritaService';
-import { broadcastPassbackAlert } from './routes/guarita-passback.routes';
-import { facialAccessEventWatcher } from './services/FacialAccessEventWatcher';
 import { DeviceStatusService } from './services/DeviceStatusService';
-import { HikCentralSyncQueueService } from './services/HikCentralSyncQueueService';
 
 const port = process.env.PORT || 3001;
 
@@ -27,37 +22,8 @@ initProviders();
 app.listen(Number(port), '0.0.0.0', () => {
     console.log(`Backend API running on http://0.0.0.0:${port}`);
 
-    // ── Start Nice Guarita MG3000 event listener ─────────────────────────
-    setPassbackBroadcast(broadcastPassbackAlert);
-    guaritaEventServer.start();
-    guaritaEventServer.on('access_event', (event) => {
-        void NiceGuaritaService.handleAccessEvent(event);
-    });
-    guaritaEventServer.on('server_error', (err: Error) => {
-        console.error('[NiceGuarita] Event server error:', err.message);
-    });
-    // ─────────────────────────────────────────────────────────────────────
-
     // ── Cache de status de dispositivos (dashboard/página de status) ──────
     DeviceStatusService.startBackgroundRefresh();
-    // ─────────────────────────────────────────────────────────────────────
-
-    // ── Terminais/controladoras faciais Hikvision: alertStream por device ─
-    void facialAccessEventWatcher.sync().catch((err: any) =>
-        console.error('[FacialAccess] Falha ao iniciar event watchers:', err?.message || err));
-    setInterval(() => {
-        void facialAccessEventWatcher.sync().catch((err: any) =>
-            console.error('[FacialAccess] Falha ao reconciliar event watchers:', err?.message || err));
-    }, 60_000);
-    // ─────────────────────────────────────────────────────────────────────
-
-    // ── Fila de sincronização assíncrona com o HikCentral (push local -> HikCentral) ──
-    void HikCentralSyncQueueService.drainOnce().catch((err: any) =>
-        console.error('[HikCentralSyncQueue] Falha no drain inicial:', err?.message || err));
-    setInterval(() => {
-        void HikCentralSyncQueueService.drainOnce().catch((err: any) =>
-            console.error('[HikCentralSyncQueue] Falha no drain periódico:', err?.message || err));
-    }, 30_000);
     // ─────────────────────────────────────────────────────────────────────
 
     if (SESSION_AUDIT_PRUNE_INTERVAL_MINUTES === 0) {
