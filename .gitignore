@@ -1,0 +1,26 @@
+# Segredos e credenciais — NUNCA versionar
+config/
+**/.env
+**/*.env
+**/credenciais.txt
+**/*password*.txt
+**/*secret*
+
+# Dados operacionais (gravações, DB dumps, etc.) — enormes, não são código
+data/
+logs/
+diag/
+backups/
+codigo-fonte/
+binaries/
+
+# Snapshots manuais de dist/ usados como rollback (padrão já usado neste projeto)
+**/dist.bak-*/
+
+# Dependências e build (reproduzíveis a partir do package.json)
+**/node_modules/
+**/.npm/
+**/.cache/
+
+# Modelos/binários grandes
+*.onnx

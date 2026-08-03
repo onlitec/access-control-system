@@ -1,0 +1,12 @@
+{
+  "/_global-error/page": "/_global-error",
+  "/_not-found/page": "/_not-found",
+  "/favicon.ico/route": "/favicon.ico",
+  "/login/auth/page": "/login/auth",
+  "/login/dashboard/page": "/login/dashboard",
+  "/login/first-access/page": "/login/first-access",
+  "/login/guest-complete/page": "/login/guest-complete",
+  "/login/page": "/login",
+  "/login/pre-register/page": "/login/pre-register",
+  "/page": "/"
+}

@@ -1,0 +1,1007 @@
+generator client {
+  provider      = "prisma-client-js"
+  // "windows" é exigido pelo instalador Windows (installer/windows)
+  binaryTargets = ["native", "windows"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model HikcentralConfig {
+  id                    Int       @id @default(autoincrement())
+  apiUrl                String    @map("api_url")
+  appKey                String    @map("app_key")
+  appSecret             String    @map("app_secret")
+  syncEnabled           Boolean   @default(true) @map("sync_enabled")
+  createdAt             DateTime  @default(now()) @map("created_at")
+  updatedAt             DateTime  @updatedAt @map("updated_at")
+  config_name           String?
+  created_by            String?
+  last_sync             DateTime?
+  notes                 String?
+  sync_interval_minutes Int       @default(60)
+  updated_by            String?
+
+  @@map("hikcentral_configs")
+}
+
+model Person {
+  id           String      @id @default(uuid())
+  firstName    String      @map("first_name")
+  lastName     String      @map("last_name")
+  phone        String?
+  email        String?
+  orgIndexCode String      @map("org_index_code")
+  hikPersonId  String?     @unique @map("hik_person_id")
+  externalId   String?     @map("external_id")
+  departmentId String?     @map("department_id")
+  department   Department? @relation(fields: [departmentId], references: [id], onDelete: SetNull)
+
+  // NEW: FK to Unit (building structure — primary path going forward)
+  unitId String? @map("unit_id")
+  unit   Unit?   @relation("PersonToUnit", fields: [unitId], references: [id], onDelete: SetNull)
+
+  // Cargo/função (ex.: zelador, porteiro, síndico) — local-only, não sincroniza
+  // com o HikCentral (esta instalação não suporta custom fields, ver JobFunction).
+  jobFunctionId String?      @map("job_function_id")
+  jobFunction   JobFunction? @relation(fields: [jobFunctionId], references: [id], onDelete: SetNull)
+
+  photoUrl  String?   @map("photo_url")
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime? @updatedAt @map("updated_at")
+
+  // DEPRECATED fields: Keep during migration for backward compat (2 release cycles)
+  // Use unit.block.name instead
+  block              String?
+  cpf                String?
+  rg                 String?
+  parkingSpaces      Int?                        @map("parking_spaces")
+  vehiclePlate       String?                     @map("vehicle_plate")
+  document_photo_url String?
+  is_owner           Boolean?                    @default(true)
+  // Proprietário pode não residir no condomínio; morador pode não ser proprietário
+  is_resident        Boolean?                    @default(true)
+  notes              String?
+  // Use unit.tower.name instead
+  tower              String?
+  txSerial           String?                     @map("tx_serial")
+  cardSerial         String?                     @map("card_serial")
+  // Use unit.number instead
+  unit_number        String?
+  portalPassword     String?                     @map("portal_password")
+  // ID sintético (byCardNo) usado para vincular a face em terminais/controladoras Hikvision
+  facialAccessCardNo String?                     @map("facial_access_card_no")
+  residentSessions   ResidentSession[]
+  accessAreas        ResidentAccessArea[]
+  passbackState      GuaritaPassbackState?
+  faceVerification   OnboardingFaceVerification?
+
+  @@index([unitId])
+  @@map("persons")
+}
+
+// ============ Onboarding: confirmação de CPF + verificação facial ============
+
+model OnboardingFaceVerification {
+  id       String @id @default(uuid())
+  personId String @unique @map("person_id")
+  person   Person @relation(fields: [personId], references: [id], onDelete: Cascade)
+
+  status String @default("awaiting_selfie") @map("status")
+  // "awaiting_selfie" | "approved" | "pending_admin_review" | "rejected"
+
+  attempts       Int       @default(0) @map("attempts")
+  lastSelfieUrl  String?   @map("last_selfie_url") // data:image/jpeg;base64,... (só a última tentativa)
+  lastSimilarity Float?    @map("last_similarity")
+  lastAttemptAt  DateTime? @map("last_attempt_at")
+
+  resolvedBy      String?   @map("resolved_by") // User.id do admin que aprovou/rejeitou
+  resolvedAt      DateTime? @map("resolved_at")
+  resolutionNotes String?   @map("resolution_notes")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([status])
+  @@map("onboarding_face_verifications")
+}
+
+model Visitor {
+  id                 String    @id @default(uuid())
+  name               String
+  surname            String?
+  type               String?   @default("VISITOR")
+  certificateType    String?   @map("certificate_type")
+  certificateNo      String?   @map("certificate_no")
+  email              String?
+  phone              String?
+  plateNo            String?   @map("plate_no")
+  visitStartTime     DateTime  @map("visit_start_time")
+  visitEndTime       DateTime  @map("visit_end_time")
+  hikVisitorId       String?   @map("hik_visitor_id")
+  externalId         String?   @map("external_id")
+  status             String?   @default("ACTIVE")
+  inviteToken        String?   @map("invite_token")
+  accessLevelId      String?   @map("access_level_id")
+  createdAt          DateTime  @default(now()) @map("created_at")
+  document           String?
+  document_photo_url String?
+  full_name          String?
+  notes              String?
+  photo_url          String?
+  purpose            String?
+  tower              String?
+  updated_at         DateTime?
+  visiting_resident  String?
+  visiting_unit      String?
+  visiting_block     String?
+  lgpdConsent        Boolean   @default(false) @map("lgpd_consent")
+  consentTimestamp   DateTime? @map("consent_timestamp")
+
+  @@map("visitors")
+}
+
+model AccessEvent {
+  id         String   @id @default(uuid())
+  occurredAt DateTime @default(now()) @map("occurred_at")
+  personName String   @map("person_name")
+  personType String   @default("visitor") @map("person_type") // "resident" | "visitor" | "provider_condo" | "provider_resident"
+  personId   String?  @map("person_id")
+  unit       String?  @map("unit") // e.g. "Torre A, Apto 102"
+  operatorId String?  @map("operator_id") // system user who registered the entry
+  deviceName String?  @map("device_name") // videoporteiro or access controller name
+  status     String   @default("pending") @map("status") // "authorized" | "denied" | "pending"
+  photoUrl   String?  @map("photo_url")
+  notes      String?  @map("notes")
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  // Legacy fields preserved for backward compatibility
+  eventTime DateTime @default(now()) @map("event_time")
+  doorName  String?  @map("door_name")
+  eventType String?  @default("face") @map("event_type")
+  picUri    String?  @map("pic_uri")
+
+  // Central de Eventos (feed unificado)
+  direction String? @map("direction") // "in" | "out"
+  category  String  @default("access") @map("category") // "access" | "delivery" | "gate" | "alarm" | "device" | "system"
+  source    String? @map("source") // "hikcentral" | "guarita" | "videoporteiro" | "qr_code" | "manual" | "controle_rf"
+  metadata  Json?   @map("metadata")
+
+  @@index([occurredAt(sort: Desc)])
+  @@index([category, occurredAt(sort: Desc)])
+  @@map("access_events")
+}
+
+model User {
+  id                 String              @id @default(uuid())
+  email              String              @unique
+  password           String
+  name               String
+  role               String              @default("admin_master")
+  status             String              @default("active")
+  isProtected        Boolean             @default(false) @map("is_protected")
+  lastLoginAt        DateTime?           @map("last_login_at")
+  mustChangePassword Boolean             @default(true) @map("must_change_password")
+  customPermissions  Json?               @map("custom_permissions")
+  // Acesso a câmeras: true = todas (padrão, retrocompatível). Quando false, o
+  // usuário só acessa as câmeras listadas em cameraAccess (vale p/ admins também).
+  cameraAccessAll    Boolean             @default(true) @map("camera_access_all")
+  cameraAccess       UserCameraAccess[]
+  createdAt          DateTime            @default(now()) @map("created_at")
+  refreshSessions    RefreshSession[]
+  sessionAuditEvents SessionAuditEvent[]
+  adminAuditEvents   AdminAuditEvent[]
+
+  @@map("users")
+}
+
+// Câmeras que um usuário pode ver quando cameraAccessAll = false. Aplicado no
+// backend (lista de câmeras + stream-auth + gravações), não só na UI.
+model UserCameraAccess {
+  id        String       @id @default(cuid())
+  userId    String       @map("user_id")
+  user      User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  channelId String       @map("channel_id")
+  channel   VideoChannel @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  createdAt DateTime     @default(now()) @map("created_at")
+
+  @@unique([userId, channelId])
+  @@index([userId])
+  @@map("user_camera_access")
+}
+
+model RefreshSession {
+  id                  String    @id @default(uuid())
+  userId              String    @map("user_id")
+  tokenHash           String    @unique @map("token_hash")
+  expiresAt           DateTime  @map("expires_at")
+  revokedAt           DateTime? @map("revoked_at")
+  replacedByTokenHash String?   @map("replaced_by_token_hash")
+  createdAt           DateTime  @default(now()) @map("created_at")
+  user                User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+  @@map("refresh_sessions")
+}
+
+model SessionAuditEvent {
+  id        String   @id @default(uuid())
+  userId    String?  @map("user_id")
+  userEmail String?  @map("user_email")
+  eventType String   @map("event_type")
+  success   Boolean  @default(true)
+  sessionId String?  @map("session_id")
+  ipAddress String?  @map("ip_address")
+  userAgent String?  @map("user_agent")
+  details   String?
+  createdAt DateTime @default(now()) @map("created_at")
+  user      User?    @relation(fields: [userId], references: [id])
+
+  @@index([userId, createdAt])
+  @@index([eventType, createdAt])
+  @@index([createdAt])
+  @@index([ipAddress, createdAt])
+  @@index([userEmail, createdAt])
+  @@map("session_audit_events")
+}
+
+model AdminAuditEvent {
+  id        String   @id @default(uuid())
+  userId    String?  @map("user_id")
+  userEmail String?  @map("user_email")
+  action    String
+  status    String
+  ipAddress String?  @map("ip_address")
+  details   String?
+  createdAt DateTime @default(now()) @map("created_at")
+  user      User?    @relation(fields: [userId], references: [id])
+
+  @@index([createdAt])
+  @@index([action, createdAt])
+  @@index([userEmail, createdAt])
+  @@map("admin_audit_events")
+}
+
+model ServiceProvider {
+  id                 String   @id @default(uuid())
+  fullName           String   @map("full_name")
+  companyName        String?  @map("company_name")
+  document           String
+  phone              String?
+  email              String?
+  serviceType        String   @map("service_type")
+  providerType       String   @default("temporary") @map("provider_type")
+  photoUrl           String?  @map("photo_url")
+  documentPhotoUrl   String?  @map("document_photo_url")
+  tower              String?
+  visitingBlock      String?  @map("visiting_block")
+  visitingUnit       String?  @map("visiting_unit")
+  visitingResident   String?  @map("visiting_resident")
+  validFrom          String?  @map("valid_from")
+  validUntil         String?  @map("valid_until")
+  authorizedUnits    Json?    @map("authorized_units")
+  notes              String?
+  hikcentralPersonId String?  @map("hikcentral_person_id")
+  // Status da sincronização assíncrona com o HikCentral (ver HikCentralSyncQueue)
+  hikSyncStatus      String?  @default("pending") @map("hik_sync_status")
+  hikSyncError       String?  @map("hik_sync_error")
+  // Cargo/função — local-only, não sincroniza com o HikCentral (ver JobFunction)
+  jobFunctionId      String?      @map("job_function_id")
+  jobFunction        JobFunction? @relation(fields: [jobFunctionId], references: [id], onDelete: SetNull)
+  createdBy          String?  @map("created_by")
+  createdAt          DateTime @default(now()) @map("created_at")
+  updatedAt          DateTime @updatedAt @map("updated_at")
+
+  @@map("service_providers")
+}
+
+// ============ Fila de sincronização assíncrona com o HikCentral ============
+// Push local -> HikCentral com retry/backoff. O write local sempre acontece
+// primeiro; esta fila roda em background e nunca bloqueia o write original.
+
+model HikCentralSyncQueue {
+  id            String    @id @default(cuid())
+  entityType    String    @map("entity_type") // "SERVICE_PROVIDER" (mais tipos em fases futuras)
+  entityId      String    @map("entity_id")
+  operation     String // "create" | "update" | "delete"
+  status        String    @default("pending") // "pending" | "processing" | "synced" | "error" | "not_applicable"
+  attempts      Int       @default(0)
+  maxAttempts   Int       @default(8) @map("max_attempts")
+  lastError     String?   @map("last_error")
+  payload       Json
+  hikEntityId   String?   @map("hik_entity_id")
+  nextAttemptAt DateTime  @default(now()) @map("next_attempt_at")
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
+  syncedAt      DateTime? @map("synced_at")
+
+  @@index([status, nextAttemptAt])
+  @@index([entityType, entityId])
+  @@map("hikcentral_sync_queue")
+}
+
+// ============ Funções (cargo) — local-only ============
+// Taxonomia de cargo/função (zelador, porteiro, síndico...) atribuída a moradores
+// e prestadores. Não sincroniza com o HikCentral: esta instalação não suporta
+// custom fields na API (confirmado em 2026-07-27 — personCustomList é aceito
+// mas descartado silenciosamente pelo HikCentral).
+
+model JobFunction {
+  id               String            @id @default(cuid())
+  name             String            @unique
+  description      String?
+  createdAt        DateTime          @default(now()) @map("created_at")
+  updatedAt        DateTime          @updatedAt @map("updated_at")
+  persons          Person[]
+  serviceProviders ServiceProvider[]
+
+  @@map("job_functions")
+}
+
+model Department {
+  id           String   @id @default(cuid())
+  name         String   @unique
+  description  String?
+  color        String?
+  hasAddresses Boolean  @default(true) @map("has_addresses")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+  persons      Person[]
+
+  @@map("departments")
+}
+
+model Tower {
+  id          String   @id @default(uuid())
+  name        String   @unique
+  description String?
+  isActive    Boolean  @default(true) @map("is_active")
+  floors      Int      @default(1)
+  blocks      Block[]
+  units       Unit[]
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  @@map("towers")
+}
+
+model Delivery {
+  id            String    @id @default(uuid())
+  courierName   String?   @map("courier_name") // nome do entregador
+  company       String? // iFood, Mercado Livre, Correios...
+  orderRef      String?   @map("order_ref") // "Pedido 5894", "Vol 2"
+  unit          String // destino: "Torre A, Apto 804"
+  residentId    String?   @map("resident_id")
+  status        String    @default("awaiting") // awaiting | picked_up | returned
+  photoUrl      String?   @map("photo_url")
+  notes         String?
+  receivedById  String?   @map("received_by_id") // operador que registrou
+  receivedAt    DateTime  @default(now()) @map("received_at")
+  pickedUpAt    DateTime? @map("picked_up_at")
+  pickedUpBy    String?   @map("picked_up_by") // nome de quem retirou
+  condominiumId String?   @map("condominium_id") // preparo multi-tenant (Fase G)
+  createdAt     DateTime  @default(now()) @map("created_at")
+
+  @@index([status, receivedAt(sort: Desc)])
+  @@map("deliveries")
+}
+
+model SecurityMetricSnapshot {
+  id                  String   @id @default(uuid())
+  generatedAt         DateTime @map("generated_at")
+  periodStart         DateTime @map("period_start")
+  periodEnd           DateTime @map("period_end")
+  windowHours         Int      @map("window_hours")
+  topN                Int      @map("top_n")
+  loginAttempts       Int      @map("login_attempts")
+  loginFailedAttempts Int      @map("login_failed_attempts")
+  loginFailureRate    Float    @map("login_failure_rate")
+  topIpAttempts       Json     @default("[]") @map("top_ip_attempts")
+  topUserAttempts     Json     @default("[]") @map("top_user_attempts")
+  createdAt           DateTime @default(now()) @map("created_at")
+
+  @@index([generatedAt])
+  @@index([windowHours, generatedAt])
+  @@map("security_metric_snapshots")
+}
+
+// ============ Multi-Provider Integration Config ============
+
+model IntegrationConfig {
+  id           String   @id @default(cuid())
+  providerType String   @map("provider_type") // "hikcentral" | "local" | "nice_guarita"
+  enabled      Boolean  @default(false)
+  config       Json     @default("{}")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  @@unique([providerType])
+  @@map("integration_configs")
+}
+
+// ============ Resident Portal Sessions ============
+
+model ResidentSession {
+  id        String   @id @default(cuid())
+  personId  String   @map("person_id")
+  person    Person   @relation(fields: [personId], references: [id], onDelete: Cascade)
+  token     String   @unique
+  expiresAt DateTime @map("expires_at")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([personId])
+  @@index([expiresAt])
+  @@map("resident_sessions")
+}
+
+// ============ Hikvision Video Doorbell Devices ============
+
+model DoorbellDevice {
+  id        String   @id @default(cuid())
+  name      String
+  ip        String
+  port      Int      @default(80)
+  username  String
+  password  String
+  location  String?
+  enabled   Boolean  @default(true)
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("doorbell_devices")
+}
+
+// ============ Nice Guarita IP Devices ============
+
+model GuaritaDevice {
+  id        String   @id @default(cuid())
+  name      String
+  ip        String
+  port      Int      @default(80)
+  location  String?
+  enabled   Boolean  @default(true)
+  sdkConfig Json?    @map("sdk_config")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("guarita_devices")
+}
+
+// ============ Hikvision Facial Access (terminais standalone e controladoras) ============
+// Ver docs/LEITORES-FACIAIS/PLANO-INTEGRACAO-LEITORES-FACIAIS.md, seção 4
+
+model FacialAccessDevice {
+  id        String             @id @default(cuid())
+  name      String
+  role      String             @default("standalone_terminal") @map("role") // "standalone_terminal" | "controller"
+  ip        String
+  port      Int                @default(80)
+  username  String
+  password  String
+  location  String?
+  enabled   Boolean            @default(true)
+  sdkConfig Json?              @map("sdk_config")
+  doors     FacialAccessDoor[]
+  createdAt DateTime           @default(now()) @map("created_at")
+  updatedAt DateTime           @updatedAt @map("updated_at")
+
+  @@map("facial_access_devices")
+}
+
+model FacialAccessDoor {
+  id           String               @id @default(cuid())
+  deviceId     String               @map("device_id")
+  device       FacialAccessDevice   @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  doorNo       Int                  @map("door_no") // NET_DVR_ControlGateway doorNo / índice de porta ISAPI
+  name         String
+  actuatorType String               @default("door") @map("actuator_type") // "door" | "gate" | "barrier"
+  direction    String? // "entry" | "exit" | null (ambos)
+  readers      FacialAccessReader[]
+  areas        AccessAreaDoor[]
+  createdAt    DateTime             @default(now()) @map("created_at")
+
+  @@unique([deviceId, doorNo])
+  @@map("facial_access_doors")
+}
+
+model FacialAccessReader {
+  id         String           @id @default(cuid())
+  doorId     String           @map("door_id")
+  door       FacialAccessDoor @relation(fields: [doorId], references: [id], onDelete: Cascade)
+  readerNo   Int              @map("reader_no") // NET_DVR_ACS_ALARM_INFO.dwCardReaderNo
+  type       String // "face" | "card" | "face_and_card"
+  wiring     String           @default("rs485") @map("wiring") // "rs485" | "wiegand"
+  busAddress Int?             @map("bus_address") // endereço no barramento RS-485 compartilhado (quando wiring="rs485")
+  createdAt  DateTime         @default(now()) @map("created_at")
+
+  @@unique([doorId, readerNo])
+  @@map("facial_access_readers")
+}
+
+// ============ VMS: câmeras IP, NVRs/DVRs, gravação e storage ============
+// Dispositivo de vídeo -> canais (1 câmera IP = 1 canal; NVR/DVR = N canais).
+// Streaming ao vivo via MediaMTX (paths sincronizados a partir destas tabelas).
+
+model VideoDevice {
+  id        String         @id @default(cuid())
+  name      String
+  kind      String         @default("ip_camera") // "nvr" | "dvr" | "ip_camera"
+  protocol  String         @default("hikvision_isapi") // "hikvision_isapi" | "onvif" | "rtsp"
+  ip        String
+  httpPort  Int            @default(80) @map("http_port")
+  rtspPort  Int            @default(554) @map("rtsp_port")
+  username  String
+  password  String
+  location  String?
+  enabled   Boolean        @default(true)
+  sdkConfig Json?          @map("sdk_config")
+  channels  VideoChannel[]
+  createdAt DateTime       @default(now()) @map("created_at")
+  updatedAt DateTime       @updatedAt @map("updated_at")
+
+  @@map("video_devices")
+}
+
+model VideoChannel {
+  id          String                @id @default(cuid())
+  deviceId    String                @map("device_id")
+  device      VideoDevice           @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  channelNo   Int                   @map("channel_no") // canal ISAPI (1, 2...) — stream = {channelNo}01 main / {channelNo}02 sub
+  name        String
+  streamPath  String                @unique @map("stream_path") // slug do path no MediaMTX (ex.: "cam-portaria")
+  rtspUrlMain String?               @map("rtsp_url_main") // override manual; se null, montada pelo protocolo
+  rtspUrlSub  String?               @map("rtsp_url_sub")
+  enabled     Boolean               @default(true)
+  groupId     String?               @map("group_id") // pasta na árvore do videowall
+  group       CameraGroup?          @relation(fields: [groupId], references: [id], onDelete: SetNull)
+  /// Capacidades manuais por canal (PTZ/áudio) — toggle do admin, não detectado automaticamente.
+  /// {ptz, audioListen, audioTalk, ptzChannelNo}
+  capabilities Json?
+  recording   VideoRecordingConfig?
+  vca         VideoVcaConfig?
+  segments    RecordingSegment[]
+  userAccess  UserCameraAccess[]
+  createdAt   DateTime              @default(now()) @map("created_at")
+  updatedAt   DateTime              @updatedAt @map("updated_at")
+
+  @@unique([deviceId, channelNo])
+  @@map("video_channels")
+}
+
+/// Pasta/grupo de câmeras na árvore do videowall (ex.: "Garagem", "Torre 2").
+model CameraGroup {
+  id        String         @id @default(cuid())
+  name      String         @unique
+  sortOrder Int            @default(0) @map("sort_order")
+  channels  VideoChannel[]
+  createdAt DateTime       @default(now()) @map("created_at")
+
+  @@map("camera_groups")
+}
+
+/// Mosaico salvo: quais câmeras ficam em quais quadros, para reabrir a tela
+/// já configurada (slots = array indexado pela posição do quadro).
+model VideoLayout {
+  id        String   @id @default(cuid())
+  name      String   @unique
+  size      Int      @default(4) // nº de quadros do mosaico
+  cols      Int?     // colunas do mosaico (para o modo personalizado); null = derivar do size
+  slots     Json     // ["channelId" | null, ...] — índice = posição no mosaico
+  isDefault Boolean  @default(false) @map("is_default")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("video_layouts")
+}
+
+model VideoRecordingConfig {
+  id            String       @id @default(cuid())
+  channelId     String       @unique @map("channel_id")
+  channel       VideoChannel @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  mode          String       @default("off") // "off" | "continuous" | "scheduled" | "motion"
+  schedule      Json?        // [{"dow":[1,2,3,4,5],"start":"08:00","end":"18:00"}] p/ mode=scheduled
+  eventTypes    Json?        @map("event_types") // mode=motion: tipos ISAPI que disparam gravação (["vmd","linedetection","fielddetection",...]); null = só vmd
+  postEventSec  Int          @default(30) @map("post_event_sec") // motion: segue gravando N s após o último evento
+  retentionDays Int          @default(7) @map("retention_days")
+  useSubStream  Boolean      @default(false) @map("use_sub_stream")
+  /// Duração de cada arquivo gravado (ciclo). Arquivos menores dão granularidade
+  /// fina na retenção e no download; maiores geram menos arquivos para gerir.
+  segmentMinutes Int         @default(10) @map("segment_minutes")
+  updatedAt     DateTime     @updatedAt @map("updated_at")
+
+  @@map("video_recording_configs")
+}
+
+/// VCA por software (análise no servidor, independente da câmera): detecção de
+/// objetos (YOLO) + geometria de zona/linha/área. Opt-in por canal.
+model VideoVcaConfig {
+  id          String       @id @default(cuid())
+  channelId   String       @unique @map("channel_id")
+  channel     VideoChannel @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  enabled     Boolean      @default(false)
+  /// classes COCO que interessam; null = ["person"]. Ex.: ["person","car","truck","motorcycle","bus","bicycle"]
+  classes     Json?
+  /// teto de quadros analisados por segundo (custo de CPU). Gate de movimento roda antes da IA.
+  maxFps      Int          @default(5) @map("max_fps")
+  /// confiança mínima do detector (0–1) para considerar um objeto.
+  minScore    Float        @default(0.4) @map("min_score")
+  /// silêncio mínimo entre disparos da MESMA regra, em segundos.
+  cooldownSec Int          @default(15) @map("cooldown_sec")
+  /// segundos de gravação (pós-evento) quando a ação "record" dispara.
+  recordSeconds Int        @default(20) @map("record_seconds")
+  /// câmera cujo vídeo (ao vivo/gravado) representa o evento; null = a própria.
+  linkedCameraId String?   @map("linked_camera_id")
+  /// abre um popup automático no painel do operador quando um evento dispara.
+  popupOnOperator Boolean  @default(false) @map("popup_on_operator")
+  /// Regras desenhadas pelo operador. Cada item:
+  /// {id,name,type:"motion_zone"|"line_cross"|"intrusion",
+  ///  geometry:{points:[[x,y],...] normalizado 0–1},
+  ///  direction:"in"|"out"|"both" (line_cross), schedule:[{dow,start,end}]?,
+  ///  actions:["record","alert","notify","snapshot"], notifyTargets:{emails:[],phones:[]}}
+  rules       Json         @default("[]")
+  /// gate de movimento por câmera — null = default do código (MotionGate).
+  motionMinRatio   Float?  @map("motion_min_ratio")
+  motionPixelThr   Int?    @map("motion_pixel_thr")
+  motionDownsample Int?    @map("motion_downsample")
+  /// tracker de centroides por câmera — null = default do código (CentroidTracker).
+  trackerMaxDist   Float?  @map("tracker_max_dist")
+  trackerTtlMs     Int?    @map("tracker_ttl_ms")
+  updatedAt   DateTime     @updatedAt @map("updated_at")
+
+  @@map("video_vca_configs")
+}
+
+model StorageDestination {
+  id             String            @id @default(cuid())
+  name           String
+  kind           String            @default("rclone") // "local" | "rclone"
+  rcloneType     String?           @map("rclone_type") // "drive" | "onedrive" | "smb" | "ftp" | "sftp"
+  rcloneRemote   String?           @unique @map("rclone_remote") // nome da seção no rclone.conf
+  remoteBasePath String?           @map("remote_base_path")
+  uploadMode     String            @default("copy") @map("upload_mode") // "copy" (mantém local) | "move" (apaga local após upload)
+  enabled        Boolean           @default(true)
+  configJson     Json?             @map("config_json") // params não-secretos exibíveis (host, share...)
+  uploads        RecordingUpload[]
+  createdAt      DateTime          @default(now()) @map("created_at")
+  updatedAt      DateTime          @updatedAt @map("updated_at")
+
+  @@map("storage_destinations")
+}
+
+model RecordingSegment {
+  id        String            @id @default(cuid())
+  channelId String            @map("channel_id")
+  channel   VideoChannel      @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  startedAt DateTime          @map("started_at")
+  endedAt   DateTime?         @map("ended_at")
+  filePath  String            @unique @map("file_path") // relativo a VMS_RECORDINGS_DIR
+  sizeBytes BigInt            @default(0) @map("size_bytes")
+  trigger   String            @default("continuous") // "continuous" | "schedule" | "motion"
+  status    String            @default("closed") // "recording" | "closed" | "failed" | "deleted_local"
+  uploads   RecordingUpload[]
+  createdAt DateTime          @default(now()) @map("created_at")
+
+  @@index([channelId, startedAt])
+  @@index([status])
+  @@map("recording_segments")
+}
+
+model RecordingUpload {
+  id            String             @id @default(cuid())
+  segmentId     String             @map("segment_id")
+  segment       RecordingSegment   @relation(fields: [segmentId], references: [id], onDelete: Cascade)
+  destinationId String             @map("destination_id")
+  destination   StorageDestination @relation(fields: [destinationId], references: [id], onDelete: Cascade)
+  status        String             @default("pending") // "pending" | "uploading" | "done" | "failed"
+  attempts      Int                @default(0)
+  lastError     String?            @map("last_error")
+  uploadedAt    DateTime?          @map("uploaded_at")
+  createdAt     DateTime           @default(now()) @map("created_at")
+
+  @@unique([segmentId, destinationId])
+  @@index([status])
+  @@map("recording_uploads")
+}
+
+// ============ CMS Data-Driven: Entity Mappings ============
+// Mapeamento universal entre entidades HikCentral e páginas do painel
+// Permite que o admin configure dinamicamente quais dados alimentam cada página
+
+model EntityMapping {
+  id            String   @id @default(uuid())
+  pageRoute     String   @map("page_route") // "/painel/staff", "/painel/prestadores", "/painel/ti"
+  entityType    String   @map("entity_type") // "ORGANIZATION", "AREA", "ACCESS_LEVEL", "CUSTOM_FIELD", "FLOOR", "VISITOR_GROUP"
+  hikEntityId   String   @map("hik_entity_id") // orgIndexCode, areaIndexCode, privilegeGroupId, fieldId, floorIndexCode, visitorGroupId
+  hikEntityName String   @map("hik_entity_name") // Nome legível para exibição rápida no admin
+  isActive      Boolean  @default(true) @map("is_active")
+  priority      Int      @default(0) // Ordem de aplicação (menor = maior prioridade)
+  filterConfig  Json?    @map("filter_config") // Configurações adicionais de filtro (ex: {"operator": "AND", "value": "x"})
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+  createdBy     String?  @map("created_by")
+
+  @@index([pageRoute])
+  @@index([entityType])
+  @@index([pageRoute, entityType, isActive])
+  @@map("entity_mappings")
+}
+
+model BackupRun {
+  id           String    @id @default(cuid())
+  status       String // "running" | "success" | "failed"
+  type         String // "automatic" | "manual"
+  startedAt    DateTime  @default(now()) @map("started_at")
+  completedAt  DateTime? @map("completed_at")
+  durationMs   Int?      @map("duration_ms")
+  sizeBytes    BigInt?   @map("size_bytes")
+  destination  String?
+  errorMessage String?   @map("error_message")
+  triggeredBy  String?   @map("triggered_by") // admin user id or "scheduler"
+  createdAt    DateTime  @default(now()) @map("created_at")
+
+  @@map("backup_runs")
+}
+
+model Block {
+  id        String   @id @default(cuid())
+  name      String
+  towerId   String   @map("tower_id")
+  tower     Tower    @relation(fields: [towerId], references: [id], onDelete: Cascade)
+  units     Unit[]
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@map("blocks")
+}
+
+model Unit {
+  id            String   @id @default(cuid())
+  number        String
+  floor         Int?
+  status        String   @default("vacant") // "occupied" | "vacant"
+  towerId       String   @map("tower_id")
+  tower         Tower    @relation(fields: [towerId], references: [id], onDelete: Cascade)
+  blockId       String?  @map("block_id")
+  block         Block?   @relation(fields: [blockId], references: [id], onDelete: Cascade)
+  parkingSpaces Int      @default(0) @map("parking_spaces")
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  // Residents in this unit
+  persons Person[] @relation("PersonToUnit")
+
+  @@map("units")
+}
+
+model CondominiumSettings {
+  id                  String   @id @default("singleton")
+  name                String
+  cnpj                String?
+  address             String?
+  phone               String?
+  email               String?
+  logoUrl             String?  @map("logo_url")
+  type                String   @default("vertical")
+  antiPassbackEnabled Boolean  @default(false) @map("anti_passback_enabled")
+  updatedAt           DateTime @updatedAt @map("updated_at")
+
+  @@map("condominium_settings")
+}
+
+// Configurações de infraestrutura do sistema (SMTP, atualizações) —
+// singleton editável pelo painel admin; campos nulos caem no fallback do .env
+model SystemSettings {
+  id                String   @id @default("singleton")
+  smtpHost          String?  @map("smtp_host")
+  smtpPort          Int?     @map("smtp_port")
+  smtpUser          String?  @map("smtp_user")
+  smtpPassword      String?  @map("smtp_password")
+  smtpFrom          String?  @map("smtp_from")
+  smtpFromName      String?  @map("smtp_from_name")
+  updateManifestUrl String?  @map("update_manifest_url")
+  updatedAt         DateTime @updatedAt @map("updated_at")
+
+  @@map("system_settings")
+}
+
+// ============ Anti-Passagem Dupla (Guarita IP) ============
+
+model GuaritaPassbackState {
+  id         String   @id @default(cuid())
+  personId   String   @unique @map("person_id")
+  serial     String
+  direction  String // "IN" | "OUT"
+  deviceId   String?  @map("device_id")
+  occurredAt DateTime @map("occurred_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+  person     Person   @relation(fields: [personId], references: [id], onDelete: Cascade)
+
+  @@map("guarita_passback_states")
+}
+
+model GuaritaPassbackAlert {
+  id         String    @id @default(cuid())
+  personId   String?   @map("person_id")
+  personName String    @map("person_name")
+  serial     String
+  deviceId   String?   @map("device_id")
+  deviceName String?   @map("device_name")
+  unit       String?
+  photoUrl   String?   @map("photo_url")
+  occurredAt DateTime  @map("occurred_at")
+  resolved   Boolean   @default(false)
+  resolvedAt DateTime? @map("resolved_at")
+  resolvedBy String?   @map("resolved_by")
+
+  @@map("guarita_passback_alerts")
+}
+
+model RolePermission {
+  id                 String   @id @default(uuid())
+  role               String   @unique
+  health             Boolean  @default(false)
+  containers         Boolean  @default(false)
+  backups            Boolean  @default(false)
+  logs               Boolean  @default(false)
+  integrations       Boolean  @default(false)
+  condo              Boolean  @default(false)
+  users              Boolean  @default(false)
+  permissions        Boolean  @default(false)
+  audit              Boolean  @default(false)
+  deleteRegistration Boolean  @default(false) @map("delete_registration")
+  editRegistration   Boolean  @default(false) @map("edit_registration")
+  viewOnly           Boolean  @default(false) @map("view_only")
+  editDepartments    Boolean  @default(false) @map("edit_departments")
+  manageDevices      Boolean  @default(false) @map("manage_devices")
+  createdAt          DateTime @default(now()) @map("created_at")
+  updatedAt          DateTime @updatedAt @map("updated_at")
+
+  @@map("role_permissions")
+}
+
+// ============ Áreas de Acesso do Condomínio ============
+
+model AccessArea {
+  id             String               @id @default(cuid())
+  name           String
+  description    String?
+  icon           String?              @default("🏠")
+  isActive       Boolean              @default(true) @map("is_active")
+  isFavorite     Boolean              @default(false) @map("is_favorite")
+  order          Int                  @default(0)
+  createdAt      DateTime             @default(now()) @map("created_at")
+  updatedAt      DateTime             @updatedAt @map("updated_at")
+  parentId       String?              @map("parent_id")
+  parent         AccessArea?          @relation("AreaToArea", fields: [parentId], references: [id], onDelete: Cascade)
+  children       AccessArea[]         @relation("AreaToArea")
+  devices        NetworkDevice[]
+  residentAccess ResidentAccessArea[]
+  doors          AccessAreaDoor[]
+
+  @@map("access_areas")
+}
+
+model ResidentAccessArea {
+  id        String     @id @default(cuid())
+  personId  String     @map("person_id")
+  areaId    String     @map("area_id")
+  grantedAt DateTime   @default(now()) @map("granted_at")
+  grantedBy String?    @map("granted_by")
+  person    Person     @relation(fields: [personId], references: [id], onDelete: Cascade)
+  area      AccessArea @relation(fields: [areaId], references: [id], onDelete: Cascade)
+
+  @@unique([personId, areaId])
+  @@map("resident_access_areas")
+}
+
+// Vincula um nível de acesso (AccessArea) às portas físicas que ele libera —
+// ver docs/LEITORES-FACIAIS/PLANO-INTEGRACAO-LEITORES-FACIAIS.md, seção 4.4
+model AccessAreaDoor {
+  id     String           @id @default(cuid())
+  areaId String           @map("area_id")
+  area   AccessArea       @relation(fields: [areaId], references: [id], onDelete: Cascade)
+  doorId String           @map("door_id")
+  door   FacialAccessDoor @relation(fields: [doorId], references: [id], onDelete: Cascade)
+
+  @@unique([areaId, doorId])
+  @@map("access_area_doors")
+}
+
+model RegistrationRequirement {
+  id        String   @id @default(cuid())
+  category  String // "resident" | "visitor" | "condo_provider" | "resident_provider"
+  fieldName String   @map("field_name")
+  status    String // "required" | "optional" | "hidden"
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@unique([category, fieldName])
+  @@map("registration_requirements")
+}
+
+model Blacklist {
+  id        String   @id @default(uuid())
+  name      String
+  document  String   @unique
+  reason    String
+  createdAt DateTime @default(now()) @map("created_at")
+  createdBy String   @map("created_by")
+
+  @@map("blacklist")
+}
+
+model AccessSchedule {
+  id        String  @id @default(uuid())
+  type      String // "visitor" | "provider"
+  dayOfWeek Int     @map("day_of_week") // 0-6
+  startTime String  @map("start_time") // "08:00"
+  endTime   String  @map("end_time") // "18:00"
+  isActive  Boolean @default(true) @map("is_active")
+
+  @@map("access_schedules")
+}
+
+// ============ Network Discovery: dispositivos de rede descobertos/cadastrados ============
+// Fonte de verdade para câmeras IP, NVRs, DVRs, leitores faciais,
+// interfones e controladoras descobertos via ONVIF, SADP, mDNS ou ARP.
+
+model DeviceCategory {
+  id      String          @id @default(cuid())
+  code    String          @unique // "encoding" | "access_control" | "facial" | "intercom" | "network_transmission"
+  name    String
+  devices NetworkDevice[]
+
+  @@map("device_categories")
+}
+
+model NetworkDevice {
+  id                          String          @id @default(cuid())
+  macAddress                  String?         @unique @map("mac_address")
+  ipAddress                   String          @map("ip_address")
+  protocolType                String          @map("protocol_type") // "onvif" | "sadp" | "mdns" | "arp" | "manual" | "nice"
+  manufacturer                String?
+  model                       String?
+  serialNumber                String?         @unique @map("serial_number")
+  deviceType                  String?         @map("device_type") // "camera" | "nvr" | "dvr" | "facial" | "intercom" | "controller"
+  firmwareVersion             String?         @map("firmware_version")
+  isAdded                     Boolean         @default(false) @map("is_added")
+  lastDiscoveredAt            DateTime        @default(now()) @map("last_discovered_at")
+
+  // Campos preenchidos após adição manual/promoção do discovery
+  categoryId                  String?         @map("category_id")
+  category                    DeviceCategory? @relation(fields: [categoryId], references: [id])
+  areaId                      String?         @map("area_id")
+  area                        AccessArea?     @relation(fields: [areaId], references: [id], onDelete: SetNull)
+  friendlyName                String?         @map("friendly_name")
+  channelCount                Int             @default(0) @map("channel_count")
+  httpPort                    Int             @default(80) @map("http_port")
+  sdkPort                     Int             @default(8000) @map("sdk_port")
+  subnetMask                  String?         @map("subnet_mask")
+  gateway                     String?
+  dhcpEnabled                 Boolean         @default(false) @map("dhcp_enabled")
+  credentialUsername          String?         @map("credential_username")
+  credentialPasswordEncrypted String?         @map("credential_password_encrypted")
+  status                      String          @default("unknown") @map("status") // "online" | "offline" | "error" | "unknown"
+  lastSyncAt                  DateTime?       @map("last_sync_at")
+
+  syncLogs                    DeviceSyncLog[]
+
+  createdAt                   DateTime        @default(now()) @map("created_at")
+  updatedAt                   DateTime        @updatedAt @map("updated_at")
+
+  @@index([ipAddress])
+  @@index([isAdded])
+  @@map("network_devices")
+}
+
+model DeviceSyncLog {
+  id        String        @id @default(cuid())
+  deviceId  String        @map("device_id")
+  device    NetworkDevice @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  status    String        // "success" | "error"
+  message   String?
+  createdAt DateTime      @default(now()) @map("created_at")
+
+  @@index([deviceId])
+  @@map("device_sync_logs")
+}

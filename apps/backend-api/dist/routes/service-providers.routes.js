@@ -1,0 +1,14 @@
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+const express_1 = require("express");
+const ServiceProvidersController_1 = require("../controllers/ServiceProvidersController");
+const auth_1 = require("../middleware/auth");
+const router = (0, express_1.Router)();
+const controller = new ServiceProvidersController_1.ServiceProvidersController();
+router.use(auth_1.authMiddleware);
+router.get('/', controller.list);
+router.post('/', controller.create);
+router.patch('/:id', controller.update);
+router.delete('/:id', controller.delete);
+router.post('/:id/retry-sync', controller.retrySync);
+exports.default = router;
