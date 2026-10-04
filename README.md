@@ -1,6 +1,6 @@
 # OnliAcesso — Controle de Acesso e Câmeras
 
-[![Security Regression](https://github.com/YOUR_ORG/YOUR_REPO/actions/workflows/security-regression.yml/badge.svg)](https://github.com/YOUR_ORG/YOUR_REPO/actions/workflows/security-regression.yml)
+[![Security Regression](https://github.com/onlitec/access-control-system/actions/workflows/security-regression.yml/badge.svg)](https://github.com/onlitec/access-control-system/actions/workflows/security-regression.yml)
 
 Sistema de controle de acesso para condomínios: moradores, visitantes,
 prestadores, entregas, terminais faciais, guarita e **câmeras (VMS)**. Funciona
@@ -69,7 +69,6 @@ Artefatos:
 - `playwright-artifacts` (report/traces/screenshots/videos).
 - `compose-logs`.
 
-> Atualize `YOUR_ORG/YOUR_REPO` no badge para o repositório real.
 
 ## Contribuição
 
