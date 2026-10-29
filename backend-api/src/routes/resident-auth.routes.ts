@@ -4,6 +4,7 @@ import jwt from 'jsonwebtoken';
 import crypto from 'crypto';
 import bcrypt from 'bcryptjs';
 import { config } from '../config/unifiedConfig';
+import { VISITOR_STATUS, syncVisitorToHikCentral } from '../services/VisitorActivationService';
 
 const router = Router();
 const prisma = new PrismaClient();
@@ -158,12 +159,16 @@ router.get('/visitors', residentAuthMiddleware, async (req: Request, res: Respon
       return;
     }
 
+    // Convites novos são ligados pelo hostPersonId. A busca por nome cobre
+    // convites antigos, criados antes desse campo existir. (O filtro antigo por
+    // visiting_unit mostrava visitantes de outras torres com o mesmo número de
+    // apartamento e, sem unidade, todos os visitantes.)
     const residentLabel = `${person.firstName} ${person.lastName}`.trim();
     const visitors = await prisma.visitor.findMany({
       where: {
         OR: [
-          { visiting_resident: { contains: residentLabel, mode: 'insensitive' } },
-          { visiting_unit: person.unit_number ?? undefined },
+          { hostPersonId: person.id },
+          { hostPersonId: null, visiting_resident: { equals: residentLabel, mode: 'insensitive' } },
         ],
       },
       orderBy: { createdAt: 'desc' },
@@ -206,8 +211,9 @@ router.post('/visitors/pre-register', residentAuthMiddleware, async (req: Reques
         type: type ?? 'VISITOR',
         visitStartTime: visitStartTime ? new Date(visitStartTime) : now,
         visitEndTime: endTime,
-        status: 'PRE_REGISTERED',
+        status: VISITOR_STATUS.PRE_REGISTERED,
         inviteToken,
+        hostPersonId: person.id,
         visiting_resident: `${person.firstName} ${person.lastName}`.trim(),
         visiting_unit: person.unit_number ?? null,
         tower: person.tower ?? null,
@@ -224,6 +230,84 @@ router.post('/visitors/pre-register', residentAuthMiddleware, async (req: Reques
   } catch (err: any) {
     console.error('[ResidentAuth] pre-register visitor error:', err.message);
     res.status(500).json({ error: err.message });
+  }
+});
+
+// ── POST /api/resident/visitors/:id/approve ───────────────────────────────
+// O morador aprova o cadastro feito pelo visitante; só então o visitante é
+// enviado ao HikCentral e a facial passa a liberar o acesso.
+router.post('/visitors/:id/approve', residentAuthMiddleware, async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { personId } = (req as any).resident;
+    const visitor = await prisma.visitor.findFirst({ where: { id: req.params.id, hostPersonId: personId } });
+    if (!visitor) {
+      res.status(404).json({ error: 'Visitante não encontrado' });
+      return;
+    }
+    if (visitor.status !== VISITOR_STATUS.PENDING_APPROVAL) {
+      res.status(409).json({ error: 'Este cadastro não está aguardando aprovação' });
+      return;
+    }
+    if (visitor.visitEndTime < new Date()) {
+      res.status(410).json({ error: 'O período desta visita já terminou. Gere um novo convite.' });
+      return;
+    }
+
+    let hikVisitorId: string | undefined;
+    try {
+      hikVisitorId = await syncVisitorToHikCentral(visitor);
+    } catch (hikErr: any) {
+      // Mantém pendente para o morador tentar de novo; não libera só no banco local.
+      console.error('[ResidentAuth] approve: falha ao enviar ao HikCentral:', hikErr.message);
+      res.status(502).json({ error: 'Não foi possível liberar o acesso no sistema da portaria. Tente novamente em instantes.' });
+      return;
+    }
+
+    const updated = await prisma.visitor.update({
+      where: { id: visitor.id },
+      data: {
+        status: VISITOR_STATUS.ACTIVE,
+        approvedAt: new Date(),
+        hikVisitorId: hikVisitorId ?? visitor.hikVisitorId,
+      },
+    });
+    res.json({ success: true, visitor: updated });
+  } catch (err: any) {
+    console.error('[ResidentAuth] approve visitor error:', err.message);
+    res.status(500).json({ error: 'Erro interno' });
+  }
+});
+
+// ── POST /api/resident/visitors/:id/reject ────────────────────────────────
+router.post('/visitors/:id/reject', residentAuthMiddleware, async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { personId } = (req as any).resident;
+    const visitor = await prisma.visitor.findFirst({ where: { id: req.params.id, hostPersonId: personId } });
+    if (!visitor) {
+      res.status(404).json({ error: 'Visitante não encontrado' });
+      return;
+    }
+    if (visitor.status !== VISITOR_STATUS.PENDING_APPROVAL) {
+      res.status(409).json({ error: 'Este cadastro não está aguardando aprovação' });
+      return;
+    }
+
+    const reason = typeof req.body?.reason === 'string' ? req.body.reason.trim().slice(0, 200) : '';
+    const updated = await prisma.visitor.update({
+      where: { id: visitor.id },
+      data: {
+        status: VISITOR_STATUS.REJECTED,
+        rejectedAt: new Date(),
+        rejectionReason: reason || null,
+        // LGPD: cadastro recusado não precisa guardar biometria nem documento
+        photo_url: null,
+        document_photo_url: null,
+      },
+    });
+    res.json({ success: true, visitor: updated });
+  } catch (err: any) {
+    console.error('[ResidentAuth] reject visitor error:', err.message);
+    res.status(500).json({ error: 'Erro interno' });
   }
 });
 

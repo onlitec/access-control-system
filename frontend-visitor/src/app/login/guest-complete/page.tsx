@@ -11,7 +11,9 @@ export default function GuestComplete() {
   const [doc, setDoc] = useState("");
   const [plate, setPlate] = useState("");
   const [lgpdConsent, setLgpdConsent] = useState(false);
-  const [success, setSuccess] = useState(false);
+  // Status do convite após o envio: PENDING_APPROVAL, ACTIVE ou REJECTED
+  const [visitStatus, setVisitStatus] = useState<string | null>(null);
+  const [rejectionReason, setRejectionReason] = useState<string | null>(null);
 
   // Câmera
   const [cameraActive, setCameraActive] = useState(false);
@@ -31,6 +33,16 @@ export default function GuestComplete() {
     validateInvite(tk);
   }, []);
 
+  const fetchStatus = async (tk: string) => {
+    const res = await fetch("/api/invites/status", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ token: tk }),
+    });
+    if (!res.ok) return null;
+    return res.json();
+  };
+
   const validateInvite = async (tk: string) => {
     try {
       const res = await fetch("/api/invites/validate", {
@@ -40,6 +52,14 @@ export default function GuestComplete() {
       });
       const data = await res.json();
       if (!res.ok) {
+        // Cadastro já enviado: o mesmo link passa a mostrar o status da visita
+        const current = res.status === 404 ? await fetchStatus(tk).catch(() => null) : null;
+        if (current && current.status && current.status !== "PRE_REGISTERED") {
+          setInvitation({ name: current.name, hostName: current.hostName });
+          setVisitStatus(current.status);
+          setRejectionReason(current.rejectionReason ?? null);
+          return;
+        }
         throw new Error(data.message || "Erro ao validar convite");
       }
       setInvitation(data);
@@ -49,6 +69,19 @@ export default function GuestComplete() {
       setLoading(false);
     }
   };
+
+  // Enquanto aguarda o morador, consulta o status a cada 10 segundos
+  useEffect(() => {
+    if (visitStatus !== "PENDING_APPROVAL" || !token) return;
+    const timer = setInterval(async () => {
+      const current = await fetchStatus(token).catch(() => null);
+      if (current?.status && current.status !== "PENDING_APPROVAL") {
+        setVisitStatus(current.status);
+        setRejectionReason(current.rejectionReason ?? null);
+      }
+    }, 10_000);
+    return () => clearInterval(timer);
+  }, [visitStatus, token]);
 
   const startCamera = async () => {
     try {
@@ -124,7 +157,7 @@ export default function GuestComplete() {
       if (!res.ok) {
         throw new Error(data.message || "Erro ao completar convite");
       }
-      setSuccess(true);
+      setVisitStatus(data.status || "PENDING_APPROVAL");
     } catch (err: any) {
       alert(err.message || "Erro ao concluir cadastro do visitante.");
     } finally {
@@ -160,7 +193,50 @@ export default function GuestComplete() {
     );
   }
 
-  if (success) {
+  if (visitStatus === "PENDING_APPROVAL") {
+    return (
+      <div className="flex min-h-screen flex-col items-center justify-center bg-zinc-950 text-zinc-100 p-6">
+        <div className="w-full max-w-md rounded-2xl bg-zinc-900 border border-zinc-800 p-8 text-center shadow-2xl">
+          <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-amber-950 border border-amber-800 text-amber-400 mb-6">
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth="2.5" stroke="currentColor" className="w-8 h-8">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+          </div>
+          <h2 className="text-2xl font-bold mb-2">Aguardando aprovação</h2>
+          <p className="text-sm text-zinc-400 leading-relaxed mb-6">
+            Seu cadastro foi enviado para <span className="text-zinc-200 font-semibold">{invitation?.hostName}</span>.
+            Esta página atualiza sozinha assim que a visita for aprovada.
+          </p>
+          <p className="text-xs text-zinc-500 leading-normal">
+            Você pode fechar e abrir este mesmo link depois para conferir o status.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  if (visitStatus === "REJECTED") {
+    return (
+      <div className="flex min-h-screen flex-col items-center justify-center bg-zinc-950 text-zinc-100 p-6">
+        <div className="w-full max-w-md rounded-2xl bg-zinc-900 border border-zinc-800 p-8 text-center shadow-2xl">
+          <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-red-950 border border-red-800 text-red-400 mb-6">
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth="2.5" stroke="currentColor" className="w-8 h-8">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </div>
+          <h2 className="text-2xl font-bold mb-2">Visita não aprovada</h2>
+          <p className="text-sm text-zinc-400 leading-relaxed mb-4">
+            O morador não aprovou este cadastro. Em caso de dúvida, fale diretamente com quem enviou o convite.
+          </p>
+          {rejectionReason && (
+            <p className="text-sm text-zinc-300 rounded-xl bg-zinc-950 border border-zinc-800 p-4">{rejectionReason}</p>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  if (visitStatus === "ACTIVE") {
     return (
       <div className="flex min-h-screen flex-col items-center justify-center bg-zinc-950 text-zinc-100 p-6">
         <div className="w-full max-w-md rounded-2xl bg-zinc-900 border border-zinc-800 p-8 text-center shadow-2xl">
@@ -171,13 +247,13 @@ export default function GuestComplete() {
           </div>
           <h2 className="text-2xl font-bold mb-2">Acesso Liberado!</h2>
           <p className="text-sm text-zinc-400 leading-relaxed mb-6">
-            Seu cadastro foi concluído com sucesso. O reconhecimento facial já está ativo e você pode acessar o condomínio.
+            Sua visita foi aprovada. O reconhecimento facial está ativo para o período da visita.
           </p>
           <div className="rounded-xl bg-zinc-950 border border-zinc-800 p-4 mb-6 text-left space-y-2">
             <div className="text-xs text-zinc-500 uppercase tracking-wider font-semibold">Detalhes do Acesso</div>
             <div className="text-sm text-zinc-200"><span className="text-zinc-500">Visitante:</span> {invitation?.name}</div>
             <div className="text-sm text-zinc-200"><span className="text-zinc-500">Anfitrião:</span> {invitation?.hostName}</div>
-            <div className="text-sm text-zinc-200"><span className="text-zinc-500">Unidade:</span> {invitation?.unit}</div>
+            {invitation?.unit && <div className="text-sm text-zinc-200"><span className="text-zinc-500">Unidade:</span> {invitation.unit}</div>}
           </div>
           <p className="text-xs text-zinc-500 leading-normal">
             Dirija-se ao leitor facial na portaria para efetuar sua entrada.
@@ -313,7 +389,7 @@ export default function GuestComplete() {
             disabled={!photoBase64 || !doc || !lgpdConsent}
             className="flex w-full items-center justify-center rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:bg-zinc-800 disabled:text-zinc-500 disabled:cursor-not-allowed h-12 text-sm font-semibold transition-all shadow-lg shadow-emerald-500/10"
           >
-            Concluir Cadastro e Liberar Acesso
+            Enviar Cadastro
           </button>
         </form>
       </div>

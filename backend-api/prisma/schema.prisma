@@ -139,7 +139,13 @@ model Visitor {
   visiting_block     String?
   lgpdConsent        Boolean   @default(false) @map("lgpd_consent")
   consentTimestamp   DateTime? @map("consent_timestamp")
+  // Morador (Person.id) que criou o convite e precisa aprovar o cadastro
+  hostPersonId       String?   @map("host_person_id")
+  approvedAt         DateTime? @map("approved_at")
+  rejectedAt         DateTime? @map("rejected_at")
+  rejectionReason    String?   @map("rejection_reason")
 
+  @@index([hostPersonId])
   @@map("visitors")
 }
 

@@ -2,8 +2,8 @@
 
 import React, { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Shield, Plus, Users, Briefcase, LogOut, Copy, Check, Clock, UserCheck } from 'lucide-react';
-import { getMyVisitors, getMyProviders, logoutResident } from '@/lib/residentApi';
+import { Shield, Plus, Users, Briefcase, LogOut, Copy, Check, Clock, UserCheck, X, Car } from 'lucide-react';
+import { getMyVisitors, getMyProviders, logoutResident, approveVisitor, rejectVisitor } from '@/lib/residentApi';
 
 type Visitor = {
   id: string;
@@ -14,6 +14,9 @@ type Visitor = {
   visitStartTime?: string;
   visitEndTime?: string;
   inviteToken?: string;
+  photo_url?: string | null;
+  plateNo?: string | null;
+  certificateNo?: string | null;
 };
 
 type Provider = {
@@ -27,7 +30,9 @@ type Provider = {
 
 function StatusBadge({ status }: { status?: string }) {
   const map: Record<string, { label: string; cls: string }> = {
-    PRE_REGISTERED: { label: 'Aguardando', cls: 'bg-yellow-900/40 text-yellow-400 border-yellow-700/50' },
+    PRE_REGISTERED: { label: 'Link enviado', cls: 'bg-zinc-800 text-zinc-400 border-zinc-700' },
+    PENDING_APPROVAL: { label: 'Aguardando você', cls: 'bg-yellow-900/40 text-yellow-400 border-yellow-700/50' },
+    REJECTED: { label: 'Recusado', cls: 'bg-red-900/40 text-red-400 border-red-700/50' },
     ACTIVE: { label: 'Ativo', cls: 'bg-emerald-900/40 text-emerald-400 border-emerald-700/50' },
     COMPLETED: { label: 'Finalizado', cls: 'bg-zinc-800 text-zinc-400 border-zinc-700' },
   };
@@ -48,6 +53,102 @@ function CopyButton({ text }: { text: string }) {
     <button onClick={copy} className="text-zinc-500 hover:text-blue-400 transition-colors" title="Copiar link">
       {copied ? <Check className="h-3.5 w-3.5 text-emerald-400" /> : <Copy className="h-3.5 w-3.5" />}
     </button>
+  );
+}
+
+function ApprovalCard({ visitor, onDone }: { visitor: Visitor; onDone: (updated: Visitor) => void }) {
+  const [busy, setBusy] = useState(false);
+  const [rejecting, setRejecting] = useState(false);
+  const [reason, setReason] = useState('');
+  const [error, setError] = useState<string | null>(null);
+
+  async function run(action: () => Promise<Visitor>) {
+    setBusy(true);
+    setError(null);
+    try {
+      onDone(await action());
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Não foi possível concluir. Tente novamente.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="bg-zinc-900 border border-yellow-700/40 rounded-xl p-4 space-y-3">
+      <div className="flex gap-3">
+        {visitor.photo_url ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img src={visitor.photo_url} alt={`Foto de ${visitor.name}`} className="h-20 w-20 rounded-lg object-cover border border-zinc-800" />
+        ) : (
+          <div className="h-20 w-20 rounded-lg bg-zinc-950 border border-zinc-800 flex items-center justify-center text-xs text-zinc-600">Sem foto</div>
+        )}
+        <div className="min-w-0 space-y-1">
+          <p className="font-medium text-sm">{visitor.name} {visitor.surname}</p>
+          {visitor.certificateNo && !/^(pre|res)-/.test(visitor.certificateNo) && (
+            <p className="text-xs text-zinc-500">Documento: {visitor.certificateNo}</p>
+          )}
+          {visitor.plateNo && (
+            <p className="text-xs text-zinc-500 flex items-center gap-1"><Car className="h-3 w-3" /> {visitor.plateNo}</p>
+          )}
+          {visitor.visitStartTime && (
+            <p className="text-xs text-zinc-600 flex items-center gap-1">
+              <Clock className="h-3 w-3" />
+              {new Date(visitor.visitStartTime).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' })}
+              {visitor.visitEndTime && ` até ${new Date(visitor.visitEndTime).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' })}`}
+            </p>
+          )}
+        </div>
+      </div>
+
+      {rejecting ? (
+        <div className="space-y-2">
+          <label htmlFor={`reason-${visitor.id}`} className="text-xs text-zinc-400">Motivo (opcional, o visitante verá esta mensagem)</label>
+          <textarea
+            id={`reason-${visitor.id}`}
+            value={reason}
+            maxLength={200}
+            onChange={(e) => setReason(e.target.value)}
+            className="w-full rounded-lg bg-zinc-950 border border-zinc-800 px-3 py-2 text-sm focus:border-red-500 focus:outline-none"
+            rows={2}
+          />
+          <div className="flex gap-2">
+            <button
+              disabled={busy}
+              onClick={() => run(() => rejectVisitor(visitor.id, reason))}
+              className="flex-1 py-2 rounded-lg bg-red-600 hover:bg-red-500 disabled:opacity-50 text-sm font-semibold"
+            >
+              Confirmar recusa
+            </button>
+            <button
+              disabled={busy}
+              onClick={() => setRejecting(false)}
+              className="flex-1 py-2 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-sm"
+            >
+              Voltar
+            </button>
+          </div>
+        </div>
+      ) : (
+        <div className="flex gap-2">
+          <button
+            disabled={busy}
+            onClick={() => run(() => approveVisitor(visitor.id))}
+            className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-sm font-semibold"
+          >
+            <Check className="h-4 w-4" /> {busy ? 'Liberando...' : 'Aprovar e liberar'}
+          </button>
+          <button
+            disabled={busy}
+            onClick={() => setRejecting(true)}
+            className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-sm"
+          >
+            <X className="h-4 w-4" /> Recusar
+          </button>
+        </div>
+      )}
+      {error && <p className="text-xs text-red-400">{error}</p>}
+    </div>
   );
 }
 
@@ -127,6 +228,20 @@ export default function ResidentDashboard() {
           </button>
         </div>
 
+        {/* Aprovações pendentes */}
+        {tab === 'visitors' && visitors.some((v) => v.status === 'PENDING_APPROVAL') && (
+          <section className="space-y-3" aria-label="Aprovações pendentes">
+            <h2 className="text-sm font-semibold text-yellow-400">Aguardando sua aprovação</h2>
+            {visitors.filter((v) => v.status === 'PENDING_APPROVAL').map((v) => (
+              <ApprovalCard
+                key={v.id}
+                visitor={v}
+                onDone={(updated) => setVisitors((list) => list.map((item) => (item.id === updated.id ? { ...item, ...updated } : item)))}
+              />
+            ))}
+          </section>
+        )}
+
         {/* Action Button */}
         <button
           onClick={() => router.push(`/login/pre-register?type=${tab === 'visitors' ? 'visitor' : 'provider'}`)}
@@ -144,7 +259,7 @@ export default function ResidentDashboard() {
                 <UserCheck className="h-8 w-8 mx-auto mb-2 opacity-40" />
                 Nenhum visitante cadastrado
               </div>
-            ) : visitors.map((v) => {
+            ) : visitors.filter((v) => v.status !== 'PENDING_APPROVAL').map((v) => {
               const inviteLink = v.inviteToken ? `${APP_URL}/login/guest-complete?token=${v.inviteToken}` : null;
               return (
                 <div key={v.id} className="bg-zinc-900 border border-zinc-800 rounded-xl p-4 space-y-2">

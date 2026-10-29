@@ -3,6 +3,7 @@ import cors from 'cors';
 import dotenv from 'dotenv';
 import { Prisma, PrismaClient } from '@prisma/client';
 import { HikCentralService } from './services/HikCentralService';
+import { VISITOR_STATUS, stripImagePrefix, syncVisitorToHikCentral } from './services/VisitorActivationService';
 import { NiceGuaritaService } from './services/NiceGuaritaService';
 import { FacialAccessService } from './services/FacialAccessService';
 import { EntityMappingService } from './services/EntityMappingService';
@@ -1158,19 +1159,24 @@ app.post('/api/invites/validate', async (req, res) => {
         if (!token) return res.status(400).json({ message: "Token não fornecido" });
 
         const visitor = await prisma.visitor.findFirst({
-            where: { inviteToken: token, status: 'PRE_REGISTERED' }
+            where: { inviteToken: token, status: VISITOR_STATUS.PRE_REGISTERED }
         });
 
         if (!visitor) {
             return res.status(404).json({ message: "Convite inválido ou já utilizado" });
         }
+        if (visitor.visitEndTime < new Date()) {
+            return res.status(410).json({ message: "Este convite expirou. Peça um novo link ao morador." });
+        }
 
-        // In this implementation, we don't store host info in Visitor yet, but we mock or return known data
         res.json({
             id: visitor.id,
-            name: `${visitor.name} ${visitor.surname}`.trim(),
-            hostName: "Morador", // Fallback
-            unit: "Residência" // Fallback
+            name: `${visitor.name} ${visitor.surname ?? ''}`.trim(),
+            hostName: visitor.visiting_resident || "Morador",
+            unit: [visitor.tower && `Torre ${visitor.tower}`, visitor.visiting_unit && `Apto ${visitor.visiting_unit}`]
+                .filter(Boolean).join(' · ') || "Residência",
+            visitStartTime: visitor.visitStartTime,
+            visitEndTime: visitor.visitEndTime,
         });
     } catch (error: any) {
         console.error('Validate Invite Error:', error);
@@ -1180,59 +1186,47 @@ app.post('/api/invites/validate', async (req, res) => {
 
 app.post('/api/invites/complete', async (req, res) => {
     try {
-        const { token, doc, photoBase64, photo, docPhotoBase64, name, plate } = req.body;
+        const { token, doc, photoBase64, photo, docPhotoBase64, plate, lgpdConsent } = req.body;
 
         if (!token) return res.status(400).json({ message: "Token não fornecido" });
 
         const visitor = await prisma.visitor.findFirst({
-            where: { inviteToken: token, status: 'PRE_REGISTERED' }
+            where: { inviteToken: token, status: VISITOR_STATUS.PRE_REGISTERED }
         });
 
         if (!visitor) {
             return res.status(404).json({ message: "Convite não encontrado ou já processado" });
         }
+        if (visitor.visitEndTime < new Date()) {
+            return res.status(410).json({ message: "Este convite expirou. Peça um novo link ao morador." });
+        }
 
-        // Remove base64 prefix if exists
-        const b64 = photoBase64 || photo;
-        const cleanPhotoBase64 = b64 ? b64.replace(/^data:image\/[a-zA-Z0-9]+;base64,/, '') : undefined;
+        const cleanPhotoBase64 = stripImagePrefix(photoBase64 || photo);
+        const cleanDocPhotoBase64 = stripImagePrefix(docPhotoBase64);
 
-        // Sincronizar com HikCentral (opcional — sistema funciona sem HikCentral)
-        const cleanDocPhotoBase64 = docPhotoBase64
-            ? String(docPhotoBase64).replace(/^data:image\/[a-zA-Z0-9]+;base64,/, '')
-            : undefined;
+        const data = {
+            certificateNo: doc || visitor.certificateNo,
+            plateNo: plate || visitor.plateNo,
+            photo_url: cleanPhotoBase64 ? `data:image/jpeg;base64,${cleanPhotoBase64}` : visitor.photo_url,
+            document_photo_url: cleanDocPhotoBase64 ? `data:image/jpeg;base64,${cleanDocPhotoBase64}` : visitor.document_photo_url,
+            ...(lgpdConsent ? { lgpdConsent: true, consentTimestamp: new Date() } : {}),
+        };
 
-        let hikVisitorId: string | undefined;
-        if (await HikCentralService.isConfigured()) try {
-            // visitor.accessLevelId guarda o hikPersonId do morador (ver resident-auth pre-register)
-            const hostHikPersonId = visitor.accessLevelId || undefined;
-            let accessLevelIds: string[] = [];
-            try {
-                const levelId = await HikCentralService.getVisitorAccessLevelForTower(visitor.tower);
-                if (levelId) accessLevelIds = [levelId];
-                else console.warn(`[Invites] Nenhum nível de acesso de visitante encontrado para a torre "${visitor.tower ?? ''}"`);
-            } catch (levelErr: any) {
-                console.error('[Invites] Erro ao buscar níveis de acesso de visitante:', levelErr.message);
-            }
-
-            // Agendamento V2: face, documento, placa e nível de acesso numa única chamada
-            const hikResult: any = await HikCentralService.createVisitorAppointment({
-                givenName: visitor.name,
-                familyName: visitor.surname || undefined,
-                visitorName: `${visitor.name} ${visitor.surname || ''}`.trim(),
-                visitStartTime: visitor.visitStartTime,
-                visitEndTime: visitor.visitEndTime,
-                receptionistId: hostHikPersonId,
-                accessLevelIds,
-                faceBase64: cleanPhotoBase64,
-                documentPhotoBase64: cleanDocPhotoBase64,
-                // Ignora os números provisórios gerados no pré-cadastro (pre-*/res-*)
-                certificateNo: doc || (visitor.certificateNo && !/^(pre|res)-/.test(visitor.certificateNo) ? visitor.certificateNo : undefined),
-                phoneNo: visitor.phone || undefined,
-                email: visitor.email || undefined,
-                plateNo: plate || visitor.plateNo || undefined,
-                visitorType: visitor.type || undefined,
+        // Convite criado por um morador: o cadastro aguarda a aprovação dele
+        // antes de qualquer envio ao HikCentral.
+        if (visitor.hostPersonId) {
+            await prisma.visitor.update({
+                where: { id: visitor.id },
+                data: { ...data, status: VISITOR_STATUS.PENDING_APPROVAL },
             });
-            hikVisitorId = hikResult?.data?.visitorId;
+            return res.json({ success: true, status: VISITOR_STATUS.PENDING_APPROVAL });
+        }
+
+        // Convite criado pela portaria/administração: já aprovado na origem.
+        const merged = await prisma.visitor.update({ where: { id: visitor.id }, data });
+        let hikVisitorId: string | undefined;
+        try {
+            hikVisitorId = await syncVisitorToHikCentral(merged);
         } catch (hikErr: any) {
             console.warn('[Invites] HikCentral indisponível, ativando visitante apenas no DB local:', hikErr.message);
         }
@@ -1240,18 +1234,39 @@ app.post('/api/invites/complete', async (req, res) => {
         const updatedVisitor = await prisma.visitor.update({
             where: { id: visitor.id },
             data: {
-                status: 'ACTIVE',
-                certificateNo: doc || visitor.certificateNo,
-                plateNo: plate || visitor.plateNo,
-                photo_url: cleanPhotoBase64 ? `data:image/jpeg;base64,${cleanPhotoBase64}` : visitor.photo_url,
-                hikVisitorId: hikVisitorId ?? visitor.hikVisitorId
+                status: VISITOR_STATUS.ACTIVE,
+                approvedAt: new Date(),
+                hikVisitorId: hikVisitorId ?? visitor.hikVisitorId,
             }
         });
 
-        res.json({ success: true, visitor: updatedVisitor, qrCodeData: "Visitante cadastrado com sucesso e liberado!" });
+        res.json({ success: true, status: updatedVisitor.status });
 
     } catch (error: any) {
         console.error('Complete Invite Error:', error);
+        res.status(500).json({ message: error.message });
+    }
+});
+
+// Página de status do visitante: consulta pelo próprio token do convite.
+app.post('/api/invites/status', async (req, res) => {
+    try {
+        const { token } = req.body;
+        if (!token) return res.status(400).json({ message: "Token não fornecido" });
+
+        const visitor = await prisma.visitor.findFirst({ where: { inviteToken: token } });
+        if (!visitor) return res.status(404).json({ message: "Convite não encontrado" });
+
+        res.json({
+            status: visitor.status,
+            name: `${visitor.name} ${visitor.surname ?? ''}`.trim(),
+            hostName: visitor.visiting_resident || "Morador",
+            visitStartTime: visitor.visitStartTime,
+            visitEndTime: visitor.visitEndTime,
+            rejectionReason: visitor.status === VISITOR_STATUS.REJECTED ? visitor.rejectionReason : undefined,
+        });
+    } catch (error: any) {
+        console.error('Invite Status Error:', error);
         res.status(500).json({ message: error.message });
     }
 });
