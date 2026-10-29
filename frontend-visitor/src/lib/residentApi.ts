@@ -84,3 +84,24 @@ export async function preRegisterProvider(payload: {
   if (!res.ok) throw new Error(data.error || 'Erro ao pré-cadastrar prestador');
   return data as { provider: any };
 }
+
+export async function approveVisitor(id: string) {
+  const res = await fetch(`${API}/resident/visitors/${encodeURIComponent(id)}/approve`, {
+    method: 'POST',
+    headers: authHeaders(),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Erro ao aprovar visitante');
+  return data.visitor;
+}
+
+export async function rejectVisitor(id: string, reason?: string) {
+  const res = await fetch(`${API}/resident/visitors/${encodeURIComponent(id)}/reject`, {
+    method: 'POST',
+    headers: authHeaders(),
+    body: JSON.stringify({ reason }),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Erro ao recusar visitante');
+  return data.visitor;
+}
