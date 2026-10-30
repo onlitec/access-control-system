@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>App do Morador</title>
+<style>
+  :root { --bg:#f5f6f8; --card:#fff; --ink:#1b2430; --muted:#5b6675; --brand:#0b5fff; --err:#b3261e; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#12161c; --card:#1b212a; --ink:#e8ecf2; --muted:#9aa5b4; --brand:#6f9bff; --err:#ff8a80; } }
+  body { margin:0; font:16px/1.4 system-ui,sans-serif; background:var(--bg); color:var(--ink); display:grid; min-height:100vh; place-items:center; padding:16px; box-sizing:border-box; }
+  main { width:100%; max-width:380px; background:var(--card); border-radius:12px; padding:24px; box-shadow:0 1px 6px rgba(0,0,0,.12); }
+  h1 { font-size:1.25rem; margin:0 0 4px; } p { color:var(--muted); margin:0 0 16px; }
+  label { display:block; font-weight:600; margin-bottom:6px; }
+  input { width:100%; box-sizing:border-box; font:inherit; padding:12px; border:1px solid var(--muted); border-radius:8px; background:transparent; color:inherit; margin-bottom:12px; }
+  button { width:100%; font:inherit; font-weight:600; padding:12px; border:0; border-radius:8px; background:var(--brand); color:#fff; cursor:pointer; }
+  button:disabled { opacity:.6; cursor:wait; }
+  #msg { min-height:1.4em; margin-top:12px; } #msg.err { color:var(--err); } [hidden] { display:none !important; }
+</style>
+</head>
+<body>
+<main>
+  <h1>App do Morador</h1>
+  <p>Entre com seu CPF. Enviaremos um código para o contato cadastrado.</p>
+  <form id="cpf-form">
+    <label for="cpf">CPF</label>
+    <input id="cpf" inputmode="numeric" autocomplete="username" placeholder="000.000.000-00" required>
+    <button type="submit">Enviar código</button>
+  </form>
+  <form id="code-form" hidden>
+    <label for="code">Código recebido</label>
+    <input id="code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" placeholder="000000" required>
+    <button type="submit">Entrar</button>
+  </form>
+  <section id="logged" hidden><h1 id="who"></h1><p>Login realizado. Os convites chegam na próxima etapa.</p></section>
+  <div id="msg" role="status"></div>
+</main>
+<script src="login.js"></script>
+</body>
+</html>

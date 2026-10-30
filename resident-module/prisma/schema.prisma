@@ -1,0 +1,26 @@
+generator client {
+  provider      = "prisma-client-js"
+  // "windows" é exigido pelo instalador Windows do módulo
+  binaryTargets = ["native", "windows"]
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// Código de uso único enviado ao morador (WhatsApp ou e-mail) para entrar no app.
+// Guarda só o HMAC do código; o morador em si NÃO é copiado: vem do HikCentral.
+model LoginCode {
+  id          String   @id @default(cuid())
+  cpf         String
+  hikPersonId String
+  codeHash    String
+  channel     String
+  attempts    Int      @default(0)
+  usedAt      DateTime?
+  expiresAt   DateTime
+  createdAt   DateTime @default(now())
+
+  @@index([cpf, createdAt])
+}
