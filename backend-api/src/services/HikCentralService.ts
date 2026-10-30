@@ -2,6 +2,11 @@ import crypto from 'crypto';
 import fetch from 'node-fetch';
 import { Agent } from 'https';
 import { PrismaClient } from '@prisma/client';
+import {
+    buildVisitorAppointmentPayload,
+    pickVisitorAccessLevelForTower,
+    VisitorAppointmentInput,
+} from './hikcentralVisitorAppointment';
 
 const prisma = new PrismaClient();
 
@@ -167,6 +172,14 @@ export class HikCentralService {
         // Algumas APIs retornam 200 OK mas com erro no corpo JSON
         if (result && (result.code === '8' || result.code === 8)) {
              throw new Error(`HikCentral: Versão do produto não suporta este recurso (${path}).`);
+        }
+
+        // A OpenAPI responde HTTP 200 mesmo em falha; o resultado real está em
+        // "code" ("0" = sucesso). Sem esta checagem, falhas passavam como sucesso.
+        if (result && result.code !== undefined && String(result.code) !== '0') {
+            const err: any = new Error(`HikCentral (${path}): ${result.msg || 'erro'} [code ${result.code}]`);
+            err.hikCode = String(result.code);
+            throw err;
         }
 
         return result;
@@ -342,9 +355,10 @@ export class HikCentralService {
 
     /**
      * Sincronização de foto do morador (addPersonFace)
+     * Endpoint: POST /artemis/api/resource/v1/person/face/update (guia 3.1.1, seção 5.3.10)
      */
     public static async addPersonFace(personId: string, faceData: string) {
-        return this.hikRequest('/artemis/api/resource/v1/face/single/add', {
+        return this.hikRequest('/artemis/api/resource/v1/person/face/update', {
             method: 'POST',
             body: JSON.stringify({
                 personId,
@@ -399,31 +413,48 @@ export class HikCentralService {
     }
 
     /**
-     * Implementação da API v1 de visitantes (reserveVisitor)
+     * Agendamento de visitante (V2) com face, documento, placa e nível de acesso
+     * numa única chamada.
+     * Endpoint: POST /artemis/api/visitor/v2/appointment (guia 3.1.1, seção 5.7.5)
+     * Resposta: data.visitorId, data.appointRecordId, data.qrCodeImage
+     */
+    public static async createVisitorAppointment(input: VisitorAppointmentInput) {
+        const payload = buildVisitorAppointmentPayload(input);
+        return this.hikRequest('/artemis/api/visitor/v2/appointment', {
+            method: 'POST',
+            body: JSON.stringify(payload),
+        });
+    }
+
+    /**
+     * Compatibilidade com chamadas antigas. O endpoint v1/visitor/reserve não
+     * existe na OpenAPI 3.1.1; agora delega para o agendamento V2.
      */
     public static async reserveVisitor(visitor: {
         visitorName: string;
-        certificateNo: string;
+        certificateNo?: string;
         visitStartTime: string;
         visitEndTime: string;
         plateNo?: string;
         visitorPicData?: string;
     }) {
-        const payload = {
+        return this.createVisitorAppointment({
             visitorName: visitor.visitorName,
-            gender: 1,
-            certificateType: 111,
             certificateNo: visitor.certificateNo,
             visitStartTime: visitor.visitStartTime,
             visitEndTime: visitor.visitEndTime,
-            visitorPicData: visitor.visitorPicData,
-            plateNo: visitor.plateNo
-        };
-
-        return this.hikRequest('/artemis/api/visitor/v1/visitor/reserve', {
-            method: 'POST',
-            body: JSON.stringify(payload),
+            plateNo: visitor.plateNo,
+            faceBase64: visitor.visitorPicData,
         });
+    }
+
+    /**
+     * Nível de acesso de visitante (type = 2) correspondente à torre do morador.
+     * Retorna undefined quando nenhum nível casa e não há nível padrão.
+     */
+    public static async getVisitorAccessLevelForTower(towerName?: string | null): Promise<string | undefined> {
+        const result: any = await this.getPrivilegeGroups(2, 1, 500);
+        return pickVisitorAccessLevelForTower(result?.data?.list || [], towerName);
     }
 
     /**
@@ -538,12 +569,20 @@ export class HikCentralService {
 
     /**
      * Listar níveis de acesso (Access Levels)
+     * Endpoint: POST /artemis/api/acs/v1/privilege/group (guia 3.1.1, seção 5.9.4).
+     * Mantém os campos accessLevelIndexCode/accessLevelName usados pelos front-ends.
      */
-    public static async getAccessLevelList(pageNo = 1, pageSize = 100) {
-        return this.hikRequest('/artemis/api/resource/v1/accessLevel/accessLevelList', {
+    public static async getAccessLevelList(pageNo = 1, pageSize = 100, type = 1) {
+        const result: any = await this.hikRequest('/artemis/api/acs/v1/privilege/group', {
             method: 'POST',
-            body: JSON.stringify({ pageNo, pageSize }),
+            body: JSON.stringify({ pageNo, pageSize, type }),
         });
+        const list = (result?.data?.list || []).map((level: any) => ({
+            ...level,
+            accessLevelIndexCode: String(level.privilegeGroupId),
+            accessLevelName: level.privilegeGroupName,
+        }));
+        return { ...result, data: { ...(result?.data || {}), list } };
     }
 
     /**
@@ -558,19 +597,23 @@ export class HikCentralService {
 
     /**
      * Aplicar/Autorizar níveis de acesso a uma pessoa
+     * Endpoint: POST /artemis/api/acs/v1/privilege/group/single/addPersons
+     * (guia 3.1.1, seção 5.9.8), uma chamada por nível.
+     * personType: '1' = controle de acesso (moradores), '2' = visitante.
      */
     public static async authorizePerson(personId: string, accessLevelIndexCodes: string[], personType: string = '1') {
-        return this.hikRequest('/artemis/api/acs/v1/accessLevel/authorize', {
-            method: 'POST',
-            body: JSON.stringify({
-                personDatas: [{
-                    personId: personId,
-                    personType: personType,
-                    operatorType: 1, // Add/Modify
-                }],
-                accessLevelIndexCodes: accessLevelIndexCodes
-            }),
-        });
+        const results = [];
+        for (const privilegeGroupId of accessLevelIndexCodes) {
+            results.push(await this.hikRequest('/artemis/api/acs/v1/privilege/group/single/addPersons', {
+                method: 'POST',
+                body: JSON.stringify({
+                    privilegeGroupId: String(privilegeGroupId),
+                    type: Number(personType) === 2 ? 2 : 1,
+                    list: [{ id: String(personId) }],
+                }),
+            }));
+        }
+        return results;
     }
 
     /**

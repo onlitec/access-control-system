@@ -1197,32 +1197,42 @@ app.post('/api/invites/complete', async (req, res) => {
         const cleanPhotoBase64 = b64 ? b64.replace(/^data:image\/[a-zA-Z0-9]+;base64,/, '') : undefined;
 
         // Sincronizar com HikCentral (opcional — sistema funciona sem HikCentral)
+        const cleanDocPhotoBase64 = docPhotoBase64
+            ? String(docPhotoBase64).replace(/^data:image\/[a-zA-Z0-9]+;base64,/, '')
+            : undefined;
+
         let hikVisitorId: string | undefined;
         if (await HikCentralService.isConfigured()) try {
-            const hikResult: any = await HikCentralService.reserveVisitor({
+            // visitor.accessLevelId guarda o hikPersonId do morador (ver resident-auth pre-register)
+            const hostHikPersonId = visitor.accessLevelId || undefined;
+            let accessLevelIds: string[] = [];
+            try {
+                const levelId = await HikCentralService.getVisitorAccessLevelForTower(visitor.tower);
+                if (levelId) accessLevelIds = [levelId];
+                else console.warn(`[Invites] Nenhum nível de acesso de visitante encontrado para a torre "${visitor.tower ?? ''}"`);
+            } catch (levelErr: any) {
+                console.error('[Invites] Erro ao buscar níveis de acesso de visitante:', levelErr.message);
+            }
+
+            // Agendamento V2: face, documento, placa e nível de acesso numa única chamada
+            const hikResult: any = await HikCentralService.createVisitorAppointment({
+                givenName: visitor.name,
+                familyName: visitor.surname || undefined,
                 visitorName: `${visitor.name} ${visitor.surname || ''}`.trim(),
-                certificateNo: doc || visitor.certificateNo || `DOC${Date.now()}`,
-                visitStartTime: visitor.visitStartTime.toISOString(),
-                visitEndTime: visitor.visitEndTime.toISOString(),
+                visitStartTime: visitor.visitStartTime,
+                visitEndTime: visitor.visitEndTime,
+                receptionistId: hostHikPersonId,
+                accessLevelIds,
+                faceBase64: cleanPhotoBase64,
+                documentPhotoBase64: cleanDocPhotoBase64,
+                // Ignora os números provisórios gerados no pré-cadastro (pre-*/res-*)
+                certificateNo: doc || (visitor.certificateNo && !/^(pre|res)-/.test(visitor.certificateNo) ? visitor.certificateNo : undefined),
+                phoneNo: visitor.phone || undefined,
+                email: visitor.email || undefined,
                 plateNo: plate || visitor.plateNo || undefined,
-                visitorPicData: cleanPhotoBase64
+                visitorType: visitor.type || undefined,
             });
             hikVisitorId = hikResult?.data?.visitorId;
-
-            // Tentar aplicar herança de níveis de acesso do Morador
-            const hostHikPersonId = visitor.accessLevelId;
-            if (hostHikPersonId && hikVisitorId) {
-                try {
-                    const accessLevelsRes: any = await HikCentralService.getPersonAccessLevels(hostHikPersonId);
-                    const accessLevels = accessLevelsRes?.data?.list?.map((a: any) => a.accessLevelIndexCode || a.privilegeGroupId) || [];
-                    if (accessLevels.length > 0) {
-                        await HikCentralService.authorizePerson(hikVisitorId, accessLevels, '2');
-                        console.log(`[HikCentral] Direitos do host ${hostHikPersonId} passados para vis. ${hikVisitorId}`);
-                    }
-                } catch (err: any) {
-                    console.error('[HikCentral] Erro ao herdar níveis de acesso para visitante:', err.message);
-                }
-            }
         } catch (hikErr: any) {
             console.warn('[Invites] HikCentral indisponível, ativando visitante apenas no DB local:', hikErr.message);
         }
