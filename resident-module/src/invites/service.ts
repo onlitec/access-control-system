@@ -10,6 +10,7 @@ import { SessionPayload } from '../auth/session';
 import { toE164Br } from '../utils/cpf';
 import { HttpError } from './errors';
 import { canManageResident, visibleResidentIds } from './family';
+import { sendPush } from '../push';
 
 export { HttpError };
 
@@ -196,11 +197,21 @@ export async function registerVisit(token: string, input: RegisterInput): Promis
 }
 
 async function notifyResident(invite: Invite, visitorName: string): Promise<void> {
+    const message = `${visitorName} concluiu o cadastro pelo seu convite e aguarda sua aprovação no app do morador.`;
+    // Push: o morador e os responsáveis de família que decidem por ele.
+    const links = await prisma.familyLink.findMany({ where: { memberId: invite.residentId, status: 'ACTIVE' }, select: { responsibleId: true } });
+    const pushed = await sendPush([invite.residentId, ...links.map((l) => l.responsibleId)], {
+        title: 'Visitante aguardando aprovação',
+        body: `${visitorName} concluiu o cadastro.`,
+        url: '/app.html',
+    });
+    // Sem nenhum aparelho com push ativo, avisa por WhatsApp/e-mail como antes.
+    if (pushed > 0) return;
     const resident = await findResidentById(invite.residentId);
     if (!resident) return;
     const dest = pickDestination(resident.phoneE164, resident.email);
     if (!dest) return;
-    await sendText(dest, `${visitorName} concluiu o cadastro pelo seu convite e aguarda sua aprovação no app do morador.`, 'Visitante aguardando aprovação');
+    await sendText(dest, message, 'Visitante aguardando aprovação');
 }
 
 // ---------- visitantes salvos ----------

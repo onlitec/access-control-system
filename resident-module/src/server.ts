@@ -6,6 +6,8 @@ import authRoutes from './routes/auth.routes';
 import invitesRoutes from './routes/invites.routes';
 import publicRoutes from './routes/public.routes';
 import { HttpError } from './invites/errors';
+import { prisma } from './db';
+import { runMigrations } from './migrate';
 import { purgeStaleSavedVisitors } from './invites/saved';
 
 assertConfig();
@@ -53,9 +55,16 @@ const purge = () =>
     purgeStaleSavedVisitors()
         .then((n) => n && console.log(`[resident-module] ${n} visitante(s) salvo(s) apagado(s) por inatividade`))
         .catch((err) => console.error('[resident-module] limpeza de visitantes salvos:', err.message));
-purge();
-setInterval(purge, 24 * 60 * 60 * 1000).unref();
-
-app.listen(config.port, () => {
-    console.log(`[resident-module] ouvindo na porta ${config.port} (HikCentral: ${config.hik.host})`);
-});
+runMigrations(prisma)
+    .then((applied) => {
+        if (applied.length) console.log(`[resident-module] migrações aplicadas: ${applied.join(', ')}`);
+        purge();
+        setInterval(purge, 24 * 60 * 60 * 1000).unref();
+        app.listen(config.port, config.host, () => {
+            console.log(`[resident-module] ouvindo em ${config.host}:${config.port} (HikCentral: ${config.hik.host})`);
+        });
+    })
+    .catch((err) => {
+        console.error('[resident-module] falha ao preparar o banco:', err.message);
+        process.exit(1);
+    });

@@ -5,6 +5,10 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>App do Morador</title>
 <link rel="stylesheet" href="style.css">
+<link rel="manifest" href="/manifest.webmanifest">
+<meta name="theme-color" content="#0b5fff">
+<link rel="icon" href="/icon-192.png">
+<link rel="apple-touch-icon" href="/icon-192.png">
 </head>
 <body>
 <main>
@@ -13,6 +17,10 @@
     <button class="secondary" id="logout" type="button">Sair</button>
   </div>
   <div id="msg" role="status"></div>
+  <div class="card" id="push-box" hidden>
+    <p style="margin:0 0 8px">Receba um aviso no celular quando um visitante concluir o cadastro.</p>
+    <button type="button" id="push-btn">Ativar notificações</button>
+  </div>
 
   <section class="card">
     <h2>Novo convite</h2>

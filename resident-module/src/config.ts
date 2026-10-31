@@ -1,12 +1,15 @@
 import dotenv from 'dotenv';
 
-dotenv.config();
+// ENV_FILE permite manter a configuração (e segredos) fora da pasta do programa, ex.: no Windows em ProgramData.
+dotenv.config(process.env.ENV_FILE ? { path: process.env.ENV_FILE } : undefined);
 
 const bool = (value: string | undefined, fallback = false) =>
     value === undefined || value === '' ? fallback : ['1', 'true', 'yes'].includes(value.toLowerCase());
 
 export const config = {
     port: Number(process.env.PORT) || 4100,
+    /** Por padrão só aceita conexões da própria máquina (proxy reverso/túnel HTTPS na frente) */
+    host: process.env.HOST || '127.0.0.1',
     jwtSecret: process.env.JWT_SECRET || '',
     sessionHours: Number(process.env.SESSION_HOURS) || 8,
     /** Endereço público do módulo, usado nos links de convite (sem barra no fim) */
@@ -28,6 +31,11 @@ export const config = {
         accountSid: process.env.TWILIO_ACCOUNT_SID || '',
         authToken: process.env.TWILIO_AUTH_TOKEN || '',
         whatsappFrom: process.env.TWILIO_WHATSAPP_FROM || '',
+    },
+    vapid: {
+        publicKey: process.env.VAPID_PUBLIC_KEY || '',
+        privateKey: process.env.VAPID_PRIVATE_KEY || '',
+        subject: process.env.VAPID_SUBJECT || 'mailto:admin@example.com',
     },
     smtp: {
         host: process.env.SMTP_HOST || '',

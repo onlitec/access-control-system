@@ -182,12 +182,41 @@ $('invite-form').addEventListener('submit', async (e) => {
 
 $('logout').addEventListener('click', () => { try { sessionStorage.removeItem('resident-token'); } catch {} window.location.replace('/'); });
 
+// ---------- app instalável e notificações ----------
+function b64ToBytes(b64) {
+  const pad = '='.repeat((4 - (b64.length % 4)) % 4);
+  const raw = atob((b64 + pad).replace(/-/g, '+').replace(/_/g, '/'));
+  return Uint8Array.from(raw, (c) => c.charCodeAt(0));
+}
+
+async function setupPush() {
+  if (!('serviceWorker' in navigator)) return;
+  const reg = await navigator.serviceWorker.register('/sw.js');
+  if (!('PushManager' in window) || !('Notification' in window)) return;
+  const { enabled, publicKey } = await api('GET', '/push/key');
+  if (!enabled) return;
+  const existing = await reg.pushManager.getSubscription();
+  if (existing && Notification.permission === 'granted') { await api('POST', '/push/subscribe', existing.toJSON()).catch(() => {}); return; }
+  if (Notification.permission === 'denied') return;
+  $('push-box').hidden = false;
+  $('push-btn').onclick = async () => {
+    try {
+      if ((await Notification.requestPermission()) !== 'granted') { msg('Notificações não autorizadas neste aparelho.', true); return; }
+      const sub = existing || await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64ToBytes(publicKey) });
+      await api('POST', '/push/subscribe', sub.toJSON());
+      $('push-box').hidden = true;
+      msg('Notificações ativadas neste aparelho.');
+    } catch (err) { msg(err.message, true); }
+  };
+}
+
 (async () => {
   const d = new Date(Date.now() + 7 * 864e5);
   $('until').value = [d.getFullYear(), String(d.getMonth() + 1).padStart(2, '0'), String(d.getDate()).padStart(2, '0')].join('-');
   try {
     const me = await api('GET', '/auth/me');
     $('who').textContent = 'Olá, ' + me.name;
+    setupPush().catch(() => {});
     await refresh();
     setInterval(() => refresh().catch(() => {}), 30000);
   } catch (err) { msg(err.message, true); }

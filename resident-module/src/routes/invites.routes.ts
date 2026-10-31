@@ -7,6 +7,9 @@ import {
 import { answerFamilyRequest, listFamily, removeFamilyLink, requestFamilyLink } from '../invites/family';
 import { forgetSavedVisitor, listSavedVisitors, reinviteSavedVisitor } from '../invites/saved';
 
+import { pushEnabled, removeSubscription, saveSubscription } from '../push';
+import { config } from '../config';
+
 const router = Router();
 router.use(requireResident);
 
@@ -105,6 +108,25 @@ router.post('/family/:id/reject', wrap(async (req, res) => {
 
 router.delete('/family/:id', wrap(async (req, res) => {
     await removeFamilyLink(session(req), req.params.id);
+    res.status(204).end();
+}));
+
+router.get('/push/key', (_req, res) => {
+    res.json({ enabled: pushEnabled(), publicKey: pushEnabled() ? config.vapid.publicKey : null });
+});
+
+router.post('/push/subscribe', wrap(async (req, res) => {
+    if (!pushEnabled()) throw new HttpError(503, 'Notificações não estão ativas neste servidor.');
+    try {
+        await saveSubscription(session(req).sub, req.body ?? {}, req.get('user-agent') || undefined);
+    } catch (err: any) {
+        throw new HttpError(400, err.message);
+    }
+    res.status(204).end();
+}));
+
+router.post('/push/unsubscribe', wrap(async (req, res) => {
+    if (typeof req.body?.endpoint === 'string') await removeSubscription(session(req).sub, req.body.endpoint);
     res.status(204).end();
 }));
 

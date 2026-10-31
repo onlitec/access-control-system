@@ -112,3 +112,16 @@ model FamilyLink {
   @@unique([responsibleId, memberId])
   @@index([memberId])
 }
+
+// Inscrição de notificação push (Web Push) de um aparelho do morador.
+model PushSubscription {
+  id         String   @id @default(cuid())
+  residentId String   // hikPersonId
+  endpoint   String   @unique
+  p256dh     String
+  auth       String
+  userAgent  String?
+  createdAt  DateTime @default(now())
+
+  @@index([residentId])
+}

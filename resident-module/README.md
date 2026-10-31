@@ -52,3 +52,10 @@ npm run e2e:hik:family    # idem, para família e visitantes salvos
 
 ## Próximas fases
 PWA com push e instalador Windows.
+
+## App instalável, notificações e instalador (fase 4)
+
+- **Banco automático:** `migrations/NNN_*.sql` são aplicadas ao iniciar (tabela `_migrations`); não precisa da CLI do Prisma no servidor. Ao mudar o `schema.prisma`, gere a próxima migração com `prisma migrate diff --from-schema-datamodel <schema anterior> --to-schema-datamodel prisma/schema.prisma --script`.
+- **PWA:** `public/manifest.webmanifest`, `sw.js` (cache do casco, `/api` nunca em cache) e botão "Ativar notificações" no `app.html`.
+- **Push:** defina `VAPID_PUBLIC_KEY`/`VAPID_PRIVATE_KEY` (`npm run vapid` gera o par). Quando um visitante conclui o cadastro, o morador e seus responsáveis de família recebem push; se nenhum aparelho estiver inscrito, o aviso segue por WhatsApp/e-mail.
+- **Instalador Windows:** veja `installer/INSTALACAO.md`.
