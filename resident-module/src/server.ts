@@ -18,7 +18,11 @@ app.use(
     helmet({
         contentSecurityPolicy: {
             useDefaults: true,
-            directives: { 'img-src': ["'self'", 'data:', 'blob:'] },
+            directives: {
+                'img-src': ["'self'", 'data:', 'blob:'],
+                // Só força HTTPS quando o módulo é publicado em HTTPS; em teste por http na rede local isso quebraria a página.
+                'upgrade-insecure-requests': config.publicUrl.startsWith('https://') ? [] : null,
+            },
         },
     }),
 );
