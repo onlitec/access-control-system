@@ -84,7 +84,7 @@ export async function sendInviteLink(invite: Invite, recipient: string, resident
     return true;
 }
 
-export const inviteLink = (token: string) => `${config.publicUrl}/v/${token}`;
+export const inviteLink = (token: string) => `${config.visitorUrl}/v/${token}`;
 
 export async function cancelInvite(session: SessionPayload, id: string): Promise<void> {
     const res = await prisma.invite.updateMany({

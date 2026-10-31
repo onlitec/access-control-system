@@ -5,6 +5,7 @@ import { assertConfig, config } from './config';
 import authRoutes from './routes/auth.routes';
 import invitesRoutes from './routes/invites.routes';
 import publicRoutes from './routes/public.routes';
+import { visitorHostGuard } from './hostGuard';
 import { HttpError } from './invites/errors';
 import { prisma } from './db';
 import { runMigrations } from './migrate';
@@ -14,6 +15,7 @@ assertConfig();
 
 const app = express();
 app.set('trust proxy', 1);
+app.use(visitorHostGuard(config.visitorUrl, config.publicUrl));
 app.use(
     helmet({
         contentSecurityPolicy: {

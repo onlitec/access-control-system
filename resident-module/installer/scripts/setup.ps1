@@ -29,6 +29,7 @@ if (-not (Test-Path $envFile)) {
 HOST=127.0.0.1
 PORT=$Port
 PUBLIC_URL=$PublicUrl
+VISITOR_URL=
 JWT_SECRET=$jwt
 DATABASE_URL=file:$db
 HIK_HOST=$HikHost

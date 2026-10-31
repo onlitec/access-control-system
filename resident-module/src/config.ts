@@ -14,6 +14,8 @@ export const config = {
     sessionHours: Number(process.env.SESSION_HOURS) || 8,
     /** Endereço público do módulo, usado nos links de convite (sem barra no fim) */
     publicUrl: (process.env.PUBLIC_URL || '').replace(/\/+$/, ''),
+    /** Endereço público só para os visitantes (links de convite). Se vazio, usa o mesmo do morador */
+    visitorUrl: (process.env.VISITOR_URL || process.env.PUBLIC_URL || '').replace(/\/+$/, ''),
     inviteDays: Number(process.env.INVITE_DAYS) || 7,
     /** Dias sem visita até apagar um visitante salvo (dados e fotos) */
     savedRetentionDays: Number(process.env.SAVED_RETENTION_DAYS) || 180,
