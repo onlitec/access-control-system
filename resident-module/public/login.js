@@ -24,7 +24,6 @@ $('code-form').addEventListener('submit', async (e) => {
   try {
     const data = await post('/api/auth/verify-code', { cpf: $('cpf').value, code: $('code').value });
     try { sessionStorage.setItem('resident-token', data.token); } catch {}
-    $('cpf-form').hidden = true; $('code-form').hidden = true;
-    $('who').textContent = 'Olá, ' + data.resident.name; $('logged').hidden = false; msg('');
+    window.location.href = '/app.html';
   } catch (err) { msg(err.message, true); } finally { btn.disabled = false; }
 });

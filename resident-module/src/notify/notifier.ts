@@ -39,7 +39,7 @@ async function sendWhatsapp(to: string, body: string): Promise<void> {
     if (!res.ok) throw new Error(`Twilio respondeu HTTP ${res.status}`);
 }
 
-async function sendEmail(to: string, body: string): Promise<void> {
+async function sendEmail(to: string, body: string, subject: string): Promise<void> {
     const { host, port, user, pass, from } = config.smtp;
     if (!host || !from) throw new Error('SMTP não configurado');
     const transport = nodemailer.createTransport({
@@ -48,16 +48,17 @@ async function sendEmail(to: string, body: string): Promise<void> {
         secure: port === 465,
         auth: user ? { user, pass } : undefined,
     });
-    await transport.sendMail({ from, to, subject: 'Seu código de acesso', text: body });
+    await transport.sendMail({ from, to, subject, text: body });
 }
 
-export async function sendLoginCode(dest: Destination, code: string): Promise<void> {
-    const body = loginMessage(code);
+export async function sendText(dest: Destination, body: string, subject = 'Aviso do app do morador'): Promise<void> {
     if (config.notifyMode === 'console') {
         const masked = dest.channel === 'whatsapp' ? maskPhone(dest.address) : maskEmail(dest.address);
-        console.log(`[notify:console] ${dest.channel} ${masked} -> código ${code}`);
+        console.log(`[notify:console] ${dest.channel} ${masked} -> ${body}`);
         return;
     }
     if (dest.channel === 'whatsapp') await sendWhatsapp(dest.address, body);
-    else await sendEmail(dest.address, body);
+    else await sendEmail(dest.address, body, subject);
 }
+
+export const sendLoginCode = (dest: Destination, code: string) => sendText(dest, loginMessage(code), 'Seu código de acesso');

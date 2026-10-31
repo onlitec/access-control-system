@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>App do Morador</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<main>
+  <div class="card row" style="justify-content:space-between">
+    <div><h1 id="who">App do Morador</h1><p style="margin:0">Convide visitantes e aprove os cadastros.</p></div>
+    <button class="secondary" id="logout" type="button">Sair</button>
+  </div>
+  <div id="msg" role="status"></div>
+
+  <section class="card">
+    <h2>Novo convite</h2>
+    <form id="invite-form">
+      <label for="type">Tipo</label>
+      <select id="type"><option value="VISITOR">Visitante</option><option value="PROVIDER">Prestador de serviço</option></select>
+      <label for="label">Nome ou observação (opcional)</label>
+      <input id="label" maxlength="80" placeholder="Ex.: Encanador João">
+      <label for="until">Válido até</label>
+      <input id="until" type="date" required>
+      <label class="check"><input id="vehicle" type="checkbox"> Pedir cadastro de veículo (placa)</label>
+      <label for="recipient">Enviar o link para (opcional)</label>
+      <input id="recipient" placeholder="WhatsApp com DDD ou e-mail do visitante">
+      <button type="submit">Criar convite</button>
+    </form>
+    <div id="created" hidden>
+      <div class="link" id="created-link"></div>
+      <div class="row">
+        <button type="button" class="secondary" id="copy">Copiar link</button>
+        <a class="btn secondary" id="share-wa" target="_blank" rel="noopener">WhatsApp</a>
+        <a class="btn secondary" id="share-mail">E-mail</a>
+      </div>
+    </div>
+  </section>
+
+  <section class="card"><h2>Aguardando sua aprovação</h2><div id="pending"></div></section>
+  <section class="card"><h2>Convites</h2><div id="invites"></div></section>
+  <section class="card"><h2>Histórico</h2><div id="history"></div></section>
+</main>
+<script src="app.js"></script>
+</body>
+</html>

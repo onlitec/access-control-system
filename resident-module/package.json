@@ -11,7 +11,8 @@
         "test": "vitest run",
         "prisma:generate": "prisma generate",
         "prisma:push": "prisma db push",
-        "smoke:hik": "tsx src/scripts/smoke-hikcentral.ts"
+        "smoke:hik": "tsx src/scripts/smoke-hikcentral.ts",
+        "e2e:hik": "tsx src/scripts/e2e-hikcentral.ts"
     },
     "dependencies": {
         "@prisma/client": "^5.22.0",

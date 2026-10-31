@@ -24,3 +24,51 @@ model LoginCode {
 
   @@index([cpf, createdAt])
 }
+
+// Convite criado por um morador. O link público leva o token.
+model Invite {
+  id           String   @id @default(cuid())
+  token        String   @unique
+  residentId   String   // hikPersonId do morador (o morador em si fica no HikCentral)
+  residentName String
+  towers       String   @default("") // ex.: "TORRE-1,TORRE-2", para escolher o nível de acesso
+  type         String   @default("VISITOR") // VISITOR | PROVIDER
+  label        String?  // nome sugerido pelo morador (ex.: "Encanador João")
+  allowVehicle Boolean  @default(false)
+  validFrom    DateTime
+  validUntil   DateTime
+  status       String   @default("OPEN") // OPEN | USED | CANCELLED
+  createdAt    DateTime @default(now())
+  visit        Visit?
+
+  @@index([residentId, createdAt])
+}
+
+// Cadastro feito pelo visitante pelo link. Fotos ficam aqui só até a decisão do morador.
+model Visit {
+  id                 String    @id @default(cuid())
+  inviteId           String    @unique
+  invite             Invite    @relation(fields: [inviteId], references: [id], onDelete: Cascade)
+  name               String
+  surname            String
+  phone              String
+  email              String?
+  document           String?
+  company            String?
+  plate              String?
+  visitDate          String    // AAAA-MM-DD
+  visitStart         DateTime
+  visitEnd           DateTime
+  faceJpeg           Bytes?
+  documentJpeg       Bytes?
+  status             String    @default("PENDING_APPROVAL") // PENDING_APPROVAL | APPROVING | APPROVED | REJECTED | CANCELLED
+  rejectReason       String?
+  hikVisitorId       String?
+  hikAppointRecordId String?
+  hikError           String?
+  lgpdConsentAt      DateTime
+  createdAt          DateTime  @default(now())
+  decidedAt          DateTime?
+
+  @@index([status])
+}

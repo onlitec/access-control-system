@@ -45,11 +45,12 @@ export function normalizePerson(p: any): Resident {
 const PAGE_SIZE = 500;
 const TTL_MS = 10 * 60 * 1000;
 
-let cache: { at: number; byCpf: Map<string, Resident>; total: number } | null = null;
+let cache: { at: number; byCpf: Map<string, Resident>; byId: Map<string, Resident>; total: number } | null = null;
 let loading: Promise<void> | null = null;
 
 async function loadAll(): Promise<void> {
     const byCpf = new Map<string, Resident>();
+    const byId = new Map<string, Resident>();
     let total = 0;
     for (let pageNo = 1; ; pageNo++) {
         const res = await hikPost('/artemis/api/resource/v1/person/personList', { pageNo, pageSize: PAGE_SIZE });
@@ -57,11 +58,12 @@ async function loadAll(): Promise<void> {
         total = res.data?.total ?? total;
         for (const raw of list) {
             const resident = normalizePerson(raw);
+            byId.set(resident.hikPersonId, resident);
             if (resident.cpf) byCpf.set(resident.cpf, resident);
         }
         if (pageNo * PAGE_SIZE >= total || list.length === 0) break;
     }
-    cache = { at: Date.now(), byCpf, total };
+    cache = { at: Date.now(), byCpf, byId, total };
 }
 
 /** A OpenAPI não filtra por campo personalizado; por isso o CPF é indexado em memória. */
@@ -74,6 +76,11 @@ async function ensureLoaded(force = false): Promise<void> {
 export async function findResidentByCpf(cpf: string): Promise<Resident | null> {
     await ensureLoaded();
     return cache!.byCpf.get(onlyDigits(cpf)) ?? null;
+}
+
+export async function findResidentById(hikPersonId: string): Promise<Resident | null> {
+    await ensureLoaded();
+    return cache!.byId.get(hikPersonId) ?? null;
 }
 
 export async function residentStats(): Promise<{ total: number; withCpf: number; withPhone: number; withEmail: number }> {

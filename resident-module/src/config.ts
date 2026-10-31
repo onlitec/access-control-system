@@ -9,6 +9,11 @@ export const config = {
     port: Number(process.env.PORT) || 4100,
     jwtSecret: process.env.JWT_SECRET || '',
     sessionHours: Number(process.env.SESSION_HOURS) || 8,
+    /** Endereço público do módulo, usado nos links de convite (sem barra no fim) */
+    publicUrl: (process.env.PUBLIC_URL || '').replace(/\/+$/, ''),
+    inviteDays: Number(process.env.INVITE_DAYS) || 7,
+    /** Fuso usado nos horários enviados ao HikCentral */
+    tzOffset: process.env.HIKCENTRAL_TZ_OFFSET || '-03:00',
     hik: {
         host: (process.env.HIK_HOST || '').replace(/\/+$/, ''),
         appKey: process.env.HIK_APP_KEY || '',
