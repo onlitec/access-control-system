@@ -1,0 +1,51 @@
+name: resident-module-installer
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [claude/project-thread-8036m5]
+    paths: ['resident-module/**']
+
+jobs:
+  stage:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: resident-module
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci
+      - run: npx vitest run
+      - run: bash installer/build-package.sh --stage-only
+      - uses: actions/upload-artifact@v4
+        with:
+          name: stage
+          path: resident-module/installer/stage
+          include-hidden-files: true
+
+  installer:
+    needs: stage
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: stage
+          path: resident-module/installer/stage
+      - name: Compilar com Inno Setup
+        shell: pwsh
+        working-directory: resident-module/installer
+        run: |
+          $v = (Get-Content ../package.json | ConvertFrom-Json).version
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) { choco install innosetup -y --no-progress; }
+          & $iscc "/DAppVersion=$v" ModuloMorador.iss
+          if ($LASTEXITCODE -ne 0) { throw "ISCC falhou" }
+          Get-FileHash dist\ModuloMoradorSetup-*.exe -Algorithm SHA256 | Format-List
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ModuloMoradorSetup
+          path: resident-module/installer/dist/*.exe
