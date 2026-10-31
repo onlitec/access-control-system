@@ -4,6 +4,8 @@ import {
     HttpError, approveVisit, cancelInvite, cancelVisit, createInvite, inviteLink,
     listInvites, listVisits, rejectVisit, sendInviteLink, visitPhoto,
 } from '../invites/service';
+import { answerFamilyRequest, listFamily, removeFamilyLink, requestFamilyLink } from '../invites/family';
+import { forgetSavedVisitor, listSavedVisitors, reinviteSavedVisitor } from '../invites/saved';
 
 const router = Router();
 router.use(requireResident);
@@ -61,6 +63,49 @@ router.post('/visits/:id/reject', wrap(async (req, res) => {
 router.post('/visits/:id/cancel', wrap(async (req, res) => {
     const v = await cancelVisit(session(req), req.params.id);
     res.json({ id: v.id, status: v.status });
+}));
+
+// ---------- visitantes salvos ----------
+
+router.get('/saved-visitors', wrap(async (req, res) => {
+    res.json(await listSavedVisitors(session(req)));
+}));
+
+router.post('/saved-visitors/:id/invite', wrap(async (req, res) => {
+    const v = await reinviteSavedVisitor(session(req), req.params.id, req.body?.visitDate);
+    res.status(201).json({ id: v.id, status: v.status });
+}));
+
+router.delete('/saved-visitors/:id', wrap(async (req, res) => {
+    await forgetSavedVisitor(session(req), req.params.id);
+    res.status(204).end();
+}));
+
+// ---------- família ----------
+
+router.get('/family', wrap(async (req, res) => {
+    res.json(await listFamily(session(req)));
+}));
+
+router.post('/family', wrap(async (req, res) => {
+    if (typeof req.body?.cpf !== 'string') throw new HttpError(400, 'Informe o CPF do familiar.');
+    await requestFamilyLink(session(req), req.body.cpf);
+    res.status(202).json({ message: 'Se o CPF estiver cadastrado, o familiar recebeu o pedido e precisa aceitar.' });
+}));
+
+router.post('/family/:id/accept', wrap(async (req, res) => {
+    await answerFamilyRequest(session(req), req.params.id, true);
+    res.status(204).end();
+}));
+
+router.post('/family/:id/reject', wrap(async (req, res) => {
+    await answerFamilyRequest(session(req), req.params.id, false);
+    res.status(204).end();
+}));
+
+router.delete('/family/:id', wrap(async (req, res) => {
+    await removeFamilyLink(session(req), req.params.id);
+    res.status(204).end();
 }));
 
 export default router;

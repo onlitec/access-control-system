@@ -67,8 +67,48 @@ model Visit {
   hikAppointRecordId String?
   hikError           String?
   lgpdConsentAt      DateTime
+  // O visitante autorizou guardar os dados e a foto para novos convites deste morador
+  saveConsent        Boolean   @default(false)
   createdAt          DateTime  @default(now())
   decidedAt          DateTime?
 
   @@index([status])
+}
+
+// Visitante que o morador aprovou e que autorizou ser guardado, para novos convites sem novo cadastro.
+// Guarda a foto do rosto e do documento (com consentimento); some quando o morador esquece ou por inatividade.
+model SavedVisitor {
+  id           String   @id @default(cuid())
+  residentId   String   // dono (hikPersonId)
+  type         String   @default("VISITOR")
+  name         String
+  surname      String
+  phone        String
+  email        String?
+  document     String?
+  company      String?
+  plate        String?
+  faceJpeg     Bytes
+  documentJpeg Bytes
+  consentAt    DateTime
+  lastVisitAt  DateTime
+  createdAt    DateTime @default(now())
+
+  @@unique([residentId, phone])
+  @@index([lastVisitAt])
+}
+
+// Vínculo de família: o responsável enxerga e decide os convites do membro. O membro precisa aceitar.
+model FamilyLink {
+  id              String    @id @default(cuid())
+  responsibleId   String
+  responsibleName String
+  memberId        String
+  memberName      String
+  status          String    @default("PENDING") // PENDING | ACTIVE | REJECTED
+  createdAt       DateTime  @default(now())
+  decidedAt       DateTime?
+
+  @@unique([responsibleId, memberId])
+  @@index([memberId])
 }

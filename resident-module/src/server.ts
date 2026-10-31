@@ -5,7 +5,8 @@ import { assertConfig, config } from './config';
 import authRoutes from './routes/auth.routes';
 import invitesRoutes from './routes/invites.routes';
 import publicRoutes from './routes/public.routes';
-import { HttpError } from './invites/service';
+import { HttpError } from './invites/errors';
+import { purgeStaleSavedVisitors } from './invites/saved';
 
 assertConfig();
 
@@ -47,6 +48,13 @@ app.use((err: any, _req: express.Request, res: express.Response, _next: express.
     console.error('[resident-module] erro:', err?.message || err);
     res.status(500).json({ error: 'Erro interno.' });
 });
+
+const purge = () =>
+    purgeStaleSavedVisitors()
+        .then((n) => n && console.log(`[resident-module] ${n} visitante(s) salvo(s) apagado(s) por inatividade`))
+        .catch((err) => console.error('[resident-module] limpeza de visitantes salvos:', err.message));
+purge();
+setInterval(purge, 24 * 60 * 60 * 1000).unref();
 
 app.listen(config.port, () => {
     console.log(`[resident-module] ouvindo na porta ${config.port} (HikCentral: ${config.hik.host})`);

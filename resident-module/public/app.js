@@ -52,7 +52,7 @@ async function act(button, fn) {
 }
 
 function visitHeader(v) {
-  const who = `${v.name} ${v.surname}` + (v.type === 'PROVIDER' ? ' (prestador)' : '');
+  const who = `${v.name} ${v.surname}` + (v.type === 'PROVIDER' ? ' (prestador)' : '') + (v.mine === false ? ` · convite de ${v.owner}` : '');
   const details = [fmtDay(v.visitDate), v.phone, v.document && 'Doc. ' + v.document, v.company, v.plate && 'Placa ' + v.plate].filter(Boolean).join(' · ');
   return [el('b', { text: who }), el('span', { class: 'muted', text: details })];
 }
@@ -84,13 +84,13 @@ function renderInvites(invites) {
     const copy = el('button', { class: 'secondary', text: 'Copiar link' });
     copy.addEventListener('click', async () => { await navigator.clipboard.writeText(i.link).catch(() => {}); msg('Link copiado.'); });
     const row = el('div', { class: 'row' });
-    if (i.state === 'OPEN') {
+    if (i.state === 'OPEN' && i.mine) {
       const cancel = el('button', { class: 'secondary danger', text: 'Cancelar' });
       cancel.addEventListener('click', () => act(cancel, () => api('DELETE', `/invites/${i.id}`)));
       row.append(copy, cancel);
     }
     box.append(el('div', { class: 'item' },
-      el('b', { text: (i.label || (i.type === 'PROVIDER' ? 'Prestador' : 'Visitante')) }),
+      el('b', { text: (i.label || (i.type === 'PROVIDER' ? 'Prestador' : 'Visitante')) + (i.mine ? '' : ` · de ${i.owner}`) }),
       el('span', { class: 'muted', text: `até ${fmtDay(i.validUntil)}` + (i.visit ? ` · ${i.visit.name} ${i.visit.surname}` : '') + (i.allowVehicle ? ' · com veículo' : '') + ' '  }),
       tag(STATE, i.state), row));
   }
@@ -111,12 +111,54 @@ function renderHistory(visits) {
   }
 }
 
+const today = () => { const d = new Date(); return [d.getFullYear(), String(d.getMonth() + 1).padStart(2, '0'), String(d.getDate()).padStart(2, '0')].join('-'); };
+
+function renderSaved(list) {
+  const box = $('saved'); box.replaceChildren();
+  if (!list.length) { box.append(el('p', { text: 'Nenhum visitante salvo ainda. Aparecem aqui quando o visitante autoriza ao se cadastrar.' })); return; }
+  for (const s of list) {
+    const date = el('input', { type: 'date', min: today(), value: today(), 'aria-label': 'Data da visita' });
+    const again = el('button', { text: 'Convidar de novo' });
+    again.addEventListener('click', () => act(again, async () => { await api('POST', `/saved-visitors/${s.id}/invite`, { visitDate: date.value }); msg('Visita aprovada e enviada ao HikCentral.'); }));
+    const forget = el('button', { class: 'secondary danger', text: 'Esquecer' });
+    forget.addEventListener('click', () => { if (window.confirm('Apagar os dados e as fotos deste visitante?')) act(forget, () => api('DELETE', `/saved-visitors/${s.id}`)); });
+    box.append(el('div', { class: 'item' },
+      el('b', { text: `${s.name} ${s.surname}` + (s.type === 'PROVIDER' ? ' (prestador)' : '') }),
+      el('span', { class: 'muted', text: [s.phone, s.company, s.plate && 'Placa ' + s.plate].filter(Boolean).join(' · ') }),
+      el('div', { class: 'row', style: 'margin-top:8px' }, date, again, forget)));
+  }
+}
+
+function renderFamily(f) {
+  const box = $('family'); box.replaceChildren();
+  const rows = [];
+  const line = (name, note, ...buttons) => rows.push(el('div', { class: 'item' }, el('b', { text: name }), el('span', { class: 'muted', text: note }), el('div', { class: 'row', style: 'margin-top:8px' }, ...buttons)));
+  const btn = (text, cls, fn) => { const b = el('button', { class: cls, text }); b.addEventListener('click', () => act(b, fn)); return b; };
+  for (const r of f.requests) line(r.name, 'quer ser seu responsável e ver seus convites', btn('Aceitar', '', () => api('POST', `/family/${r.id}/accept`)), btn('Recusar', 'secondary danger', () => api('POST', `/family/${r.id}/reject`)));
+  for (const m of f.members) line(m.name, 'familiar: você vê e decide os convites', btn('Remover', 'secondary danger', () => api('DELETE', `/family/${m.id}`)));
+  for (const r of f.responsibles) line(r.name, 'responsável: vê e decide os seus convites', btn('Remover', 'secondary danger', () => api('DELETE', `/family/${r.id}`)));
+  for (const w of f.waitingAnswer) line(w.name, 'aguardando o aceite', btn('Cancelar pedido', 'secondary danger', () => api('DELETE', `/family/${w.id}`)));
+  box.append(...(rows.length ? rows : [el('p', { text: 'Nenhum vínculo ainda.' })]));
+}
+
 async function refresh() {
-  const [invites, visits] = await Promise.all([api('GET', '/invites'), api('GET', '/visits')]);
+  const [invites, visits, saved, family] = await Promise.all([api('GET', '/invites'), api('GET', '/visits'), api('GET', '/saved-visitors'), api('GET', '/family')]);
   renderPending(visits.filter((v) => v.status === 'PENDING_APPROVAL' || v.status === 'APPROVING'));
   renderInvites(invites);
+  renderSaved(saved);
+  renderFamily(family);
   renderHistory(visits.filter((v) => !['PENDING_APPROVAL', 'APPROVING'].includes(v.status)));
 }
+
+$('family-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const btn = e.submitter; btn.disabled = true; msg('');
+  try {
+    const res = await api('POST', '/family', { cpf: $('family-cpf').value });
+    msg(res.message); $('family-cpf').value = '';
+    await refresh();
+  } catch (err) { msg(err.message, true); } finally { btn.disabled = false; }
+});
 
 $('invite-form').addEventListener('submit', async (e) => {
   e.preventDefault();

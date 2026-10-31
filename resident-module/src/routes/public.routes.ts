@@ -1,6 +1,7 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import rateLimit from 'express-rate-limit';
-import { HttpError, findInviteByToken, inviteState, registerVisit, dayInTz } from '../invites/service';
+import { HttpError } from '../invites/errors';
+import { findInviteByToken, inviteState, registerVisit, dayInTz } from '../invites/service';
 
 const router = Router();
 

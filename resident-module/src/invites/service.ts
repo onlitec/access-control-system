@@ -8,12 +8,10 @@ import { createAppointment, deleteAppointment, pickLevelForTowers } from '../hik
 import { pickDestination, sendText } from '../notify/notifier';
 import { SessionPayload } from '../auth/session';
 import { toE164Br } from '../utils/cpf';
+import { HttpError } from './errors';
+import { canManageResident, visibleResidentIds } from './family';
 
-export class HttpError extends Error {
-    constructor(public status: number, message: string) {
-        super(message);
-    }
-}
+export { HttpError };
 
 export const FACE_MIN_BYTES = 10 * 1024;
 export const FACE_MAX_BYTES = 100 * 1024; // limite do HikCentral para a foto facial (JPG, 10 a 100 KB)
@@ -109,6 +107,7 @@ export interface RegisterInput {
     faceBase64?: unknown;
     documentBase64?: unknown;
     lgpdConsent?: unknown;
+    saveConsent?: unknown;
 }
 
 const text = (v: unknown, max: number) => (typeof v === 'string' ? v.trim().slice(0, max) : '');
@@ -188,6 +187,7 @@ export async function registerVisit(token: string, input: RegisterInput): Promis
                 faceJpeg,
                 documentJpeg,
                 lgpdConsentAt: new Date(),
+                saveConsent: input.saveConsent === true,
             },
         });
     });
@@ -203,11 +203,37 @@ async function notifyResident(invite: Invite, visitorName: string): Promise<void
     await sendText(dest, `${visitorName} concluiu o cadastro pelo seu convite e aguarda sua aprovação no app do morador.`, 'Visitante aguardando aprovação');
 }
 
+// ---------- visitantes salvos ----------
+
+/** Guarda dados e fotos do visitante para novos convites, só se ele autorizou e o morador aprovou. */
+async function rememberVisitor(visit: Visit & { invite: Invite }): Promise<void> {
+    if (!visit.saveConsent || !visit.faceJpeg || !visit.documentJpeg) return;
+    const data = {
+        type: visit.invite.type,
+        name: visit.name,
+        surname: visit.surname,
+        email: visit.email,
+        document: visit.document,
+        company: visit.company,
+        plate: visit.plate,
+        faceJpeg: visit.faceJpeg,
+        documentJpeg: visit.documentJpeg,
+        consentAt: visit.lgpdConsentAt,
+        lastVisitAt: new Date(),
+    };
+    await prisma.savedVisitor.upsert({
+        where: { residentId_phone: { residentId: visit.invite.residentId, phone: visit.phone } },
+        create: { residentId: visit.invite.residentId, phone: visit.phone, ...data },
+        update: data,
+    });
+}
+
 // ---------- decisão do morador ----------
 
+/** O morador dono do convite ou o responsável de família dele. */
 async function ownVisit(session: SessionPayload, id: string) {
     const visit = await prisma.visit.findUnique({ where: { id }, include: { invite: true } });
-    if (!visit || visit.invite.residentId !== session.sub) throw new HttpError(404, 'Cadastro não encontrado.');
+    if (!visit || !(await canManageResident(session, visit.invite.residentId))) throw new HttpError(404, 'Cadastro não encontrado.');
     return visit;
 }
 
@@ -259,6 +285,7 @@ export async function approveVisit(session: SessionPayload, id: string): Promise
 
     try {
         const created = await createAppointment(payload);
+        await rememberVisitor(visit).catch((err) => console.error('[invites] visitante salvo:', err.message));
         return await prisma.visit.update({
             where: { id },
             data: {
@@ -305,13 +332,15 @@ export async function cancelVisit(session: SessionPayload, id: string): Promise<
 
 export async function listInvites(session: SessionPayload) {
     const invites = await prisma.invite.findMany({
-        where: { residentId: session.sub },
+        where: { residentId: { in: await visibleResidentIds(session) } },
         orderBy: { createdAt: 'desc' },
         take: 100,
         include: { visit: { select: { id: true, name: true, surname: true, status: true } } },
     });
     return invites.map((i) => ({
         id: i.id,
+        mine: i.residentId === session.sub,
+        owner: i.residentName,
         type: i.type,
         label: i.label,
         allowVehicle: i.allowVehicle,
@@ -325,13 +354,15 @@ export async function listInvites(session: SessionPayload) {
 
 export async function listVisits(session: SessionPayload, status?: string) {
     const visits = await prisma.visit.findMany({
-        where: { invite: { residentId: session.sub }, ...(status ? { status } : {}) },
+        where: { invite: { residentId: { in: await visibleResidentIds(session) } }, ...(status ? { status } : {}) },
         orderBy: { createdAt: 'desc' },
         take: 100,
-        include: { invite: { select: { type: true, label: true, allowVehicle: true } } },
+        include: { invite: { select: { type: true, label: true, allowVehicle: true, residentId: true, residentName: true } } },
     });
     return visits.map((v) => ({
         id: v.id,
+        mine: v.invite.residentId === session.sub,
+        owner: v.invite.residentName,
         status: v.status,
         type: v.invite.type,
         label: v.invite.label,

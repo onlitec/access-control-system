@@ -40,7 +40,22 @@
 
   <section class="card"><h2>Aguardando sua aprovação</h2><div id="pending"></div></section>
   <section class="card"><h2>Convites</h2><div id="invites"></div></section>
+  <section class="card">
+    <h2>Visitantes salvos</h2>
+    <p>Pessoas que você aprovou e que autorizaram guardar os dados. Convide de novo sem novo cadastro.</p>
+    <div id="saved"></div>
+  </section>
   <section class="card"><h2>Histórico</h2><div id="history"></div></section>
+  <section class="card">
+    <h2>Família</h2>
+    <p>Quem você vincula como responsável vê e decide os convites dos familiares que aceitarem.</p>
+    <div id="family"></div>
+    <form id="family-form">
+      <label for="family-cpf">Adicionar familiar pelo CPF</label>
+      <input id="family-cpf" inputmode="numeric" placeholder="000.000.000-00" required>
+      <button type="submit">Enviar pedido</button>
+    </form>
+  </section>
 </main>
 <script src="app.js"></script>
 </body>

@@ -12,6 +12,8 @@ export const config = {
     /** Endereço público do módulo, usado nos links de convite (sem barra no fim) */
     publicUrl: (process.env.PUBLIC_URL || '').replace(/\/+$/, ''),
     inviteDays: Number(process.env.INVITE_DAYS) || 7,
+    /** Dias sem visita até apagar um visitante salvo (dados e fotos) */
+    savedRetentionDays: Number(process.env.SAVED_RETENTION_DAYS) || 180,
     /** Fuso usado nos horários enviados ao HikCentral */
     tzOffset: process.env.HIKCENTRAL_TZ_OFFSET || '-03:00',
     hik: {

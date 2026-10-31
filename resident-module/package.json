@@ -12,7 +12,8 @@
         "prisma:generate": "prisma generate",
         "prisma:push": "prisma db push",
         "smoke:hik": "tsx src/scripts/smoke-hikcentral.ts",
-        "e2e:hik": "tsx src/scripts/e2e-hikcentral.ts"
+        "e2e:hik": "tsx src/scripts/e2e-hikcentral.ts",
+        "e2e:hik:family": "tsx src/scripts/e2e-hikcentral-family.ts"
     },
     "dependencies": {
         "@prisma/client": "^5.22.0",

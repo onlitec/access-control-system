@@ -20,6 +20,18 @@ HikCentral 3.1.1; não depende do restante do OnliAcesso. A proposta completa es
 - As fotos ficam no SQLite só até a decisão do morador; depois de aprovar, recusar ou cancelar, são apagadas.
 - O acesso vale o dia inteiro da data escolhida (no dia de hoje, a partir de agora).
 
+## Fase 3
+- **Visitantes salvos:** se o visitante marcar a opção de guardar os dados, o morador que aprovar passa a ter
+  essa pessoa em "Visitantes salvos" (dados e fotos) e pode convidá-la de novo escolhendo só a data, sem novo
+  cadastro (já vai direto para o HikCentral). O morador pode esquecer o visitante a qualquer momento, e quem fica
+  `SAVED_RETENTION_DAYS` (180) dias sem visita é apagado automaticamente.
+- **Família:** um morador (responsável) pede o vínculo pelo CPF do familiar, que recebe o aviso e precisa aceitar.
+  Depois do aceite, o responsável vê e pode aprovar, recusar e cancelar os convites do familiar; no HikCentral o
+  visitado continua sendo o familiar. Qualquer um dos dois pode desfazer o vínculo. A resposta ao pedido é a mesma
+  exista ou não o CPF.
+- Não depende de como as organizações/apartamentos estão no HikCentral; uma sugestão automática de familiares
+  (mesmo apartamento) pode vir depois que a estrutura de produção for conhecida.
+
 ## Rodar em desenvolvimento
 ```
 cp .env.example .env      # preencher HIK_* e JWT_SECRET; NOTIFY_MODE=console imprime o código no log
@@ -29,6 +41,7 @@ npm run smoke:hik         # leitura no HikCentral (só contagens, sem dados pess
 npm run dev               # http://localhost:4100
 npm test
 npm run e2e:hik           # ponta a ponta contra um HikCentral de TESTE (ver o cabeçalho do script)
+npm run e2e:hik:family    # idem, para família e visitantes salvos
 ```
 
 ## Segurança
@@ -38,4 +51,4 @@ npm run e2e:hik           # ponta a ponta contra um HikCentral de TESTE (ver o c
 - Credenciais da OpenAPI só em variáveis de ambiente.
 
 ## Próximas fases
-Visitantes salvos para reaproveitar, família/responsável, PWA com push e instalador Windows.
+PWA com push e instalador Windows.

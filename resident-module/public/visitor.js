@@ -67,7 +67,7 @@ $('form').addEventListener('submit', async (e) => {
       body: JSON.stringify({
         name: $('name').value, surname: $('surname').value, phone: $('phone').value, email: $('email').value,
         document: $('document').value, company: $('company').value, plate: $('plate').value, visitDate: $('date').value,
-        faceBase64: await toBase64(face), documentBase64: await toBase64(doc), lgpdConsent: $('lgpd').checked,
+        faceBase64: await toBase64(face), documentBase64: await toBase64(doc), lgpdConsent: $('lgpd').checked, saveConsent: $('save').checked,
       }),
     });
     const data = await res.json().catch(() => ({}));
