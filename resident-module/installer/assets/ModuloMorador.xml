@@ -1,0 +1,18 @@
+<service>
+  <id>ModuloMorador</id>
+  <name>Módulo do Morador (HikCentral)</name>
+  <description>App do morador e convites de visitantes integrados ao HikCentral.</description>
+  <executable>%BASE%\node\node.exe</executable>
+  <arguments>dist\server.js</arguments>
+  <workingdirectory>%BASE%\app</workingdirectory>
+  <env name="NODE_ENV" value="production"/>
+  <env name="ENV_FILE" value="%ProgramData%\ModuloMorador\config\.env"/>
+  <startmode>Automatic</startmode>
+  <stoptimeout>20sec</stoptimeout>
+  <log mode="roll-by-size">
+    <logpath>%ProgramData%\ModuloMorador\logs</logpath>
+    <sizeThreshold>10240</sizeThreshold>
+    <keepFiles>5</keepFiles>
+  </log>
+  <onfailure action="restart" delay="10 sec"/>
+</service>

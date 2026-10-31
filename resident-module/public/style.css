@@ -1,0 +1,25 @@
+:root { --bg:#f5f6f8; --card:#fff; --ink:#1b2430; --muted:#5b6675; --line:#d5dae1; --brand:#0b5fff; --ok:#17794a; --err:#b3261e; --warn:#8a5a00; }
+@media (prefers-color-scheme: dark) { :root { --bg:#12161c; --card:#1b212a; --ink:#e8ecf2; --muted:#9aa5b4; --line:#334; --brand:#6f9bff; --ok:#5fd39a; --err:#ff8a80; --warn:#f0c36a; } }
+* { box-sizing: border-box; }
+body { margin:0; font:16px/1.45 system-ui,sans-serif; background:var(--bg); color:var(--ink); padding:16px; }
+main { width:100%; max-width:640px; margin:0 auto; display:grid; gap:16px; }
+.card { background:var(--card); border-radius:12px; padding:16px; box-shadow:0 1px 6px rgba(0,0,0,.12); }
+h1 { font-size:1.25rem; margin:0 0 4px; } h2 { font-size:1.05rem; margin:0 0 12px; }
+p { margin:0 0 12px; color:var(--muted); }
+label { display:block; font-weight:600; margin:0 0 6px; }
+input, select, textarea { width:100%; font:inherit; padding:12px; border:1px solid var(--line); border-radius:8px; background:transparent; color:inherit; margin-bottom:12px; }
+input[type=checkbox] { width:auto; margin:0 8px 0 0; }
+.check { display:flex; align-items:flex-start; font-weight:400; margin-bottom:12px; }
+button, .btn { font:inherit; font-weight:600; padding:10px 14px; border:0; border-radius:8px; background:var(--brand); color:#fff; cursor:pointer; text-decoration:none; display:inline-block; }
+button.secondary, .btn.secondary { background:transparent; color:var(--brand); border:1px solid var(--brand); }
+button.danger { background:var(--err); color:#fff; }
+button:disabled { opacity:.6; cursor:wait; }
+.row { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+.item { border-top:1px solid var(--line); padding:12px 0; } .item:first-of-type { border-top:0; }
+.item b { display:block; } .muted { color:var(--muted); font-size:.9rem; }
+.tag { font-size:.8rem; font-weight:700; padding:2px 8px; border-radius:99px; border:1px solid currentColor; }
+.tag.ok { color:var(--ok); } .tag.err { color:var(--err); } .tag.warn { color:var(--warn); }
+.photos { display:flex; gap:8px; margin:8px 0; } .photos img { width:96px; height:96px; object-fit:cover; border-radius:8px; border:1px solid var(--line); cursor:zoom-in; }
+.link { word-break:break-all; font-size:.9rem; background:rgba(127,127,127,.12); padding:8px; border-radius:8px; margin:8px 0; }
+#msg { min-height:1.4em; } #msg.err { color:var(--err); } [hidden] { display:none !important; }
+button.secondary.danger { background:transparent; color:var(--err); border:1px solid var(--err); }

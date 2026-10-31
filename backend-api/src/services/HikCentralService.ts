@@ -72,10 +72,11 @@ export class HikCentralService {
         appSecret: string
     ): Promise<string> {
         let stringToSign = method.toUpperCase() + '\n';
-        stringToSign += (headers['Accept'] || headers['accept'] || '') + '\n';
-        stringToSign += (headers['Content-MD5'] || headers['content-md5'] || '') + '\n';
-        stringToSign += (headers['Content-Type'] || headers['content-type'] || '') + '\n';
-        stringToSign += (headers['Date'] || headers['date'] || '') + '\n';
+        // Guia 3.1.1 (3.2): se Accept, Content-MD5, Content-Type ou Date não existir, a linha é omitida.
+        for (const name of ['Accept', 'Content-MD5', 'Content-Type', 'Date']) {
+            const value = headers[name] || headers[name.toLowerCase()];
+            if (value) stringToSign += value + '\n';
+        }
 
         // CanonicalizedHeaders (x-ca- headers)
         const xCaHeadersKeys = Object.keys(headers)

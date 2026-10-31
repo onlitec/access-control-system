@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>Cadastro de visita</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<main>
+  <div class="card"><h1 id="title">Cadastro de visita</h1><p id="intro"></p></div>
+  <div id="msg" role="status"></div>
+
+  <form class="card" id="form" hidden>
+    <label for="name">Nome</label><input id="name" maxlength="64" autocomplete="given-name" required>
+    <label for="surname">Sobrenome</label><input id="surname" maxlength="64" autocomplete="family-name" required>
+    <label for="phone">Telefone com DDD</label><input id="phone" type="tel" inputmode="tel" autocomplete="tel" required>
+    <label for="email">E-mail (opcional)</label><input id="email" type="email" autocomplete="email">
+    <label for="document">Número do documento (opcional)</label><input id="document" maxlength="20">
+    <div id="company-box" hidden><label for="company">Empresa (opcional)</label><input id="company" maxlength="64"></div>
+    <div id="plate-box" hidden><label for="plate">Placa do veículo (opcional)</label><input id="plate" maxlength="10" autocapitalize="characters"></div>
+    <label for="date">Data da visita</label><input id="date" type="date" required>
+    <label for="face">Foto do rosto</label>
+    <p>De frente, com boa iluminação, sem óculos escuros, boné ou máscara. É com ela que a portaria libera sua entrada.</p>
+    <input id="face" type="file" accept="image/*" capture="user" required>
+    <label for="doc">Foto do documento</label>
+    <input id="doc" type="file" accept="image/*" capture="environment" required>
+    <label class="check"><input id="lgpd" type="checkbox" required> Autorizo o uso destes dados e fotos apenas para liberar meu acesso ao condomínio (LGPD).</label>
+    <label class="check"><input id="save" type="checkbox"> Opcional: permito que o morador guarde meus dados e fotos para me convidar de novo sem novo cadastro. Posso pedir que apague quando quiser.</label>
+    <button type="submit" id="send">Enviar cadastro</button>
+  </form>
+
+  <section class="card" id="status" hidden><h2 id="status-title"></h2><p id="status-text"></p></section>
+</main>
+<script src="/visitor.js"></script>
+</body>
+</html>

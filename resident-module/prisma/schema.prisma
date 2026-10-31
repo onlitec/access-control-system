@@ -1,0 +1,127 @@
+generator client {
+  provider      = "prisma-client-js"
+  // "windows" é exigido pelo instalador Windows do módulo
+  binaryTargets = ["native", "windows"]
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// Código de uso único enviado ao morador (WhatsApp ou e-mail) para entrar no app.
+// Guarda só o HMAC do código; o morador em si NÃO é copiado: vem do HikCentral.
+model LoginCode {
+  id          String   @id @default(cuid())
+  cpf         String
+  hikPersonId String
+  codeHash    String
+  channel     String
+  attempts    Int      @default(0)
+  usedAt      DateTime?
+  expiresAt   DateTime
+  createdAt   DateTime @default(now())
+
+  @@index([cpf, createdAt])
+}
+
+// Convite criado por um morador. O link público leva o token.
+model Invite {
+  id           String   @id @default(cuid())
+  token        String   @unique
+  residentId   String   // hikPersonId do morador (o morador em si fica no HikCentral)
+  residentName String
+  towers       String   @default("") // ex.: "TORRE-1,TORRE-2", para escolher o nível de acesso
+  type         String   @default("VISITOR") // VISITOR | PROVIDER
+  label        String?  // nome sugerido pelo morador (ex.: "Encanador João")
+  allowVehicle Boolean  @default(false)
+  validFrom    DateTime
+  validUntil   DateTime
+  status       String   @default("OPEN") // OPEN | USED | CANCELLED
+  createdAt    DateTime @default(now())
+  visit        Visit?
+
+  @@index([residentId, createdAt])
+}
+
+// Cadastro feito pelo visitante pelo link. Fotos ficam aqui só até a decisão do morador.
+model Visit {
+  id                 String    @id @default(cuid())
+  inviteId           String    @unique
+  invite             Invite    @relation(fields: [inviteId], references: [id], onDelete: Cascade)
+  name               String
+  surname            String
+  phone              String
+  email              String?
+  document           String?
+  company            String?
+  plate              String?
+  visitDate          String    // AAAA-MM-DD
+  visitStart         DateTime
+  visitEnd           DateTime
+  faceJpeg           Bytes?
+  documentJpeg       Bytes?
+  status             String    @default("PENDING_APPROVAL") // PENDING_APPROVAL | APPROVING | APPROVED | REJECTED | CANCELLED
+  rejectReason       String?
+  hikVisitorId       String?
+  hikAppointRecordId String?
+  hikError           String?
+  lgpdConsentAt      DateTime
+  // O visitante autorizou guardar os dados e a foto para novos convites deste morador
+  saveConsent        Boolean   @default(false)
+  createdAt          DateTime  @default(now())
+  decidedAt          DateTime?
+
+  @@index([status])
+}
+
+// Visitante que o morador aprovou e que autorizou ser guardado, para novos convites sem novo cadastro.
+// Guarda a foto do rosto e do documento (com consentimento); some quando o morador esquece ou por inatividade.
+model SavedVisitor {
+  id           String   @id @default(cuid())
+  residentId   String   // dono (hikPersonId)
+  type         String   @default("VISITOR")
+  name         String
+  surname      String
+  phone        String
+  email        String?
+  document     String?
+  company      String?
+  plate        String?
+  faceJpeg     Bytes
+  documentJpeg Bytes
+  consentAt    DateTime
+  lastVisitAt  DateTime
+  createdAt    DateTime @default(now())
+
+  @@unique([residentId, phone])
+  @@index([lastVisitAt])
+}
+
+// Vínculo de família: o responsável enxerga e decide os convites do membro. O membro precisa aceitar.
+model FamilyLink {
+  id              String    @id @default(cuid())
+  responsibleId   String
+  responsibleName String
+  memberId        String
+  memberName      String
+  status          String    @default("PENDING") // PENDING | ACTIVE | REJECTED
+  createdAt       DateTime  @default(now())
+  decidedAt       DateTime?
+
+  @@unique([responsibleId, memberId])
+  @@index([memberId])
+}
+
+// Inscrição de notificação push (Web Push) de um aparelho do morador.
+model PushSubscription {
+  id         String   @id @default(cuid())
+  residentId String   // hikPersonId
+  endpoint   String   @unique
+  p256dh     String
+  auth       String
+  userAgent  String?
+  createdAt  DateTime @default(now())
+
+  @@index([residentId])
+}

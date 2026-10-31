@@ -42,7 +42,7 @@ async function call(path: string, body: unknown) {
         headers.Accept,
         headers['Content-MD5'],
         headers['Content-Type'],
-        '',
+        // Sem cabeçalho Date: o guia manda omitir a linha (e não deixar uma linha vazia).
         `x-ca-key:${headers['X-Ca-Key']}`,
         `x-ca-timestamp:${headers['X-Ca-Timestamp']}`,
         path,
@@ -73,6 +73,9 @@ async function main() {
     for (const g of acs.data?.data?.list || []) console.log(`   nível de acesso: ${g.privilegeGroupId} ${g.privilegeGroupName}`);
     const vis = await call('/artemis/api/acs/v1/privilege/group', { pageNo: 1, pageSize: 100, type: 2 });
     const visitorLevels = vis.data?.data?.list || [];
+    if (!(acs.data?.data?.list || []).length && !visitorLevels.length) {
+        console.log('   nenhum nível de acesso visível para este usuário (sem dispositivos/níveis cadastrados ou sem permissão)');
+    }
     for (const g of visitorLevels) {
         console.log(`   nível de visitante: ${g.privilegeGroupId} ${g.privilegeGroupName}${Number(g.isDefault) === 1 ? ' (padrão)' : ''}`);
     }
