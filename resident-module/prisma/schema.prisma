@@ -17,6 +17,8 @@ model LoginCode {
   hikPersonId String
   codeHash    String
   channel     String
+  // LOGIN = 2ª etapa do login | RESET = criar ou recuperar a senha (só por e-mail)
+  purpose     String   @default("LOGIN")
   attempts    Int      @default(0)
   usedAt      DateTime?
   expiresAt   DateTime
@@ -124,4 +126,15 @@ model PushSubscription {
   createdAt  DateTime @default(now())
 
   @@index([residentId])
+}
+
+// Senha do morador (criada por ele no primeiro acesso). O morador em si continua vindo do HikCentral.
+model ResidentCredential {
+  cpf               String    @id
+  hikPersonId       String
+  passwordHash      String    // scrypt: salt:hash em hex
+  failedAttempts    Int       @default(0)
+  lockedUntil       DateTime?
+  passwordChangedAt DateTime  @default(now())
+  createdAt         DateTime  @default(now())
 }

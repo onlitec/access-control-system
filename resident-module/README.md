@@ -6,8 +6,8 @@ HikCentral 3.1.1; não depende do restante do OnliAcesso. A proposta completa es
 
 ## Fase 1 (esta)
 - Moradores lidos do HikCentral (`person/personList`), indexados por CPF (campo personalizado `CPF`).
-- Login sem senha: CPF, código de 6 dígitos por WhatsApp (Twilio) ou e-mail (SMTP), sessão JWT.
-- Banco local SQLite só para os códigos de login (o morador não é copiado).
+- Login em duas etapas: CPF + senha (criada pelo próprio morador) e depois um código de 6 dígitos por WhatsApp (Twilio) ou e-mail (SMTP), sessão JWT. Primeiro acesso e "esqueci a senha" usam o mesmo caminho: código enviado só ao e-mail cadastrado no HikCentral e então a nova senha (8+ caracteres, letras e números). Senha guardada com scrypt; 5 erros bloqueiam por 15 min.
+- Banco local SQLite para códigos, senhas (hash) e convites; o cadastro do morador não é copiado, vem sempre do HikCentral.
 
 ## Fase 2
 - Morador (`/app.html`): cria convite (visitante ou prestador, validade, veículo opcional), compartilha o link

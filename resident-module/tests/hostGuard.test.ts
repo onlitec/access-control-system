@@ -15,7 +15,7 @@ describe('visitorHostGuard', () => {
     it('no endereço do visitante só passa o que o visitante usa', () => {
         for (const p of ['/v/abc', '/api/public/invite/abc', '/api/health', '/visitor.js', '/style.css'])
             expect(run(guard, 'visitantes.x.com', p)).toBe(200);
-        for (const p of ['/', '/app.html', '/api/invites', '/api/auth/request-code', '/sw.js'])
+        for (const p of ['/', '/app.html', '/api/invites', '/api/auth/login', '/sw.js'])
             expect(run(guard, 'visitantes.x.com', p)).toBe(404);
     });
 

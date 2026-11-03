@@ -10,8 +10,12 @@ export interface Destination {
     address: string;
 }
 
-export const loginMessage = (code: string) =>
-    `Seu código de acesso ao app do morador é ${code}. Vale por 10 minutos. Não compartilhe com ninguém.`;
+export type CodePurpose = 'LOGIN' | 'RESET';
+
+export const loginMessage = (code: string, purpose: CodePurpose = 'LOGIN') =>
+    purpose === 'RESET'
+        ? `Seu código para criar ou redefinir a senha do app do morador é ${code}. Vale por 10 minutos. Se você não pediu, ignore esta mensagem e não compartilhe o código.`
+        : `Seu código de acesso ao app do morador é ${code}. Vale por 10 minutos. Não compartilhe com ninguém.`;
 
 export function pickDestination(
     phoneE164: string | null,
@@ -61,4 +65,5 @@ export async function sendText(dest: Destination, body: string, subject = 'Aviso
     else await sendEmail(dest.address, body, subject);
 }
 
-export const sendLoginCode = (dest: Destination, code: string) => sendText(dest, loginMessage(code), 'Seu código de acesso');
+export const sendLoginCode = (dest: Destination, code: string, purpose: CodePurpose = 'LOGIN') =>
+    sendText(dest, loginMessage(code, purpose), purpose === 'RESET' ? 'Senha do app do morador' : 'Seu código de acesso');

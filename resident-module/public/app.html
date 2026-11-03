@@ -3,19 +3,20 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>App do Morador</title>
+<title>Portal do Morador</title>
 <link rel="stylesheet" href="style.css">
 <link rel="manifest" href="/manifest.webmanifest">
-<meta name="theme-color" content="#0b5fff">
+<meta name="theme-color" content="#2b3445">
 <link rel="icon" href="/icon-192.png">
 <link rel="apple-touch-icon" href="/icon-192.png">
 </head>
 <body>
+<header class="topbar">
+  <div class="logo">M</div><div class="name">Portal do Morador</div><div class="sp"></div>
+  <span id="who" class="muted" style="color:#fff"></span>
+  <button type="button" id="logout">Sair</button>
+</header>
 <main>
-  <div class="card row" style="justify-content:space-between">
-    <div><h1 id="who">App do Morador</h1><p style="margin:0">Convide visitantes e aprove os cadastros.</p></div>
-    <button class="secondary" id="logout" type="button">Sair</button>
-  </div>
   <div id="msg" role="status"></div>
   <div class="card" id="push-box" hidden>
     <p style="margin:0 0 8px">Receba um aviso no celular quando um visitante concluir o cadastro.</p>

@@ -7,6 +7,7 @@
  * (o código de login é lido de lá); E2E_FACE_B64 com um JPEG de 10 a 100 KB em Base64.
  *   E2E_BASE=http://127.0.0.1:4199 E2E_SERVER_LOG=/caminho/servidor.log E2E_FACE_B64=... npm run e2e:hik
  */
+import { loginAs } from './e2e-login';
 import fs from 'fs';
 import { hikPost } from '../hikcentral/client';
 import { normalizePerson } from '../hikcentral/residents';
@@ -48,13 +49,8 @@ async function main() {
     const r = (list.data?.list ?? []).map(normalizePerson).find((p: any) => p.cpf && p.phoneE164);
     if (!r) throw new Error('nenhum morador com CPF e telefone');
 
-    await call('POST', '/api/auth/request-code', { cpf: r.cpf });
-    await new Promise((s) => setTimeout(s, 600));
-    const code = /é (\d{6})\./.exec(fs.readFileSync(serverLog, 'utf8'))?.[1] ?? '';
-    const login = await call('POST', '/api/auth/verify-code', { cpf: r.cpf, code });
-    if (!login.data.token) throw new Error('login falhou: ' + login.status);
-    const token = login.data.token as string;
-    log('login:', login.status, '| torres do morador:', r.towers.length);
+    const token = await loginAs(call, r.cpf, serverLog);
+    log('login com senha + código: ok | torres do morador:', r.towers.length);
 
     const inv = await call('POST', '/api/invites', { type: 'VISITOR', label: 'E2E teste', allowVehicle: true }, token);
     const t = (inv.data.link as string).split('/v/')[1];

@@ -3,6 +3,7 @@
  * feita pelo responsável, visitante salvo e convite de novo sem novo cadastro. Apaga tudo no fim.
  * Mesmos pré-requisitos de e2e-hikcentral.ts (servidor em NOTIFY_MODE=console, E2E_SERVER_LOG, E2E_FACE_B64).
  */
+import { loginAs } from './e2e-login';
 import fs from 'fs';
 import { hikPost } from '../hikcentral/client';
 import { normalizePerson } from '../hikcentral/residents';
@@ -22,14 +23,7 @@ async function call(method: string, path: string, body?: unknown, token?: string
     return { status: res.status, data };
 }
 
-async function login(cpf: string): Promise<string> {
-    await call('POST', '/api/auth/request-code', { cpf });
-    await new Promise((s) => setTimeout(s, 600));
-    const codes = [...fs.readFileSync(serverLog, 'utf8').matchAll(/é (\d{6})\./g)];
-    const res = await call('POST', '/api/auth/verify-code', { cpf, code: codes[codes.length - 1]?.[1] ?? '' });
-    if (!res.data.token) throw new Error('login falhou: ' + res.status);
-    return res.data.token;
-}
+const login = (cpf: string) => loginAs(call, cpf, serverLog);
 
 const day = (n: number) => new Date(Date.now() + n * 864e5 - 3 * 3600e3).toISOString().slice(0, 10);
 const e2eAppointments = async () => {

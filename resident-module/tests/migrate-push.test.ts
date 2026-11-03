@@ -26,11 +26,13 @@ const sub = (n: string) => ({ endpoint: `https://push.example.com/${n}`, keys: {
 
 describe('migrações', () => {
     it('cria o banco do zero, uma vez só, e todas as tabelas do schema funcionam', async () => {
-        expect(await migrate.runMigrations(prisma)).toEqual(['001_init.sql']);
+        expect(await migrate.runMigrations(prisma)).toEqual(['001_init.sql', '002_password_login.sql']);
         expect(await migrate.runMigrations(prisma)).toEqual([]);
         expect(await prisma.invite.count()).toBe(0);
         expect(await prisma.pushSubscription.count()).toBe(0);
         expect(await prisma.familyLink.count()).toBe(0);
+        expect(await prisma.residentCredential.count()).toBe(0);
+        expect(await prisma.loginCode.count({ where: { purpose: 'LOGIN' } })).toBe(0);
     });
 
     it('splitSql ignora comentários', () => {

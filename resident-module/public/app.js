@@ -215,7 +215,7 @@ async function setupPush() {
   $('until').value = [d.getFullYear(), String(d.getMonth() + 1).padStart(2, '0'), String(d.getDate()).padStart(2, '0')].join('-');
   try {
     const me = await api('GET', '/auth/me');
-    $('who').textContent = 'Olá, ' + me.name;
+    $('who').textContent = me.name;
     setupPush().catch(() => {});
     await refresh();
     setInterval(() => refresh().catch(() => {}), 30000);
