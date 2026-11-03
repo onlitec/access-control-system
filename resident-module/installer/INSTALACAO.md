@@ -14,6 +14,12 @@ Execute o `.exe` como administrador. O assistente pergunta:
 - endereço público HTTPS do módulo (usado nos links enviados aos visitantes);
 - porta local (padrão 4100).
 
+**Instalação silenciosa (por SSH, sem tela):**
+```
+ModuloMoradorSetup-0.1.0.exe /VERYSILENT /SUPPRESSMSGBOXES /HIKHOST=https://127.0.0.1 /HIKKEY=... /HIKSECRET=... /HIKUSER=admin /PUBLICURL=https://morador.exemplo.com.br /PORT=4100
+```
+Sem esses parâmetros o `.env` nasce com a conexão do HikCentral vazia e deve ser preenchido depois.
+
 O instalador cria o serviço **ModuloMorador** (início automático, reinicia se cair), grava a
 configuração em `C:\ProgramData\ModuloMorador\config\.env` (só SYSTEM e Administradores leem),
 gera sozinho o `JWT_SECRET` e as chaves das notificações push, e cria o banco SQLite em

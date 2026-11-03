@@ -61,9 +61,17 @@ begin
   CfgPage.Values[5] := '4100';
 end;
 
+// Instalação silenciosa (ex.: por SSH): a tela não aparece e os dados vêm da linha de comando,
+// ex.: /VERYSILENT /HIKHOST=https://127.0.0.1 /HIKKEY=... /HIKSECRET=... /HIKUSER=admin /PUBLICURL=https://morador.exemplo.com.br /PORT=4100
 function ShouldSkipPage(PageID: Integer): Boolean;
 begin
-  Result := (PageID = CfgPage.ID) and ConfigExists;
+  Result := (PageID = CfgPage.ID) and (ConfigExists or WizardSilent);
+end;
+
+function Pick(Param, Param2: String; Idx: Integer): String;
+begin
+  if WizardSilent then Result := Trim(ExpandConstant('{param:' + Param + '|' + Param2 + '}'))
+  else Result := Trim(CfgPage.Values[Idx]);
 end;
 
 function NextButtonClick(CurPageID: Integer): Boolean;
@@ -77,9 +85,9 @@ begin
     end;
 end;
 
-function HikHost(Param: String): String;   begin Result := Trim(CfgPage.Values[0]); end;
-function HikKey(Param: String): String;    begin Result := Trim(CfgPage.Values[1]); end;
-function HikSecret(Param: String): String; begin Result := Trim(CfgPage.Values[2]); end;
-function HikUser(Param: String): String;   begin Result := Trim(CfgPage.Values[3]); end;
-function PublicUrl(Param: String): String; begin Result := Trim(CfgPage.Values[4]); end;
-function Port(Param: String): String;      begin Result := Trim(CfgPage.Values[5]); end;
+function HikHost(Param: String): String;   begin Result := Pick('HIKHOST', '', 0); end;
+function HikKey(Param: String): String;    begin Result := Pick('HIKKEY', '', 1); end;
+function HikSecret(Param: String): String; begin Result := Pick('HIKSECRET', '', 2); end;
+function HikUser(Param: String): String;   begin Result := Pick('HIKUSER', 'admin', 3); end;
+function PublicUrl(Param: String): String; begin Result := Pick('PUBLICURL', '', 4); end;
+function Port(Param: String): String;      begin Result := Pick('PORT', '4100', 5); end;
