@@ -1,6 +1,6 @@
 // Service worker do App do Morador: guarda só o "casco" estático e trata notificações push.
 // Chamadas /api nunca passam pelo cache (dados e fotos de moradores/visitantes).
-const CACHE = 'morador-shell-v2';
+const CACHE = 'morador-shell-v3';
 const SHELL = ['/', '/index.html', '/app.html', '/app.js', '/login.js', '/style.css', '/icon-192.png'];
 
 self.addEventListener('install', (event) => {
