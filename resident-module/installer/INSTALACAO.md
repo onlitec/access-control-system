@@ -23,7 +23,7 @@ Sem esses parâmetros o `.env` nasce com a conexão do HikCentral vazia e deve s
 O instalador cria o serviço **ModuloMorador** (início automático, reinicia se cair), grava a
 configuração em `C:\ProgramData\ModuloMorador\config\.env` (só SYSTEM e Administradores leem),
 gera sozinho o `JWT_SECRET` e as chaves das notificações push, e cria o banco SQLite em
-`C:\ProgramData\ModuloMorador\data`. Logs em `C:\ProgramData\ModuloMorador\logs`.
+`C:\ProgramData\ModuloMorador\data`. Logs do serviço em `ModuloMorador.out.log` e `ModuloMorador.err.log`, na pasta do programa (`C:\Program Files\ModuloMorador`).
 
 **Atualizar:** rode o novo instalador por cima. Configuração e banco são mantidos; o banco é
 atualizado sozinho na inicialização (migrações em `migrations/`).

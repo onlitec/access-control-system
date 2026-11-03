@@ -14,7 +14,7 @@ $ErrorActionPreference = 'Stop'
 $data = Join-Path $env:ProgramData 'ModuloMorador'
 $cfgDir = Join-Path $data 'config'
 $envFile = Join-Path $cfgDir '.env'
-New-Item -ItemType Directory -Force -Path $cfgDir, (Join-Path $data 'data'), (Join-Path $data 'logs') | Out-Null
+New-Item -ItemType Directory -Force -Path $cfgDir, (Join-Path $data 'data') | Out-Null
 
 if (-not (Test-Path $envFile)) {
     $bytes = New-Object byte[] 48

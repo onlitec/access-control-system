@@ -10,7 +10,6 @@
   <startmode>Automatic</startmode>
   <stoptimeout>20sec</stoptimeout>
   <log mode="roll-by-size">
-    <logpath>%ProgramData%\ModuloMorador\logs</logpath>
     <sizeThreshold>10240</sizeThreshold>
     <keepFiles>5</keepFiles>
   </log>
