@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Portal do Morador</title>
+<link rel="stylesheet" href="/style.css">
+<link rel="manifest" href="/manifest.webmanifest">
+<meta name="theme-color" content="#242323">
+<link rel="apple-touch-icon" href="/icon-192.png">
+</head>
+<body class="login">
+<main>
+  <div class="card">
+    <div class="brand"><div class="logo">M</div><h1>Portal do Morador</h1></div>
+
+    <!-- 1ª etapa: CPF e senha -->
+    <form id="login-form">
+      <label for="cpf">CPF</label>
+      <input id="cpf" inputmode="numeric" autocomplete="username" placeholder="000.000.000-00" required>
+      <label for="password">Senha</label>
+      <input id="password" type="password" autocomplete="current-password" required>
+      <button type="submit">Entrar</button>
+      <div class="links"><button type="button" class="link" id="to-reset">Primeiro acesso ou esqueci a senha</button></div>
+    </form>
+
+    <!-- 2ª etapa: código enviado ao contato do HikCentral -->
+    <form id="code-form" hidden>
+      <p>Digite o código de 6 dígitos que enviamos para o seu contato cadastrado.</p>
+      <label for="code">Código</label>
+      <input id="code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" placeholder="000000" required>
+      <button type="submit">Confirmar</button>
+      <div class="links"><button type="button" class="link" id="resend">Reenviar código</button> · <button type="button" class="link" id="back-login">Voltar</button></div>
+    </form>
+
+    <!-- Primeiro acesso / recuperação: código por e-mail e nova senha -->
+    <form id="reset-form" hidden>
+      <p id="reset-intro">Informe o CPF. Enviaremos um código para o e-mail cadastrado no sistema para você criar uma senha.</p>
+      <label for="reset-cpf">CPF</label>
+      <input id="reset-cpf" inputmode="numeric" placeholder="000.000.000-00" required>
+      <div id="reset-step2" hidden>
+        <label for="reset-code">Código recebido por e-mail</label>
+        <input id="reset-code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" placeholder="000000">
+        <label for="new-password">Nova senha</label>
+        <input id="new-password" type="password" autocomplete="new-password" minlength="8">
+        <label for="new-password2">Repita a nova senha</label>
+        <input id="new-password2" type="password" autocomplete="new-password" minlength="8">
+        <p class="muted">Mínimo de 8 caracteres, com letras e números.</p>
+      </div>
+      <button type="submit" id="reset-submit">Enviar código por e-mail</button>
+      <div class="links"><button type="button" class="link" id="back-login2">Voltar</button></div>
+    </form>
+
+    <div id="msg" role="status"></div>
+  </div>
+</main>
+<script src="login.js"></script>
+</body>
+</html>

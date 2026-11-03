@@ -1,0 +1,8 @@
+node_modules
+dist
+.env
+*.db
+*.db-journal
+
+# o .gitignore da raiz ignora "auth/"
+!src/auth/
