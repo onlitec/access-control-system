@@ -14,7 +14,7 @@ const state = { email: 'maria@exemplo.com' as string | null, phone: '+5511988887
 const resident = () => ({ hikPersonId: '10', name: 'Maria', cpf: '52998224725', email: state.email, phoneE164: state.phone, orgIndexCode: '1', towers: [] });
 
 vi.mock('../src/hikcentral/residents', () => ({
-    findResidentByCpf: async (cpf: string) => (cpf === '52998224725' ? resident() : null),
+    findResidentByCpf: async (cpf: string, _o?: unknown) => (cpf === '52998224725' ? resident() : null),
 }));
 vi.mock('../src/notify/notifier', async (orig) => ({
     ...(await orig<typeof import('../src/notify/notifier')>()),

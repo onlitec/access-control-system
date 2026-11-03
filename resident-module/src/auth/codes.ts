@@ -29,8 +29,11 @@ export async function requestLoginCode(cpfInput: string, preferred?: Channel, pu
     const cpf = onlyDigits(cpfInput);
     if (!isValidCpf(cpf)) return;
 
-    const resident = await findResidentByCpf(cpf);
+    let resident = await findResidentByCpf(cpf);
     if (!resident) return;
+    const hasContact = (r: Resident) => (purpose === 'RESET' ? !!r.email : !!(r.phoneE164 || r.email));
+    // Contato recém-cadastrado no HikCentral: recarrega a lista antes de desistir.
+    if (!hasContact(resident)) resident = (await findResidentByCpf(cpf, { fresh: true })) ?? resident;
     // Criar/recuperar senha vai só para o e-mail cadastrado no HikCentral.
     const dest = purpose === 'RESET' ? pickDestination(null, resident.email) : pickDestination(resident.phoneE164, resident.email, preferred);
     if (!dest) {

@@ -73,8 +73,14 @@ async function ensureLoaded(force = false): Promise<void> {
     await loading;
 }
 
-export async function findResidentByCpf(cpf: string): Promise<Resident | null> {
-    await ensureLoaded();
+const MIN_REFRESH_MS = 60 * 1000;
+
+/**
+ * `fresh` recarrega a lista do HikCentral (no máximo uma vez por minuto) para pegar um contato recém-cadastrado,
+ * sem esperar o prazo do cache.
+ */
+export async function findResidentByCpf(cpf: string, opts: { fresh?: boolean } = {}): Promise<Resident | null> {
+    await ensureLoaded(!!opts.fresh && (!cache || Date.now() - cache.at > MIN_REFRESH_MS));
     return cache!.byCpf.get(onlyDigits(cpf)) ?? null;
 }
 
